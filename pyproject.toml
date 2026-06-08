@@ -22,6 +22,10 @@ ecommerce-agent = "ecommerce_agent:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that require external services such as the SpringBoot MCP server",
+    "live: tests that call a real LLM provider",
+]
 
 [tool.ruff]
 line-length = 100

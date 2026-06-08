@@ -57,3 +57,7 @@ curl http://127.0.0.1:8000/health
 uv run pytest
 uv run ruff check .
 ```
+
+The Spring MCP integration test is part of the default suite, but it skips with a
+clear message when `SPRING_MCP_URL` is not reachable. Start the Spring Boot server
+from `../ecommerce-mcp-server` to exercise the real MCP boundary.
