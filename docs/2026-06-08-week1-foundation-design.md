@@ -230,7 +230,9 @@ fragile once sub-agents, checkpoints, and HITL arrive.
 env (`@pytest.mark.live`, `RUN_LIVE_LLM=1`). Given a prompt like "check 手机 inventory," the real
 model should perform the realistic `product_search("手机") → inventory_query(productId)` chain on
 its own. Assertions stay loose: stream completes, a read tool is called, and inventory-like data is
-present. This is the Week 1 demo path, not the default CI gate.
+present. This is the Week 1 demo path, not the default CI gate. Run it before merging dependency
+bumps to DeepAgents, LangGraph, LangChain, or MCP adapters, because those packages define the real
+`astream_events(version="v2")` event names and chunk shapes consumed by the SSE mapper.
 
 **Reusability:** all test infrastructure should carry forward: MCP readiness checks,
 FastAPI app + `httpx` async client, settings overrides, MCP allowlist assertions, and SSE

@@ -58,6 +58,8 @@ curl http://127.0.0.1:8000/health/mcp
 
 `/health/mcp` probes configured external MCP servers and reports `degraded`
 when a dependency is unavailable. It does not start or repair external services.
+Because it performs live tool discovery, treat it as an operator check rather than
+a high-frequency poll target.
 
 ## Tests
 

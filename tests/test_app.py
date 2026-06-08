@@ -21,6 +21,12 @@ class FakeAgent:
         yield {"event": "on_tool_end", "name": "inventory_query", "data": {}}
 
 
+class ExplodingFakeAgent:
+    async def astream_events(self, inputs: dict, version: str) -> AsyncIterator[dict]:
+        raise RuntimeError("secret provider stack trace")
+        yield
+
+
 class FakeTool:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -56,8 +62,12 @@ class BuildableFakeMcpClient:
     pass
 
 
+def make_settings(**overrides: object) -> Settings:
+    return Settings(_env_file=None, **overrides)
+
+
 def test_health_reports_external_mcp_configuration() -> None:
-    app = create_app(settings=Settings())
+    app = create_app(settings=make_settings())
 
     with TestClient(app) as client:
         response = client.get("/health")
@@ -70,7 +80,7 @@ def test_health_reports_external_mcp_configuration() -> None:
 
 
 def test_mcp_health_reports_spring_tool_visibility() -> None:
-    app = create_app(settings=Settings(), mcp_client=HealthyFakeMcpClient())
+    app = create_app(settings=make_settings(), mcp_client=HealthyFakeMcpClient())
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -93,7 +103,7 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
 
 
 def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
-    app = create_app(settings=Settings(), mcp_client=FailingFakeMcpClient())
+    app = create_app(settings=make_settings(), mcp_client=FailingFakeMcpClient())
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -106,7 +116,7 @@ def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
 
 
 def test_chat_stream_maps_agent_events_to_sse_frames() -> None:
-    app = create_app(settings=Settings(), agent=FakeAgent())
+    app = create_app(settings=make_settings(), agent=FakeAgent())
 
     with TestClient(app) as client:
         with client.stream("POST", "/api/chat/stream", json={"message": "  hello  "}) as response:
@@ -121,12 +131,37 @@ def test_chat_stream_maps_agent_events_to_sse_frames() -> None:
 
 
 def test_chat_stream_rejects_blank_message() -> None:
-    app = create_app(settings=Settings(), agent=FakeAgent())
+    app = create_app(settings=make_settings(), agent=FakeAgent())
 
     with TestClient(app) as client:
         response = client.post("/api/chat/stream", json={"message": "   "})
 
     assert response.status_code == 422
+
+
+def test_chat_stream_error_message_does_not_leak_internal_exception() -> None:
+    app = create_app(settings=make_settings(), agent=ExplodingFakeAgent())
+
+    with TestClient(app) as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "hello"}) as response:
+            body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "event: error" in body
+    assert chat_module.STREAM_ERROR_MESSAGE in body
+    assert "secret provider stack trace" not in body
+
+
+def test_health_reports_unknown_tool_count_for_injected_agent() -> None:
+    app = create_app(settings=make_settings(), agent=FakeAgent())
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agent_ready"] is True
+    assert body["tool_count"] is None
 
 
 def test_chat_stream_lazily_builds_agent_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,7 +188,7 @@ def test_chat_stream_lazily_builds_agent_once(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(chat_module, "build_agent", fake_build_agent)
 
     app = create_app(
-        settings=Settings(llm_api_key="test-key"),
+        settings=make_settings(llm_api_key="test-key"),
         mcp_client=BuildableFakeMcpClient(),
     )
 

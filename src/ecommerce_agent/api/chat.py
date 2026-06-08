@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
@@ -11,6 +12,8 @@ from ecommerce_agent.mcp_client import load_spring_read_tools
 from ecommerce_agent.models import get_primary_model
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
+STREAM_ERROR_MESSAGE = "Unable to complete the chat stream. Please try again."
 
 
 class ChatStreamRequest(BaseModel):
@@ -94,8 +97,9 @@ async def chat_stream(payload: ChatStreamRequest, request: Request) -> EventSour
             if await request.is_disconnected():
                 return
             yield {"event": "done", "data": _json_data({})}
-        except Exception as exc:
-            yield {"event": "error", "data": _json_data({"message": str(exc)})}
+        except Exception:
+            logger.exception("Chat stream failed")
+            yield {"event": "error", "data": _json_data({"message": STREAM_ERROR_MESSAGE})}
             yield {"event": "done", "data": _json_data({})}
 
     return EventSourceResponse(stream())

@@ -12,8 +12,12 @@ from ecommerce_agent.mcp_client import (
 )
 
 
+def make_settings(**overrides: object) -> Settings:
+    return Settings(_env_file=None, **overrides)
+
+
 def test_build_mcp_connections_uses_trusted_spring_headers() -> None:
-    settings = Settings(
+    settings = make_settings(
         spring_mcp_url="http://spring.example/mcp",
         spring_mcp_service_token="token",
         spring_mcp_user_id="42",
@@ -33,7 +37,7 @@ def test_build_mcp_connections_uses_trusted_spring_headers() -> None:
 
 
 def test_future_mcp_servers_are_configured_when_urls_are_present() -> None:
-    settings = Settings(
+    settings = make_settings(
         modelscope_mcp_url="http://modelscope.example/mcp",
         python_mcp_url="http://python.example/mcp",
     )
@@ -46,7 +50,7 @@ def test_future_mcp_servers_are_configured_when_urls_are_present() -> None:
 
 
 def test_spring_headers_are_never_tool_parameters() -> None:
-    settings = Settings(
+    settings = make_settings(
         spring_mcp_service_token="token",
         spring_mcp_user_id="1",
         spring_mcp_session_id="local-session",

@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from ecommerce_agent.api.chat import router as chat_router
 from ecommerce_agent.config import Settings, get_settings
 from ecommerce_agent.mcp_client import (
+    MODELSCOPE_SERVER_NAME,
+    PYTHON_SERVER_NAME,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
     WRITE_OR_APPROVAL_SPRING_TOOLS,
@@ -23,16 +25,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.mcp_client = getattr(app.state, "mcp_client", None) or build_mcp_client(settings)
     app.state.agent = getattr(app.state, "agent", None)
     app.state.agent_lock = getattr(app.state, "agent_lock", asyncio.Lock())
-    app.state.tool_count = 0
+    app.state.tool_count = getattr(app.state, "tool_count", 0)
     yield
 
 
 def configured_mcp_servers(settings: Settings) -> list[str]:
     servers = [SPRING_SERVER_NAME]
     if settings.modelscope_mcp_url:
-        servers.append("modelscope")
+        servers.append(MODELSCOPE_SERVER_NAME)
     if settings.python_mcp_url:
-        servers.append("python")
+        servers.append(PYTHON_SERVER_NAME)
     return servers
 
 
@@ -70,11 +72,13 @@ def create_app(
     settings: Settings | None = None,
     agent: Any | None = None,
     mcp_client: Any | None = None,
+    tool_count: int | None = None,
 ) -> FastAPI:
     app = FastAPI(title="E-Commerce Agent", lifespan=lifespan)
     app.state.settings = settings or get_settings()
     app.state.agent = agent
     app.state.mcp_client = mcp_client
+    app.state.tool_count = tool_count if tool_count is not None else None if agent else 0
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
