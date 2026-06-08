@@ -67,8 +67,9 @@ uv run ruff check .
 ```
 
 The Spring MCP integration test is part of the default suite, but it skips with a
-clear message when `SPRING_MCP_URL` is not reachable. Start the Spring Boot server
-from `../ecommerce-mcp-server` to exercise the real MCP boundary.
+clear message when `SPRING_MCP_URL` is not reachable or `/mcp` rejects the configured
+service token. Start the Spring Boot server from `../ecommerce-mcp-server` with a
+matching `APP_SERVICE_TOKEN` to exercise the real MCP boundary.
 
 Run the opt-in live LLM smoke when both the Spring MCP server and `LLM_API_KEY`
 are available:
