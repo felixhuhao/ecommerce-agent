@@ -62,16 +62,18 @@ ecommerce-agent/
 │   ├── models.py          # LLM factory; get_primary_model() wired; fallback/summary = Week 3 seams
 │   ├── mcp_client.py      # MultiServerMCPClient factory (SpringBoot now; ModelScope/Python later)
 │   ├── agent.py           # build_agent(): deep agent + discovered MCP tools + inline system prompt
+│   ├── cli.py             # package CLI entry point for running the FastAPI service
 │   └── api/
 │       ├── app.py         # FastAPI app, lifespan (build MCP client), /health
 │       └── chat.py        # POST /api/chat/stream → SSE
 ├── tests/
-│   ├── conftest.py        # fixtures: stack readiness, app/client, settings overrides
+│   ├── test_app.py        # health + SSE frame contract
+│   ├── test_cli.py        # package entry point
+│   ├── test_config.py     # settings defaults
+│   ├── test_mcp_client.py # connection registry + read-only filtering
 │   └── integration/
-│       ├── test_mcp_integration.py    # default: real MCP → real MySQL boundary
-│       ├── test_chat_stream.py        # default: SSE frame contract
+│       ├── test_spring_mcp_integration.py # default: real MCP → real MySQL boundary
 │       └── test_chat_stream_live.py   # opt-in: real DeepSeek vertical slice
-├── client.py              # optional tiny SSE poker (only if free to add)
 ├── .env.example
 ├── pyproject.toml
 └── README.md
@@ -97,6 +99,8 @@ rewrites of Week 1 code.
   system prompt (the "E-commerce Operations AI Assistant" role, trimmed to Week 1 read-only
   duties). It receives only the allowlisted read tools — the prompt describes intent, the
   allowlist enforces it. Prompt moves to YAML in Week 2.
+- **cli.py** — package entry point for `uv run ecommerce-agent serve`, delegating to uvicorn and
+  the FastAPI app factory.
 - **api/app.py** — creates the FastAPI app; a lifespan handler builds the MCP client once and
   stores it in app state. Exposes `/health` and `/health/mcp`. The agent is not built at startup,
   so health checks stay useful even when `LLM_API_KEY` is intentionally absent.

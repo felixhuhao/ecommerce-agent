@@ -46,7 +46,7 @@ MCP URLs are reserved for later phases.
 
 ```bash
 uv sync
-uv run uvicorn ecommerce_agent.api.app:create_app --factory --reload
+uv run ecommerce-agent serve --reload
 ```
 
 Health check:
