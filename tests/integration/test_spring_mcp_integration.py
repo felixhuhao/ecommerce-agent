@@ -9,7 +9,10 @@ from ecommerce_agent.mcp_client import (
     load_spring_read_tools,
     tool_names,
 )
-from tests.integration.helpers import skip_unless_spring_mcp_is_running
+from tests.integration.helpers import (
+    skip_on_spring_mcp_auth_error,
+    skip_unless_spring_mcp_is_running,
+)
 
 
 @pytest.mark.integration
@@ -21,7 +24,12 @@ async def test_spring_mcp_discovers_read_tools_and_calls_inventory_query() -> No
     await skip_unless_spring_mcp_is_running(settings)
 
     client = build_mcp_client(settings)
-    read_tools = await load_spring_read_tools(client)
+    try:
+        read_tools = await load_spring_read_tools(client)
+    except Exception as exc:
+        skip_on_spring_mcp_auth_error(exc, settings)
+        raise
+
     names = tool_names(read_tools)
 
     assert SPRING_SERVER_NAME == "spring"

@@ -1,8 +1,10 @@
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
+import ecommerce_agent.api.chat as chat_module
 from ecommerce_agent.api.app import create_app
 from ecommerce_agent.config import Settings
 
@@ -48,6 +50,10 @@ class HealthyFakeMcpClient:
 class FailingFakeMcpClient:
     async def get_tools(self, server_name: str) -> list[FakeTool]:
         raise TimeoutError(f"{server_name} timed out")
+
+
+class BuildableFakeMcpClient:
+    pass
 
 
 def test_health_reports_external_mcp_configuration() -> None:
@@ -103,7 +109,7 @@ def test_chat_stream_maps_agent_events_to_sse_frames() -> None:
     app = create_app(settings=Settings(), agent=FakeAgent())
 
     with TestClient(app) as client:
-        with client.stream("POST", "/api/chat/stream", json={"message": "hello"}) as response:
+        with client.stream("POST", "/api/chat/stream", json={"message": "  hello  "}) as response:
             body = "".join(response.iter_text())
 
     assert response.status_code == 200
@@ -112,3 +118,54 @@ def test_chat_stream_maps_agent_events_to_sse_frames() -> None:
     assert "event: token" in body
     assert "Inventory looks healthy." in body
     assert "event: done" in body
+
+
+def test_chat_stream_rejects_blank_message() -> None:
+    app = create_app(settings=Settings(), agent=FakeAgent())
+
+    with TestClient(app) as client:
+        response = client.post("/api/chat/stream", json={"message": "   "})
+
+    assert response.status_code == 422
+
+
+def test_chat_stream_lazily_builds_agent_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"tools": 0, "model": 0, "agent": 0}
+
+    async def fake_load_spring_read_tools(mcp_client: BuildableFakeMcpClient) -> list[FakeTool]:
+        assert isinstance(mcp_client, BuildableFakeMcpClient)
+        calls["tools"] += 1
+        return [FakeTool("inventory_query")]
+
+    def fake_get_primary_model(settings: Settings) -> object:
+        assert settings.llm_api_key == "test-key"
+        calls["model"] += 1
+        return object()
+
+    def fake_build_agent(model: object, tools: list[FakeTool]) -> FakeAgent:
+        assert model is not None
+        assert [tool.name for tool in tools] == ["inventory_query"]
+        calls["agent"] += 1
+        return FakeAgent()
+
+    monkeypatch.setattr(chat_module, "load_spring_read_tools", fake_load_spring_read_tools)
+    monkeypatch.setattr(chat_module, "get_primary_model", fake_get_primary_model)
+    monkeypatch.setattr(chat_module, "build_agent", fake_build_agent)
+
+    app = create_app(
+        settings=Settings(llm_api_key="test-key"),
+        mcp_client=BuildableFakeMcpClient(),
+    )
+
+    with TestClient(app) as client:
+        for _ in range(2):
+            with client.stream("POST", "/api/chat/stream", json={"message": "hello"}) as response:
+                body = "".join(response.iter_text())
+            assert response.status_code == 200
+            assert "Inventory looks healthy." in body
+
+        health = client.get("/health").json()
+
+    assert calls == {"tools": 1, "model": 1, "agent": 1}
+    assert health["agent_ready"] is True
+    assert health["tool_count"] == 1

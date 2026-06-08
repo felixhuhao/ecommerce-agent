@@ -63,7 +63,7 @@ ecommerce-agent/
 │   ├── mcp_client.py      # MultiServerMCPClient factory (SpringBoot now; ModelScope/Python later)
 │   ├── agent.py           # build_agent(): deep agent + discovered MCP tools + inline system prompt
 │   └── api/
-│       ├── app.py         # FastAPI app, lifespan (build client+agent once), /health
+│       ├── app.py         # FastAPI app, lifespan (build MCP client), /health
 │       └── chat.py        # POST /api/chat/stream → SSE
 ├── tests/
 │   ├── conftest.py        # fixtures: stack readiness, app/client, settings overrides
@@ -97,15 +97,17 @@ rewrites of Week 1 code.
   system prompt (the "E-commerce Operations AI Assistant" role, trimmed to Week 1 read-only
   duties). It receives only the allowlisted read tools — the prompt describes intent, the
   allowlist enforces it. Prompt moves to YAML in Week 2.
-- **api/app.py** — creates the FastAPI app; a lifespan handler builds the MCP client (discovering
-  tools) and the agent **once** at startup and stores them in app state. Exposes `/health`.
-- **api/chat.py** — the SSE endpoint; maps LangGraph events to SSE frames.
+- **api/app.py** — creates the FastAPI app; a lifespan handler builds the MCP client once and
+  stores it in app state. Exposes `/health` and `/health/mcp`. The agent is not built at startup,
+  so health checks stay useful even when `LLM_API_KEY` is intentionally absent.
+- **api/chat.py** — the SSE endpoint; lazily discovers SpringBoot read tools, builds the singleton
+  agent on first chat behind a lock, and maps LangGraph events to SSE frames.
 
 ### 4.3 Request flow
 
 ```
 client → POST /api/chat/stream {message}
-  → handler reads the singleton agent from app state
+  → handler reads the singleton agent from app state, or builds it on first chat
   → agent.astream_events(message)                 [LangGraph event stream]
        model decides → calls e.g. inventory_query (MCP tool)
        → MultiServerMCPClient → POST {SPRING_MCP_URL}  (+X-Service-Token/X-User-Id/X-Session-Id)
@@ -115,11 +117,11 @@ client → POST /api/chat/stream {message}
   → client renders the stream
 ```
 
-- Agent + MCP client are built **once at startup**, reused per request. Tool discovery happens at
-  startup, not per call.
+- MCP client is built **once at startup**. Spring read-tool discovery and agent construction happen
+  **once on first chat**, then the singleton agent is reused per request.
 - Trusted identity headers are set on the **MCP client connection, never as tool parameters**
   (parent §8.2, server spec §4.2). Week 1 uses fixed `X-User-Id`/`X-Session-Id` from config.
-- **No `session_id` in the Week 1 request body.** A startup-built client carries fixed headers, so
+- **No `session_id` in the Week 1 request body.** A startup-built MCP client carries fixed headers, so
   an accepted-but-ignored `session_id` would misrepresent the contract. Per-session identity is a
   Week 3 concern (`ContextVar`-propagated headers, per server spec §4.2); it returns then as an
   additive, backwards-compatible field. Until the MCP layer can inject headers per request, the

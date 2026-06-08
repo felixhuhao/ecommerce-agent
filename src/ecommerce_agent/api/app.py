@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     app.state.mcp_client = getattr(app.state, "mcp_client", None) or build_mcp_client(settings)
     app.state.agent = getattr(app.state, "agent", None)
+    app.state.agent_lock = getattr(app.state, "agent_lock", asyncio.Lock())
     app.state.tool_count = 0
     yield
 
