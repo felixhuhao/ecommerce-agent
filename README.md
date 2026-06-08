@@ -14,8 +14,12 @@ Run the server from the sibling repo when needed:
 
 ```bash
 cd ../ecommerce-mcp-server
-./mvnw spring-boot:run
+APP_SERVICE_TOKEN=dev-service-token ./mvnw spring-boot:run
 ```
+
+Alternatively, set `APP_SERVICE_TOKEN` in that repo's ignored `.env.properties`.
+It must match this repo's `SPRING_MCP_SERVICE_TOKEN`, or `/mcp` will return
+`401` even though `/actuator/health` is green.
 
 Check the server:
 
