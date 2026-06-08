@@ -49,7 +49,11 @@ Health check:
 
 ```bash
 curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/health/mcp
 ```
+
+`/health/mcp` probes configured external MCP servers and reports `degraded`
+when a dependency is unavailable. It does not start or repair external services.
 
 ## Tests
 
