@@ -34,7 +34,13 @@ WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-VIZ_TOOLS: frozenset[str] = frozenset({"generate_visualization"})
+VIZ_TOOLS: frozenset[str] = frozenset(
+    {
+        "generate_line_chart",
+        "generate_bar_chart",
+        "generate_column_chart",
+    }
+)
 
 
 def spring_headers(settings: Settings) -> dict[str, str]:

@@ -11,7 +11,9 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert isinstance(prompt, str) and len(prompt) > 100
     assert "read-only" in prompt.lower()
     assert "ecommerce_analysis" in prompt
-    assert "generate_visualization" in prompt
+    assert "generate_line_chart" in prompt
+    assert "generate_bar_chart" in prompt
+    assert "generate_column_chart" in prompt
     assert "Never embed raw order or product payloads inside Python source" in prompt
 
 

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import WRITE_OR_APPROVAL_SPRING_TOOLS
+from ecommerce_agent.mcp_client import VIZ_TOOLS, WRITE_OR_APPROVAL_SPRING_TOOLS
 from ecommerce_agent.trace.jsonl import dump_trace
 from ecommerce_agent.trace.schema import TraceRecord
 
@@ -83,7 +83,12 @@ def summarize_trace(record: TraceRecord) -> dict:
     }
 
 
-def assess_attempt(record: TraceRecord, stream_body: str) -> AttemptResult:
+def assess_attempt(
+    record: TraceRecord,
+    stream_body: str,
+    *,
+    require_viz: bool = False,
+) -> AttemptResult:
     """Structural pass/fail for one hero attempt. No semantic judgement."""
     failures: list[str] = []
     tools = set(record.tool_names())
@@ -93,8 +98,11 @@ def assess_attempt(record: TraceRecord, stream_body: str) -> AttemptResult:
     leaked = tools & set(WRITE_OR_APPROVAL_SPRING_TOOLS)
     if leaked:
         failures.append(f"write/approval tools appeared: {sorted(leaked)}")
-    if not ({"execute"} & tools or "generate_visualization" in tools):
-        failures.append("neither execute nor generate_visualization was called")
+    called_viz_tools = tools & VIZ_TOOLS
+    if not ({"execute"} & tools or called_viz_tools):
+        failures.append("neither sandbox execute nor visualization tool was called")
+    if require_viz and not called_viz_tools:
+        failures.append("visualization tool not called")
     if "event: error" in stream_body or "event: done" not in stream_body:
         failures.append("stream did not complete cleanly")
 
@@ -211,6 +219,7 @@ def _run_single_attempt(
     *,
     prompt: str,
     attempt_timeout_seconds: int,
+    require_viz: bool,
 ) -> tuple[AttemptResult, TraceRecord]:
     from fastapi.testclient import TestClient
 
@@ -227,7 +236,7 @@ def _run_single_attempt(
                 status_code = response.status_code
                 body = "".join(response.iter_text())
             record = app.state.last_trace or TraceRecord()
-            result = assess_attempt(record, body)
+            result = assess_attempt(record, body, require_viz=require_viz)
             result.status_code = status_code
             result.duration_ms = (time.monotonic() - started_at) * 1000.0
             if status_code != 200:
@@ -282,10 +291,12 @@ def run_reliability(
     prompt: str = HERO_PROMPT,
     attempt_timeout_seconds: int | None = None,
     failure_trace_path: str | None = None,
+    require_viz: bool | None = None,
 ) -> dict:
     """Run the hero prompt `n` times and return a diagnostic batch report."""
     timeout = attempt_timeout_seconds or _default_attempt_timeout_seconds()
     trace_path = failure_trace_path or _default_failure_trace_path()
+    require_viz_tool = bool(settings.modelscope_mcp_url) if require_viz is None else require_viz
 
     attempts: list[AttemptResult] = []
     for _ in range(n):
@@ -293,6 +304,7 @@ def run_reliability(
             settings,
             prompt=prompt,
             attempt_timeout_seconds=timeout,
+            require_viz=require_viz_tool,
         )
         if not result.passed:
             dump_trace(record, trace_path)
@@ -315,6 +327,7 @@ def run_reliability(
         "pass_rate": passed / n if n else 0.0,
         "failure_modes": failure_modes,
         "attempt_timeout_seconds": timeout,
+        "require_viz": require_viz_tool,
         "failure_trace_path": trace_path if failed else None,
         "attempts": [attempt.to_dict() for attempt in attempts],
     }

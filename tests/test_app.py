@@ -47,25 +47,43 @@ class FakeTool:
         self.name = name
 
 
+def spring_mcp_tools() -> list[FakeTool]:
+    return [
+        FakeTool("product_query"),
+        FakeTool("product_search"),
+        FakeTool("order_query"),
+        FakeTool("inventory_query"),
+        FakeTool("inventory_low_stock"),
+        FakeTool("user_query"),
+        FakeTool("supplier_query"),
+        FakeTool("supplier_top"),
+        FakeTool("purchase_order_query"),
+        FakeTool("get_statistics"),
+        FakeTool("request_approval"),
+        FakeTool("purchase_order_create"),
+        FakeTool("purchase_order_receive"),
+        FakeTool("order_update"),
+    ]
+
+
 class HealthyFakeMcpClient:
     async def get_tools(self, server_name: str) -> list[FakeTool]:
         assert server_name == "spring"
-        return [
-            FakeTool("product_query"),
-            FakeTool("product_search"),
-            FakeTool("order_query"),
-            FakeTool("inventory_query"),
-            FakeTool("inventory_low_stock"),
-            FakeTool("user_query"),
-            FakeTool("supplier_query"),
-            FakeTool("supplier_top"),
-            FakeTool("purchase_order_query"),
-            FakeTool("get_statistics"),
-            FakeTool("request_approval"),
-            FakeTool("purchase_order_create"),
-            FakeTool("purchase_order_receive"),
-            FakeTool("order_update"),
-        ]
+        return spring_mcp_tools()
+
+
+class HealthySpringAndModelscopeFakeMcpClient:
+    async def get_tools(self, server_name: str) -> list[FakeTool]:
+        if server_name == "spring":
+            return spring_mcp_tools()
+        if server_name == "modelscope":
+            return [
+                FakeTool("generate_line_chart"),
+                FakeTool("generate_bar_chart"),
+                FakeTool("generate_column_chart"),
+                FakeTool("generate_area_chart"),
+            ]
+        raise AssertionError(f"unexpected server: {server_name}")
 
 
 class FailingFakeMcpClient:
@@ -115,6 +133,30 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
         "request_approval",
     ]
     assert spring["missing_expected_read_tools"] == []
+
+
+def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
+    app = create_app(
+        settings=make_settings(modelscope_mcp_url="http://modelscope.example/mcp"),
+        mcp_client=HealthySpringAndModelscopeFakeMcpClient(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health/mcp")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    modelscope = body["servers"]["modelscope"]
+    assert modelscope["status"] == "ok"
+    assert modelscope["tool_count"] == 4
+    assert modelscope["agent_allowed_tool_count"] == 3
+    assert modelscope["agent_allowed_tools"] == [
+        "generate_bar_chart",
+        "generate_column_chart",
+        "generate_line_chart",
+    ]
+    assert modelscope["missing_expected_viz_tools"] == []
 
 
 def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
@@ -226,7 +268,7 @@ def test_chat_stream_lazily_builds_analyst_with_backend(
     async def fake_load_modelscope_viz_tools(mcp_client: BuildableFakeMcpClient) -> list[FakeTool]:
         assert isinstance(mcp_client, BuildableFakeMcpClient)
         calls["viz"] += 1
-        return [FakeTool("generate_visualization")]
+        return [FakeTool("generate_line_chart")]
 
     def fake_get_primary_model(settings: Settings) -> object:
         assert settings.llm_api_key == "test-key"
@@ -243,7 +285,7 @@ def test_chat_stream_lazily_builds_analyst_with_backend(
         assert model is not None
         assert backend is not None
         assert [tool.name for tool in spring_read_tools] == ["order_query"]
-        assert [tool.name for tool in viz_tools] == ["generate_visualization"]
+        assert [tool.name for tool in viz_tools] == ["generate_line_chart"]
         calls["analyst"] += 1
         return FakeAgent()
 

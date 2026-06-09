@@ -82,11 +82,24 @@ def test_filter_spring_read_tools_excludes_write_and_approval_tools() -> None:
 
 def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
     tools = [
-        SimpleNamespace(name="generate_visualization"),
+        SimpleNamespace(name="generate_line_chart"),
+        SimpleNamespace(name="generate_bar_chart"),
+        SimpleNamespace(name="generate_column_chart"),
+        SimpleNamespace(name="generate_area_chart"),
         SimpleNamespace(name="some_other_modelscope_tool"),
     ]
 
     filtered = filter_viz_tools(tools)  # type: ignore[arg-type]
 
-    assert tool_names(filtered) == {"generate_visualization"}  # type: ignore[arg-type]
-    assert VIZ_TOOLS == frozenset({"generate_visualization"})
+    assert tool_names(filtered) == {  # type: ignore[arg-type]
+        "generate_line_chart",
+        "generate_bar_chart",
+        "generate_column_chart",
+    }
+    assert VIZ_TOOLS == frozenset(
+        {
+            "generate_line_chart",
+            "generate_bar_chart",
+            "generate_column_chart",
+        }
+    )

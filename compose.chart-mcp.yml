@@ -1,0 +1,29 @@
+services:
+  chart-renderer:
+    image: node:22-alpine
+    command:
+      - node
+      - /app/chart-renderer-stub.mjs
+    environment:
+      PORT: "3000"
+    ports:
+      - "${CHART_RENDERER_PORT:-3000}:3000"
+    volumes:
+      - ./tools/chart-renderer-stub.mjs:/app/chart-renderer-stub.mjs:ro
+
+  chart-mcp:
+    image: node:22-alpine
+    environment:
+      VIS_REQUEST_SERVER: http://chart-renderer:3000/generate
+    command:
+      - sh
+      - -lc
+      - >
+        npx -y @antv/mcp-server-chart
+        --transport streamable
+        --host 0.0.0.0
+        --port 1122
+    ports:
+      - "${CHART_MCP_PORT:-1122}:1122"
+    depends_on:
+      - chart-renderer

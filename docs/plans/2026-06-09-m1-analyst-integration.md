@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment 2026-06-09:** This is a historical execution plan. It originally assumed a merged
+> ModelScope `generate_visualization` tool. The implemented M1 chart seam now allowlists AntV's
+> native chart tools (`generate_line_chart`, `generate_bar_chart`, `generate_column_chart`) because
+> the live ModelScope/AntV MCP server exposes chart-specific tools. The living specs and code use the
+> native-tool names; the older references below are preserved as plan history.
+
 **Goal:** Wire the M1 **sales-analyst** runtime agent: YAML prompts, the ModelScope `generate_visualization` seam, a single deep agent built on the `DockerSandbox` backend (Plan 1), and a one-shot live smoke of the forecast hero flow.
 
 **Architecture:** A single `create_deep_agent` instance (no coordinator) gets the 10 read-only SpringBoot tools + `generate_visualization`; `execute`/file tools come from the shared `DockerSandbox` backend. The agent is built lazily on first chat (the Week 1 pattern), now with the backend + viz tools. Prompts live in `prompts/prompts.yml`. The coordinator/sub-agent shape exists only as a dormant factory seam for M2.

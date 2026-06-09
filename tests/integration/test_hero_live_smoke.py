@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
 from ecommerce_agent.config import Settings
+from ecommerce_agent.mcp_client import VIZ_TOOLS
 from tests.integration.helpers import (
     skip_unless_docker_available,
     skip_unless_spring_mcp_is_running,
@@ -67,4 +68,4 @@ async def test_hero_flow_single_run() -> None:
     assert response.status_code == 200
     assert "event: done" in body
     assert "event: error" not in body
-    assert ("execute" in body) or ("generate_visualization" in body)
+    assert ("execute" in body) or any(tool_name in body for tool_name in VIZ_TOOLS)

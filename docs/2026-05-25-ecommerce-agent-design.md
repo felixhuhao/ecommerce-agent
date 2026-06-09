@@ -252,7 +252,10 @@ Tools come from three MCP servers — only the first group is SpringBoot:
 - `get_statistics` — aggregated business statistics
 
 *ModelScope MCP:*
-- `generate_visualization` — merged chart tool (26→1)
+- `generate_line_chart`, `generate_bar_chart`, `generate_column_chart` — M1 allowlisted
+  ModelScope/AntV chart tools. A future adapter may restore a single merged
+  `generate_visualization` product contract, but the live AntV MCP server exposes chart-specific
+  tools today.
 
 *Python MCP (Sandbox):*
 - `run_code` — execute Python code in Sandbox (pandas, numpy)
@@ -594,8 +597,9 @@ Java server is implemented and live; its authoritative contract is the [Java spe
 This table describes SpringBoot business capabilities and their target agent/backend surface. In
 the target product model, only **Read** tools and `request_approval` are agent-reachable MCP tools.
 The write rows are backend-executed operations keyed by `approval_id`, not tools exposed to the
-LLM. Visualization (`generate_visualization`) and sandbox tools (`run_code`, `read_uploaded_file`,
-`write_report`) are served by the ModelScope and Python MCP servers respectively (§8.2).
+LLM. Visualization (`generate_line_chart`, `generate_bar_chart`, `generate_column_chart` in M1)
+and sandbox tools (`run_code`, `read_uploaded_file`, `write_report`) are served by the
+ModelScope/AntV and Python MCP servers respectively (§8.2).
 
 Tool names follow a consistent `{domain}_{action}` convention.
 
@@ -686,14 +690,20 @@ com.ecommerce.agent/
 
 ## 9. Visualization
 
-Use MCP visualization tools from ModelScope community (same as ERP_OPENCLAW).
+Use MCP visualization tools from the ModelScope/AntV community (same ecosystem as ERP_OPENCLAW).
 
-Merge 26 chart tools into 1 `generate_visualization` entry:
-- Tool description contains compact reference table (~800 tokens)
-- Full parameter schema stored in sandbox `/skills/analyst/chart_params.md`
-- Agent reads reference file when uncertain, then calls tool
+M1 exposes a deliberately small native AntV tool allowlist:
+- `generate_line_chart` — time series and forecast hero path
+- `generate_bar_chart` — horizontal category comparisons
+- `generate_column_chart` — vertical category totals/comparisons
 
-Supported chart types: line, bar, column, pie, area, scatter, radar, funnel, sankey, waterfall, dual_axes, heatmap, treemap, word_cloud, mind_map, flow_diagram, etc.
+The original target was to merge 26 chart tools into one `generate_visualization` entry. Keep that
+as a future adapter option, not an M1 requirement: the live AntV MCP server exposes chart-specific
+tools today, and a narrow allowlist gives the sales analyst a reliable backend chart smoke path
+without flooding the prompt with 27 tool schemas.
+
+Supported future chart types include pie, area, scatter, radar, funnel, sankey, waterfall,
+dual_axes, heatmap, treemap, word_cloud, mind_map, flow_diagram, etc.
 
 ## 10. File Upload & Report Generation
 

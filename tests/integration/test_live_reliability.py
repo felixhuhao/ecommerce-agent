@@ -8,6 +8,7 @@ import pytest
 from ecommerce_agent.config import Settings
 from ecommerce_agent.evals import live_reliability
 from ecommerce_agent.evals.live_reliability import assess_attempt, run_reliability
+from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.trace.jsonl import append_eval_baseline
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 from tests.integration.helpers import (
@@ -39,12 +40,22 @@ def _record_with_tools(*names: str) -> TraceRecord:
     return record
 
 
-def test_assess_attempt_passes_on_good_trace() -> None:
-    record = _record_with_tools("order_query", "execute", "generate_visualization")
+@pytest.mark.parametrize("viz_tool", sorted(VIZ_TOOLS))
+def test_assess_attempt_passes_on_good_trace(viz_tool: str) -> None:
+    record = _record_with_tools("order_query", "execute", viz_tool)
 
     result = assess_attempt(record, "event: tool\nevent: done\n")
 
     assert result.passed, result.failures
+
+
+def test_assess_attempt_can_require_visualization_tool() -> None:
+    record = _record_with_tools("order_query", "execute")
+
+    result = assess_attempt(record, "event: tool\nevent: done\n", require_viz=True)
+
+    assert not result.passed
+    assert "visualization tool not called" in result.failures
 
 
 def test_assess_attempt_flags_write_tool_and_missing_done() -> None:
@@ -69,7 +80,9 @@ def test_run_reliability_records_failed_attempt_diagnostics(
         *,
         prompt: str,  # noqa: ARG001
         attempt_timeout_seconds: int,
+        require_viz: bool,
     ) -> tuple[live_reliability.AttemptResult, TraceRecord]:
+        assert require_viz is False
         record = _record_with_tools("order_query")
         record.answer = "partial answer"
         result = assess_attempt(record, "event: token\ndata: {}\n")
@@ -84,11 +97,13 @@ def test_run_reliability_records_failed_attempt_diagnostics(
         Settings(_env_file=None),
         attempt_timeout_seconds=7,
         failure_trace_path=str(trace_path),
+        require_viz=False,
     )
 
     assert report["passed"] == 0
     assert report["pass_rate"] == 0.0
     assert report["attempt_timeout_seconds"] == 7
+    assert report["require_viz"] is False
     assert report["failure_trace_path"] == str(trace_path)
     assert report["attempts"][0]["trace_path"] == str(trace_path)
     assert report["attempts"][0]["body_tail"] == "event: token\ndata: {}\n"
@@ -127,6 +142,7 @@ async def test_live_reliability_batch_records_baseline(tmp_path) -> None:
 
     assert report["n"] == runs
     assert 0.0 <= report["pass_rate"] <= 1.0
+    assert report["require_viz"] is bool(settings.modelscope_mcp_url)
     print(
         "reliability:",
         report["passed"],

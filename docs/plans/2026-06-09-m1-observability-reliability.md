@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment 2026-06-09:** This is a historical execution plan. It originally asserted against a
+> merged ModelScope `generate_visualization` tool. The implemented reliability harness now checks
+> membership in the native AntV chart allowlist (`generate_line_chart`, `generate_bar_chart`,
+> `generate_column_chart`) and can require one of those tools when `MODELSCOPE_MCP_URL` is set.
+> Older references below are preserved as plan history.
+
 **Goal:** Add the M1 structured trace (one OTel-shaped event stream that SSE renders, dev debugging dumps, and the eval harness asserts over) and a `RUN_LIVE_LLM`-gated N-run reliability harness with a baseline log.
 
 **Architecture:** A `trace` module consumes `agent.astream_events(...)` once and yields `TraceEvent`s; SSE renders from those events (replacing Week 1's direct mapping), and a `TraceRecord` accumulates per turn for JSONL dumps and eval assertions. The reliability harness drives the real stack N times, asserts structural conditions over the trace, and appends an append-only baseline record. LangSmith stays an optional, independent side-channel (not built here).

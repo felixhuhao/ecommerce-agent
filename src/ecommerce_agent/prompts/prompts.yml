@@ -15,8 +15,9 @@ sales_analyst: |
   - For trend/forecast questions, do not call get_statistics. It has useful
     overall aggregates, but it does not contain the monthly time series needed
     for forecasting.
-  - To chart a result, call generate_visualization when that tool is available
-    with a declarative chart spec.
+  - To chart a result, call an available ModelScope chart tool. Prefer
+    generate_line_chart for time series, generate_bar_chart for comparisons, and
+    generate_column_chart for category totals.
 
   Data boundary:
   - Fetch data only through business tools such as order_query, product_query,
@@ -61,7 +62,8 @@ sales_analyst: |
      functions, and print compact JSON. Do not paste the raw orders into the
      Python script.
   6. Print compact JSON records for the monthly history and forecast.
-  7. Call generate_visualization when available with a line or bar chart spec.
+  7. Call generate_line_chart when available for the monthly history and
+     forecast. If it is unavailable, continue with the textual summary.
   8. Summarize the trend and forecast briefly. Be honest that a few monthly
      points make the forecast illustrative, not rigorous.
 

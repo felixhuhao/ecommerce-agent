@@ -39,8 +39,31 @@ X-Session-Id: local-session
 ```
 
 Copy `.env.example` to `.env` and adjust values for your local MCP servers.
-Week 1 enables only the SpringBoot business MCP server; ModelScope and Python
-MCP URLs are reserved for later phases.
+Week 1 requires only the SpringBoot business MCP server. The optional
+ModelScope/AntV chart MCP server can be enabled for chart-tool smoke tests:
+
+```bash
+docker compose -f compose.chart-mcp.yml up chart-mcp
+```
+
+Then set:
+
+```env
+MODELSCOPE_MCP_URL=http://127.0.0.1:1122/mcp
+```
+
+The agent allowlists a small chart surface from that server:
+`generate_line_chart`, `generate_bar_chart`, and `generate_column_chart`.
+The Compose file also starts a lightweight local renderer stub and wires AntV's
+`VIS_REQUEST_SERVER` to it, so backend chart-tool smoke tests do not depend on
+the public AntV render endpoint. UI-grade chart rendering belongs to the later
+operator console/artifact milestone. If `1122` is already in use, run:
+
+```bash
+CHART_MCP_PORT=1123 docker compose -f compose.chart-mcp.yml up chart-mcp
+```
+
+and set `MODELSCOPE_MCP_URL=http://127.0.0.1:1123/mcp`.
 
 ## Local App
 
@@ -79,3 +102,6 @@ are available:
 ```bash
 RUN_LIVE_LLM=1 uv run pytest -m live
 ```
+
+When `MODELSCOPE_MCP_URL` is set, the live reliability harness also requires the
+hero run to call one allowlisted chart tool.

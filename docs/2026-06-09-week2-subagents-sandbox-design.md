@@ -22,13 +22,13 @@ Milestones are the canonical roadmap vocabulary; week labels describe implementa
 
 **In scope (Week 2 / M1):**
 - **sales-analyst** runtime agent (read-only): the 10 SpringBoot read tools +
-  `generate_visualization`, backed by `DockerSandbox`
+  allowlisted ModelScope/AntV chart tools, backed by `DockerSandbox`
 - **Coordinator/sub-agent seam** only: factory shape exists, but M1 does not route through a
   coordinator until M2 adds `order-manager`
 - **DockerSandbox** — a custom DeepAgents backend giving isolated code execution + a sandbox filesystem
 - **Pre-baked `ecommerce_analysis` helper kit** in the sandbox image — four stable commerce
   analysis helpers, used by agent-written glue code instead of fresh pandas from scratch
-- **Visualization** via ModelScope MCP `generate_visualization`, behind a swappable seam
+- **Visualization** via ModelScope/AntV MCP chart tools, behind a swappable seam
 - **YAML prompt management** (migrate the inline Week 1 prompt)
 - Two-tier tests (default boundary tests incl. helper + real-Docker sandbox tests; opt-in live
   reliability harness)
@@ -67,7 +67,7 @@ rendering belongs to the UI/artifact surface later.
 | Sandbox lifecycle | **Persistent per-session container**, reused across `execute` calls | Matches mature code-interpreters (§10): statefulness + no per-call cold start. |
 | Statefulness | **Filesystem-stateful** (files persist; each `execute` runs fresh code) | Agent round-trips data through sandbox files; simplest model that fits DeepAgents' shell-based `execute`. Full REPL/kernel state is a later upgrade. |
 | Files location | **On the sandbox** (backend = sandbox) | All file tools + `execute` share one workspace; code consumes the files the agent writes. Matches parent §2.2. |
-| Visualization | ModelScope MCP `generate_visualization` (declarative, 26→1) **behind a seam** | Conversational-BI products use declarative specs rendered in the UI; compute/render split. Self-hosted renderer is a drop-in if ModelScope is unavailable. |
+| Visualization | ModelScope/AntV MCP chart tools (`generate_line_chart`, `generate_bar_chart`, `generate_column_chart`) **behind a seam** | Conversational-BI products use declarative specs rendered in the UI; compute/render split. A future adapter can restore a single `generate_visualization` contract if needed. |
 | Prompts | YAML (`prompts/prompts.yml` + loader) | Parent §4.5; keeps agent definitions thin (config, not prose). |
 | Structure | Option C: `sandbox/` package; `agents.py`; `prompts/`; viz seam in `mcp_client.py` | Pre-split only the certain-to-grow, multi-concern piece (sandbox); keep the rest flat with clean seams. |
 | Deferred features | M1.5/M2/M4 features deferred with **proven seams** | They are native additive slots (`tools`/`skills`/`interrupt_on`); `build_agent` threads all of them now. |
@@ -111,11 +111,11 @@ No `session/`, custom `middleware/`, or `checkpoint/` modules yet — those are 
 
 - **`build_agent(model, *, tools, subagents, middleware, skills, backend)`** — every DeepAgents
   extension slot is a parameter from day one (proven seams). Week 2 / M1 passes:
-  `subagents=[]`, `skills=[]`, the 10 SpringBoot read tools, `generate_visualization`, and the
+  `subagents=[]`, `skills=[]`, the 10 SpringBoot read tools, allowlisted chart tools, and the
   `DockerSandbox` backend.
 - **sales-analyst runtime agent:** `agents.py` builds the M1 agent directly with a prompt from
   `prompts.yml:sales_analyst`. It has read-only SpringBoot tools (reuse Week 1's
-  `READ_ONLY_SPRING_TOOLS`) **+** `generate_visualization`; `execute` + file tools come from the
+  `READ_ONLY_SPRING_TOOLS`) **+** allowlisted chart tools; `execute` + file tools come from the
   shared backend (no per-tool wiring).
 - **Dormant coordinator seam:** `agents.py` may expose a `build_coordinator_agent` /
   `build_sales_analyst_subagent` shape, but M1 does not put the analyst behind `subagents=[...]`.
@@ -217,12 +217,17 @@ Rules:
 - Enable the **ModelScope MCP connection** in `mcp_client.py` (the `MODELSCOPE_MCP_URL` config seam
   exists from Week 1); tools are discovered like SpringBoot's.
 - A **viz-tool allowlist** (parallel to `READ_ONLY_SPRING_TOOLS`) exposes only
-  `generate_visualization` to the sales-analyst.
-- The agent's contract is **"emit a chart spec"**; ModelScope renders the declarative config. If
-  ModelScope is unreachable at implementation time, the seam swaps in a self-hosted declarative
-  renderer without touching the agent. *Implementation-time item: confirm ModelScope endpoint/token.*
-- **Compute/render split:** sandbox computes aggregates → `generate_visualization` produces the
-  spec → the operator console displays it later. Week 2 verifies the spec is produced.
+  `generate_line_chart`, `generate_bar_chart`, and `generate_column_chart` to the sales-analyst.
+- The agent's contract is **"call a small chart surface when available"**. The current AntV MCP
+  server exposes native chart-specific tools rather than the planned merged `generate_visualization`
+  tool; a future adapter can reintroduce the single-tool contract without changing the rest of the
+  agent architecture.
+- Reliable local chart smoke tests use `compose.chart-mcp.yml`, which runs both the AntV MCP server
+  and a lightweight local renderer stub via `VIS_REQUEST_SERVER`; the public AntV render endpoint may
+  be slow or unreachable from a developer machine. UI-grade chart rendering remains an M3 concern.
+- **Compute/render split:** sandbox computes aggregates → a ModelScope/AntV chart tool produces the
+  chart artifact/spec → the operator console displays it later. Week 2 verifies the chart tool is
+  called when ModelScope is configured.
 - **Artifact storage deferral:** M1 may stream the chart spec directly in the response. Assigning
   durable artifact ids, ownership/session metadata, and artifact storage is an M1.5/M3 concern,
   not an overlooked Week 2 requirement.
@@ -248,12 +253,12 @@ POST /api/chat/stream {message}
  → sales-analyst calls order_query pages for the last 6 months (SpringBoot MCP) → data into context
  → write_file(orders.json) [sandbox]
  → execute(glue code using ecommerce_analysis: load, bucket month×category, forecast) [sandbox]
- → generate_visualization(spec from aggregates) [ModelScope MCP] → chart spec
+ → generate_line_chart(data from aggregates) [ModelScope MCP] → chart artifact/spec
  → sales-analyst streams analysis + chart spec
 ```
 
 SSE frames are unchanged (`token` / `tool` / `done` / `error`); `tool` frames now also surface
-`execute` and `generate_visualization`, so the boundary is observable in tests.
+`execute` and the chart tool, so the boundary is observable in tests.
 
 For simpler aggregation questions such as "compare sales by category," the agent should prefer
 authoritative SpringBoot statistics (`get_statistics`) and skip the sandbox unless the user asks for
@@ -373,7 +378,7 @@ reasons. Treat pass rate as a tracked metric, not a hard gate at small N. Struct
 - no write/approval tools appear.
 - `execute` is called and either succeeds or performs a bounded self-debug retry before failing.
 - forecast outputs are non-empty finite numbers.
-- `generate_visualization` is called with a schema-valid chart spec; if validation fails, the
+- an allowlisted chart tool is called when `MODELSCOPE_MCP_URL` is configured; if validation fails, the
   renderer seam can return a default-chart fallback and record the degradation.
 - the stream completes with `done`, not `error`.
 
