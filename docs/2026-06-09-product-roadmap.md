@@ -3,6 +3,7 @@
 > Product-grade roadmap for the e-commerce operations assistant.
 > Status: Draft | Date: 2026-06-09
 > Parent spec: [2026-05-25-ecommerce-agent-design.md](2026-05-25-ecommerce-agent-design.md)
+> Research findings: [2026-06-09-mature-agent-product-research.md](2026-06-09-mature-agent-product-research.md)
 > Week 1: [2026-06-08-week1-foundation-design.md](2026-06-08-week1-foundation-design.md)
 > Week 2: [2026-06-09-week2-subagents-sandbox-design.md](2026-06-09-week2-subagents-sandbox-design.md)
 
@@ -31,6 +32,8 @@ Mature agent products and platforms converge on a few patterns:
 | Stateful sandbox/artifacts | E2B, GitHub Copilot coding agent style task environments | Persistent per-session sandbox and artifact history are product-grade expectations. |
 | Operator visibility | Enterprise copilots show traces, tasks, approvals, and generated assets | The UI must expose agent work, not only final answers. |
 
+Detailed notes live in
+[2026-06-09-mature-agent-product-research.md](2026-06-09-mature-agent-product-research.md).
 Reference links:
 
 - Anthropic: https://www.anthropic.com/engineering/built-multi-agent-research-system
