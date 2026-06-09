@@ -24,8 +24,9 @@ is M3; M2 builds the backend + stream infra the console will subscribe to.
 **Depends on (separate slice):** the Java companion change — `POST /approvals/{id}/execute`, removed
 write `@McpTool`s, extended lifecycle. Land that first.
 
-**Deferred:** visual console + multi-instance stream fan-out + per-session sandbox reaping (M3/M4);
-batch/delete ops; skills/memory (parent §4.4 middleware stack lands incrementally).
+**Deferred:** visual console + multi-instance stream fan-out (M3/M4); a managed/remote sandbox
+executor that drops the `docker.sock` privilege (later `BaseSandbox` swap); batch/delete ops;
+skills/memory (parent §4.4 middleware stack lands incrementally).
 
 ## 2. Architecture Overview
 
@@ -63,7 +64,9 @@ M1's chat is stateless (`POST /api/chat/stream` with `{message}`, no persistence
 | `POST /api/sessions/{id}/approvals/{aid}/reject` | Body `{reason}`. Reject + append status. |
 
 M1's `POST /api/chat/stream` is **replaced** by this session model (no back-compat shim needed —
-single dev consumer today).
+single dev consumer today). The M1 live/eval tests that drive `/api/chat/stream`
+(`test_chat_stream_live`, `test_hero_live_smoke`, `live_reliability`) **migrate to the session
+endpoints in the same slice** — the replacement isn't done until they pass against the new contract.
 
 ### 3.2 Conversation thread store (MongoDB)
 
@@ -79,6 +82,11 @@ the ordered append log.
   "type": "user | agent_answer | agent_proposal | approval_status | execution_result",
   "content": "string (human-readable text)",
   "created_at": "iso-8601",
+  "seq": 7,                               // per-session monotonic ordering key (authoritative, NOT created_at)
+  "turn_id": "uuid",                      // agent turn that produced this msg (null for human/system appends)
+  "trace_id": "uuid",                     // links to the turn's TraceRecord (§3.4)
+  "actor_id": "operator user_id",         // who caused it (the agent, or the approving operator)
+  "execution_id": null,                   // reserved: links execution_result to a backend execution/audit record
   // type-specific:
   "approval_id":  "...",                  // agent_proposal | approval_status | execution_result
   "card":         { /* server-rendered operation_detail from Java */ },  // agent_proposal
@@ -89,8 +97,12 @@ the ordered append log.
 }
 ```
 
-`ThreadStore.append(session_id, msg)` writes to Mongo **and** publishes a `thread.append` event to
-the `SessionBus` (§4) — one call, two effects, so reload and live stream never diverge.
+`ThreadStore` is a small **async protocol** (prod: `MongoThreadStore` over `motor`; tests: an async
+`InMemoryThreadStore`). `append(session_id, msg)`: **Mongo is the source of truth** — persist first,
+assigning the next per-session monotonic `seq`, then **best-effort** publish a `thread.append` to the
+`SessionBus` (§4). A publish failure never fails the append; live delivery is at-most-once and
+`GET …/thread` (ordered by `seq`) is authoritative for recovery. Ordering and dedupe use `seq`, never
+`created_at` (which can collide).
 
 ### 3.3 Per-session agent & trusted identity
 
@@ -100,10 +112,16 @@ So the agent is built **per session** and cached:
 - `app.state.sessions[session_id] = SessionRuntime{ coordinator, mcp_client, created_at, ... }`.
 - The session's Spring MCP connection carries trusted headers `X-Session-Id = session_id`,
   `X-User-Id = <operator>` so `request_approval` binds the approval to this session (Java spec §4.2).
-- The `DockerSandbox` backend stays **shared** (M1) with session-namespaced workspace dirs;
-  per-session sandbox isolation + reaping is M4 (risk R10).
-- Idle session reaping: a thin TTL hook (reuse `sandbox_idle_ttl_seconds` pattern); full lifecycle
-  management is M4. Note the in-process session map is single-instance only (multi-instance is M4).
+- **Per-session `DockerSandbox`** (not a shared one). The backend already supports this —
+  `DockerSandbox(limits, session_id=…)` names its container `ecommerce-sandbox-{session_id}`
+  ([sandbox/backend.py](src/ecommerce_agent/sandbox/backend.py)) — so each `SessionRuntime` owns its
+  own container and gets true cross-session file isolation, rather than relying on the
+  `/workspace`-wide path validation (`_sandbox_file_path`), which is **not** session-scoped today.
+- **Idle reaper + concurrency cap:** a thin sweep closes sessions idle past
+  `session_idle_ttl_seconds` via the existing `idle_seconds()` / `close()` hooks, and a cap bounds the
+  number of live session containers. This is the M2 slice of the per-session model risk R10
+  anticipates; a managed/remote executor that drops the `docker.sock` privilege stays a later
+  `BaseSandbox` swap. The in-process session map is single-instance only (multi-instance is M4).
 
 ### 3.4 Trace capture per session
 
@@ -127,8 +145,11 @@ Plus boundary markers: `done` (turn complete, carries `turn_id`) and `error`.
 
 **SessionBus** — in-process per-session pub/sub: `session_id → set[asyncio.Queue]`.
 `publish(session_id, event)` fans out; `subscribe(session_id)` is an async generator the SSE
-endpoint drains. On connect, the stream first replays the persisted thread as `thread.append` events
-(backlog), then streams live; clients dedupe by `message_id`.
+endpoint drains. To avoid a backlog/live race (a message appended between reload and subscribe), the
+endpoint **subscribes first** (buffering live events), **then** replays the persisted thread up to
+the current `seq`, then emits the buffered live events whose `seq` exceeds the replay cursor. Clients
+also dedupe by `seq`. Ephemeral `token`/`tool` events carry no `seq` and are delivered live only — a
+mid-turn reconnect replays durable messages, not a partial token stream.
 
 **Turn execution as a server task:** `POST …/messages` persists the `user` message and spawns a task
 that runs `coordinator.astream_events`, feeds events through `trace.capture`, and publishes `token`/
@@ -168,16 +189,25 @@ The dormant seam in [agents.py](src/ecommerce_agent/agents.py) becomes live:
 ### 6.1 Proposal → thread
 
 When the order-manager turn calls `request_approval` and ends, the turn task:
-1. reads `approval_id` from the tool result,
-2. fetches the **server-rendered card** via `GET /approvals/{id}` on Java,
+1. captures the **raw structured result** of the `request_approval` tool call (the `on_tool_end`
+   output *before* trace summarization — `trace.capture` truncates tool output to 500 chars via
+   `_summarize` ([trace/capture.py](src/ecommerce_agent/trace/capture.py)), so `approval_id` must
+   come from the raw result, **not** `result_summary`) and reads `approval_id` from it;
+2. fetches the **server-rendered card** via `GET /approvals/{id}` on Java;
 3. appends an `agent_proposal` message (`approval_id`, `card`, `tool_name`, `status=pending`).
 
-No agent is suspended; the turn ends normally (parent §5.2).
+A missing/malformed `approval_id` (tool error, schema drift) is a **handled failure**: append an
+`agent_answer` surfacing that no proposal was created — never a silent drop (tested, §8). No agent is
+suspended; the turn ends normally (parent §5.2).
 
 ### 6.2 One human action, two backend transitions
 
 `POST /api/sessions/{sid}/approvals/{aid}/approve` orchestrates, using the **human/approval
-credential** (distinct from the MCP service token — Java spec §4.2):
+credential** (distinct from the MCP service token — Java spec §4.2). Concretely, FastAPI calls the
+Java `/approvals/**` endpoints with `Authorization: Bearer {approval_api_token}` and forwards the
+acting user's `X-User-Id`/`X-Session-Id`; for M2 the acting user is the single configured operator
+`user_id` (§12), which must match the approval's binding or Java rejects (actor binding). M3 swaps in
+the authenticated console user.
 1. `POST /approvals/{aid}/approve` on Java → flips status to `approved`.
 2. `POST /approvals/{aid}/execute` on Java → deterministic backend execute from the stored payload.
 3. Append `approval_status(approved)` then `execution_result` messages → published live + persisted.
@@ -213,13 +243,20 @@ optional `session_idle_ttl_seconds`.
 ## 8. Testing
 
 **Default (unit) suite — no external services:**
-- `ThreadStore` append/reload (Mongo faked via `mongomock`-style or an in-memory fake store).
-- `SessionBus` fan-out: multiple subscribers, backlog-then-live, dedupe by `message_id`.
+- `ThreadStore` is a small **async protocol** with two impls: `MongoThreadStore` (motor) for prod and
+  an async `InMemoryThreadStore` for tests. The suite uses `InMemoryThreadStore` (not `mongomock`,
+  which biases toward sync under an async driver). Cover append/reload, `seq` monotonicity, and the
+  best-effort-publish / source-of-truth semantics (§3.2).
+- `SessionBus` fan-out: multiple subscribers; **subscribe-first-then-replay** has no gap and no
+  duplicates across the `seq` cursor (§4); dedupe by `seq`.
 - Approval orchestrator state machine: approve→execute happy path; idempotent replay; `invalidated`;
   `failed`; reject — with the Java REST calls mocked.
-- order-manager allowlist test: asserts `request_approval` **present**, the three writes **absent**;
-  asserts `request_approval` is **not** on `sales-analyst`.
-- Coordinator routing test: order/procurement → order-manager, analysis → sales-analyst.
+- order-manager allowlist test: asserts `request_approval` **present**, the three writes **absent**,
+  and `request_approval` **not** on `sales-analyst`.
+- Coordinator factory test: the coordinator holds **no business tools** (it only delegates). Routing
+  test: order/procurement → order-manager, analysis → sales-analyst.
+- Proposal extraction: `approval_id` read from the raw tool result; a missing/malformed id is handled,
+  not dropped (§6.1).
 
 **Integration suite (gated, like the sandbox/live suites):** full loop against real Java + MySQL +
 Mongo — propose → approve → execute → result re-enters via stream **and** reload; plus negative
@@ -228,8 +265,9 @@ env flag and skip clearly when services are absent.
 
 ## 9. Acceptance (mirrors roadmap M2)
 
-- Agent can propose a purchase order but holds **no tool capable of executing it** (allowlist test +
-  `mcp_health` shows the writes blocked).
+- Agent can propose a purchase order but holds **no tool capable of executing it**. `GET /health/mcp`
+  reports **per-agent allowlists** (reads + `get_statistics` shared; `request_approval` on
+  order-manager only; the three writes on neither), and the allowlist unit test asserts the same.
 - An approval can be approved/rejected via the API; Java `approve` only flips status while FastAPI
   orchestrates the separate approve + execute transitions as one human action.
 - The execute call is retried / idempotently reported.
@@ -244,7 +282,8 @@ env flag and skip clearly when services are absent.
 1. **Java slice first** — companion spec §9 (execute endpoint, remove write `@McpTool`s, lifecycle,
    negative matrix green).
 2. **Session + thread store + SessionBus + unified stream** — sessions, Mongo `ThreadStore`,
-   `GET …/thread`, `GET …/stream`, `POST …/messages` (turn-as-task), per-session trace.
+   `GET …/thread`, `GET …/stream`, `POST …/messages` (turn-as-task), per-session trace, and the
+   per-session `DockerSandbox` + idle reaper/concurrency cap.
 3. **order-manager + coordinator activation** — allowlists, `order_manager` prompt,
    `build_coordinator`, replace `_ensure_agent`.
 4. **Approval orchestration + result re-entry** — proposal message, approve/reject/execute
@@ -259,8 +298,12 @@ env flag and skip clearly when services are absent.
   thread re-entry (§6.3).
 - **R13 (two-repo coordination):** Java change is its own reviewed slice with the negative matrix
   re-run; specs cross-linked.
+- **R10 (sandbox isolation):** M2 moves to per-session containers (true isolation) + a thin idle
+  reaper/concurrency cap (§3.3); the `docker.sock`-privilege removal stays a later `BaseSandbox` swap.
+- **R12 (audit/artifact schema):** the message schema carries the audit spine now — `seq`, `turn_id`,
+  `trace_id`, `actor_id`, and a reserved `execution_id` (§3.2).
 - **Cut lines:** no batch/delete; no `interrupt()`/resume; no generic messaging platform; no visual
-  UI; multi-instance stream fan-out and per-session sandbox reaping deferred to M3/M4.
+  UI; multi-instance stream fan-out deferred to M3/M4.
 
 ## 12. Best-Guess Decisions To Confirm At Review
 
@@ -268,4 +311,5 @@ env flag and skip clearly when services are absent.
 - Operator identity is a single configured `user_id` for M2; real multi-user RBAC is M4.
 - Mongo runs via a dev `docker-compose` in this repo (vs. an externally managed Mongo like the Java
   server).
-- `motor` as the async Mongo driver; `mongomock`-style fake for unit tests.
+- `motor` as the async Mongo driver; unit tests use an async `InMemoryThreadStore` behind the
+  `ThreadStore` protocol (not `mongomock`).
