@@ -43,6 +43,14 @@ class FakeMessages:
         )
 
 
+class FakeClient:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 @pytest.mark.asyncio
 async def test_mongo_store_append_and_list() -> None:
     store = MongoThreadStore(messages=FakeMessages(), counters=FakeCounters())
@@ -53,3 +61,12 @@ async def test_mongo_store_append_and_list() -> None:
     msgs = await store.list_messages("s1")
     assert [msg.seq for msg in msgs] == [1, 2]
     assert [msg.content for msg in msgs] == ["a", "b"]
+
+
+def test_mongo_store_closes_owned_client() -> None:
+    client = FakeClient()
+    store = MongoThreadStore(messages=FakeMessages(), counters=FakeCounters(), client=client)
+
+    store.close()
+
+    assert client.closed is True

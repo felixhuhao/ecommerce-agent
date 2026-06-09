@@ -30,6 +30,7 @@ def build_test_app() -> FastAPI:
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_bus = SessionBus()
     app.state.background_tasks = set()
+    app.state.trace_records = {}
 
     async def build_runtime(session_id: str) -> SessionRuntime:
         return SessionRuntime(
@@ -61,12 +62,14 @@ def test_message_runs_turn_and_thread_reload_shows_it() -> None:
 
         post = client.post(f"/api/sessions/{session_id}/messages", json={"message": "hello"})
         assert post.status_code == 202
+        turn_id = post.json()["turn_id"]
 
         thread = _wait_for_thread(client, session_id, expected_types=["user", "agent_answer"])
         types = [message["type"] for message in thread["messages"]]
         assert types == ["user", "agent_answer"]
         assert thread["messages"][0]["seq"] == 1
         assert thread["messages"][1]["seq"] == 2
+        assert _wait_for_trace(client.app, session_id, turn_id).answer == "Hi there."
 
 
 @pytest.mark.asyncio
@@ -123,3 +126,13 @@ def _wait_for_thread(
         time.sleep(0.01)
     assert last_thread is not None
     return last_thread
+
+
+def _wait_for_trace(app: FastAPI, session_id: str, turn_id: str, timeout_seconds: float = 2.0):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        record = app.state.trace_records.get(session_id, {}).get(turn_id)
+        if record is not None:
+            return record
+        time.sleep(0.01)
+    raise AssertionError(f"missing trace record for {session_id}/{turn_id}")

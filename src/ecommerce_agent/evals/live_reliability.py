@@ -254,6 +254,7 @@ def _run_single_attempt(
             session_id = session_response.json()["session_id"]
             response = client.post(f"/api/sessions/{session_id}/messages", json={"message": prompt})
             status_code = response.status_code
+            turn_id = response.json().get("turn_id") if status_code == 202 else None
             if status_code == 202:
                 thread_body, thread = _wait_for_session_answer(client, session_id)
                 body = f"{thread_body}\nevent: done\n"
@@ -261,7 +262,11 @@ def _run_single_attempt(
                     body += "event: error\n"
             else:
                 body = response.text
-            record = app.state.last_trace or TraceRecord()
+            record = (
+                app.state.trace_records.get(session_id, {}).get(turn_id)
+                or app.state.last_trace
+                or TraceRecord()
+            )
             result = assess_attempt(record, body, require_viz=require_viz)
             result.status_code = status_code
             result.duration_ms = (time.monotonic() - started_at) * 1000.0

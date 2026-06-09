@@ -164,6 +164,24 @@ def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
     assert "TimeoutError" in body["servers"]["spring"]["error"]
 
 
+def test_lifespan_closes_thread_store() -> None:
+    class FakeThreadStore:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    store = FakeThreadStore()
+    app = create_app(settings=make_settings())
+    app.state.thread_store = store
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+    assert store.closed is True
+
+
 def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.app as app_module
     from ecommerce_agent.sessions.registry import SessionRuntime

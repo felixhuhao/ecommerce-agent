@@ -62,6 +62,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.gather(*pending_background_tasks, return_exceptions=True)
             app.state.background_tasks.clear()
         await app.state.session_registry.close_all()
+        thread_store_close = getattr(app.state.thread_store, "close", None)
+        if callable(thread_store_close):
+            thread_store_close()
 
 
 async def _reap_loop(app: FastAPI) -> None:
@@ -130,6 +133,7 @@ def create_app(
     app.state.settings = settings or get_settings()
     app.state.mcp_client = mcp_client
     app.state.last_trace = None
+    app.state.trace_records = {}
     app.state.thread_store = None
     app.state.session_bus = None
     app.state.session_registry = None

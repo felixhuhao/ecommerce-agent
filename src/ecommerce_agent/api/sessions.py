@@ -78,7 +78,9 @@ async def post_message(
             bus=bus,
             recursion_limit=settings.agent_recursion_limit,
         )
-        # Transitional dev/eval seam. Durable per-session trace storage is a later slice.
+        trace_records = app_state.trace_records
+        trace_records.setdefault(session_id, {})[turn_id] = record
+        # Compatibility shortcut for the sequential live reliability harness.
         app_state.last_trace = record
 
     task = asyncio.create_task(run_and_record_trace())
@@ -110,7 +112,6 @@ async def _session_events(
                 "event": "thread.append",
                 "data": _data({"message": message.model_dump()}),
             }
-        yield {"event": "ready", "data": _data({"session_id": session_id, "cursor": cursor})}
         while True:
             if await request.is_disconnected():
                 return
