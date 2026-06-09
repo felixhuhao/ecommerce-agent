@@ -36,3 +36,13 @@ def test_sandbox_settings_have_safe_defaults() -> None:
     assert settings.sandbox_pids == 128
     assert settings.sandbox_execute_timeout_seconds == 30
     assert settings.sandbox_idle_ttl_seconds == 600
+
+
+def test_settings_expose_m2_session_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.mongo_url == "mongodb://localhost:27017"
+    assert settings.mongo_db == "ecommerce_agent"
+    assert settings.approval_api_base_url == "http://localhost:8080"
+    assert settings.session_idle_ttl_seconds == 1800
+    assert settings.max_live_sessions == 50

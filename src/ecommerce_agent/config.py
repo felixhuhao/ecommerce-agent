@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     sandbox_execute_timeout_seconds: int = Field(default=30, gt=0)
     sandbox_idle_ttl_seconds: int = Field(default=600, gt=0)
 
+    # M2 session / conversation thread
+    mongo_url: str = "mongodb://localhost:27017"
+    mongo_db: str = "ecommerce_agent"
+    approval_api_base_url: str = "http://localhost:8080"
+    session_idle_ttl_seconds: int = Field(default=1800, gt=0)
+    max_live_sessions: int = Field(default=50, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:
