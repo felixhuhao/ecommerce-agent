@@ -24,6 +24,41 @@ class FakeAgent:
         }
 
 
+class FakeApprovalClient:
+    def __init__(self, *, execution_status: str = "consumed") -> None:
+        self.execution_status = execution_status
+        self.calls: list[str] = []
+
+    async def approve(self, approval_id: str) -> dict:
+        self.calls.append(f"approve:{approval_id}")
+        return {"approvalId": approval_id, "status": "approved", "changed": True}
+
+    async def execute(self, approval_id: str) -> dict:
+        self.calls.append(f"execute:{approval_id}")
+        if self.execution_status == "consumed":
+            return {
+                "approvalId": approval_id,
+                "status": "consumed",
+                "executionResult": {"purchaseOrderId": 88},
+                "message": "approval executed successfully",
+            }
+        return {
+            "approvalId": approval_id,
+            "status": self.execution_status,
+            "executionResult": {"status": self.execution_status},
+            "message": "approved operation is stale; request a fresh approval",
+        }
+
+    async def reject(self, approval_id: str, *, reason: str | None = None) -> dict:
+        self.calls.append(f"reject:{approval_id}:{reason}")
+        return {
+            "approvalId": approval_id,
+            "status": "rejected",
+            "changed": True,
+            "rejectionReason": reason,
+        }
+
+
 def build_test_app() -> FastAPI:
     app = FastAPI()
     app.state.settings = Settings(_env_file=None)
@@ -45,6 +80,7 @@ def build_test_app() -> FastAPI:
         idle_ttl_seconds=1800,
         max_live_sessions=50,
     )
+    app.state.approval_client_factory = None
     app.include_router(sessions_router)
     return app
 
@@ -100,6 +136,71 @@ def test_message_to_unknown_session_returns_404() -> None:
     with TestClient(build_test_app()) as client:
         response = client.post("/api/sessions/nope/messages", json={"message": "hi"})
         assert response.status_code == 404
+
+
+def test_approve_endpoint_orchestrates_execute_and_appends_messages() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient()
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["approval"]["status"] == "approved"
+        assert body["execution"]["status"] == "consumed"
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert approval_client.calls == ["approve:a1", "execute:a1"]
+    assert [message["type"] for message in thread["messages"]] == [
+        "approval_status",
+        "execution_result",
+    ]
+    assert thread["messages"][0]["status"] == "approved"
+    assert thread["messages"][1]["approval_id"] == "a1"
+    assert thread["messages"][1]["result"] == {"purchaseOrderId": 88}
+
+
+def test_approve_endpoint_appends_invalidated_status_without_execution_result() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient(execution_status="invalidated")
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+
+        assert response.status_code == 200
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert [message["type"] for message in thread["messages"]] == [
+        "approval_status",
+        "approval_status",
+    ]
+    assert thread["messages"][1]["status"] == "invalidated"
+    assert "fresh approval" in thread["messages"][1]["reason"]
+
+
+def test_reject_endpoint_appends_rejected_status() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient()
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(
+            f"/api/sessions/{session_id}/approvals/a1/reject",
+            json={"reason": "too expensive"},
+        )
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 200
+    assert approval_client.calls == ["reject:a1:too expensive"]
+    assert [message["type"] for message in thread["messages"]] == ["approval_status"]
+    assert thread["messages"][0]["status"] == "rejected"
+    assert thread["messages"][0]["reason"] == "too expensive"
 
 
 def _decode_sse(body: str) -> list[dict]:

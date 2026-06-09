@@ -46,3 +46,27 @@ async def test_capture_records_tools_and_accumulates_answer() -> None:
     assert record.tool_names() == ["order_query"]
     assert record.answer == "Sales up."
     assert record.events[0].args_summary is not None
+
+
+async def test_capture_extracts_approval_id_before_summarizing_output() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "run_id": "approval-run",
+            "data": {
+                "output": {
+                    "approvalId": "approval-1",
+                    "operationDetail": "x" * 1000,
+                }
+            },
+        }
+
+    record = TraceRecord()
+
+    yielded = [event async for event in capture(raw_events(), record)]
+
+    assert yielded[0].approval_id == "approval-1"
+    assert record.events[0].approval_id == "approval-1"
+    assert record.events[0].result_summary is not None
+    assert len(record.events[0].result_summary) < 600
