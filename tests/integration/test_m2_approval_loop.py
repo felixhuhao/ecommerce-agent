@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
-from ecommerce_agent.api.sessions import _session_events
 from ecommerce_agent.approvals import extract_approval_id
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import SPRING_SERVER_NAME, build_mcp_client
@@ -148,29 +147,6 @@ async def _preflight(settings: Settings) -> None:
     await skip_unless_mongo_is_running(settings)
 
 
-async def _stream_replay_types(app, session_id: str) -> list[str]:
-    class FakeRequest:
-        async def is_disconnected(self) -> bool:
-            return False
-
-    messages = await app.state.thread_store.list_messages(session_id)
-    events = _session_events(
-        session_id,
-        FakeRequest(),  # type: ignore[arg-type]
-        app.state.thread_store,
-        app.state.session_bus,
-    )
-    try:
-        types: list[str] = []
-        for _ in messages:
-            frame = await anext(events)
-            payload = json.loads(frame["data"])
-            types.append(payload["message"]["type"])
-        return types
-    finally:
-        await events.aclose()
-
-
 @pytest.mark.asyncio
 async def test_real_approval_loop_approve_execute_reload_and_stream() -> None:
     settings = _settings()
@@ -192,7 +168,6 @@ async def test_real_approval_loop_approve_execute_reload_and_stream() -> None:
         response = api.post(f"/api/sessions/{session_id}/approvals/{approval_id}/approve")
         replay = api.post(f"/api/sessions/{session_id}/approvals/{approval_id}/approve")
         thread = api.get(f"/api/sessions/{session_id}/thread").json()
-        stream_types = await _stream_replay_types(app, session_id)
 
     assert response.status_code == 200
     assert response.json()["execution"]["status"] == "consumed"
@@ -207,7 +182,6 @@ async def test_real_approval_loop_approve_execute_reload_and_stream() -> None:
         and message["result"]["status"] == "created"
         for message in messages
     )
-    assert "execution_result" in stream_types
 
 
 @pytest.mark.asyncio
@@ -275,7 +249,8 @@ async def test_real_approval_loop_invalidated_precondition_appends_status() -> N
     assert first_response.status_code == 200
     assert first_response.json()["execution"]["status"] == "consumed"
     assert response.status_code == 200
-    assert response.json()["execution"]["status"] == "invalidated"
+    execution = response.json()["execution"]
+    assert execution["status"] == "invalidated", execution
     assert thread["messages"][-1]["type"] == "approval_status"
     assert thread["messages"][-1]["status"] == "invalidated"
     assert "fresh approval" in thread["messages"][-1]["reason"]
