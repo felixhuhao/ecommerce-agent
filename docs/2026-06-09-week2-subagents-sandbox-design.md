@@ -3,6 +3,7 @@
 > The analysis-and-charting path: a coordinator main agent routes to a read-only sales-analyst
 > sub-agent that runs isolated code in a Docker-backed sandbox and emits chart specs.
 > Status: Draft | Date: 2026-06-09
+> Product milestone: M1 — Trusted Read-Only Analysis Workspace
 > Parent spec: [2026-05-25-ecommerce-agent-design.md](2026-05-25-ecommerce-agent-design.md)
 > Product roadmap: [2026-06-09-product-roadmap.md](2026-06-09-product-roadmap.md)
 > Builds on: [2026-06-08-week1-foundation-design.md](2026-06-08-week1-foundation-design.md)
@@ -15,7 +16,10 @@ Week 1 delivered a single agent + FastAPI/SSE + the SpringBoot MCP read tools. W
 **sales-analyst** sub-agent, which analyzes business data by running isolated Python in a
 Docker-backed sandbox and produces a chart spec via the ModelScope visualization MCP.
 
-**In scope (Week 2):**
+Week 2 is the implementation slice for **Milestone 1 (M1): Trusted Read-Only Analysis Workspace**.
+Milestones are the canonical roadmap vocabulary; week labels describe implementation slices only.
+
+**In scope (Week 2 / M1):**
 - Main agent as **coordinator** (routes to sub-agents; holds its own tool list; never a tool-less router)
 - **sales-analyst** sub-agent (read-only): the 10 SpringBoot read tools + `generate_visualization`
 - **DockerSandbox** — a custom DeepAgents backend giving isolated code execution + a sandbox filesystem
@@ -23,15 +27,17 @@ Docker-backed sandbox and produces a chart spec via the ModelScope visualization
 - **YAML prompt management** (migrate the inline Week 1 prompt)
 - Two-tier tests (default boundary tests incl. real-Docker sandbox tests; opt-in live smoke)
 
-**Deferred to Week 2.5** (named bucket; dependencies noted):
-- File upload (`POST /api/upload`) + `read_uploaded_file` + `write_report` — *sandbox-only, can land
-  first; no HITL needed*
-- **order-manager** sub-agent + write tools (`purchase_order_create`, `purchase_order_receive`,
-  `order_update`, `request_approval`) — *needs Week 3 HITL/checkpoint*
-- skills/memory middleware, `web_search`, `assign_skill` — *needs Week 3 skills/memory systems*
+**Deferred by milestone:**
+- **M1.5 artifact depth:** file upload (`POST /api/upload`) + `read_uploaded_file` +
+  `write_report` — sandbox-only, can land after the sandbox path is stable; no HITL needed.
+- **M2 approved operational actions:** `order-manager` sub-agent + write tools
+  (`purchase_order_create`, `purchase_order_receive`, `order_update`, `request_approval`) —
+  requires HITL, checkpoint/resume, approval cards, and audit records.
+- **M4 product hardening:** skills/memory middleware, `web_search`, `assign_skill`, preferences,
+  and long-lived memory — requires governance, session isolation, and audit policy.
 
-**Deferred to Week 3:** HITL interrupt/resume, MongoDB checkpoint, `ContextVar` session isolation,
-memory layers, and `CompositeBackend` routing for `/memories` + `/skills`.
+**Deferred infrastructure:** MongoDB checkpoint, `ContextVar` session isolation, and
+`CompositeBackend` routing for `/memories` + `/skills` land when M2/M4 requires them, not in M1.
 
 **Out of scope:** the operator console milestone — Week 2 verifies a chart *spec* is produced;
 rendering belongs to the UI/artifact surface later.
@@ -49,7 +55,7 @@ rendering belongs to the UI/artifact surface later.
 | Visualization | ModelScope MCP `generate_visualization` (declarative, 26→1) **behind a seam** | Conversational-BI products use declarative specs rendered in the UI; compute/render split. Self-hosted renderer is a drop-in if ModelScope is unavailable. |
 | Prompts | YAML (`prompts/prompts.yml` + loader) | Parent §4.5; keeps sub-agent definitions thin (config, not prose). |
 | Structure | Option C: `sandbox/` package; `agents.py`; `prompts/`; viz seam in `mcp_client.py` | Pre-split only the certain-to-grow, multi-concern piece (sandbox); keep the rest flat with clean seams. |
-| Deferred features | `web_search`/`assign_skill`/order-manager deferred with **proven seams** | They are native additive slots (`tools`/`skills`/`interrupt_on`); `build_agent` threads all of them now. |
+| Deferred features | M1.5/M2/M4 features deferred with **proven seams** | They are native additive slots (`tools`/`skills`/`interrupt_on`); `build_agent` threads all of them now. |
 
 ## 3. Architecture
 
@@ -74,12 +80,12 @@ src/ecommerce_agent/
     └── chat.py          # unchanged request/SSE contract
 ```
 
-No `session/`, `middleware/` (custom), or `checkpoint/` modules yet — Week 3 additions.
+No `session/`, custom `middleware/`, or `checkpoint/` modules yet — those are M2/M4 additions.
 
 ### 3.2 Agent composition
 
 - **`build_agent(model, *, tools, subagents, middleware, skills, backend)`** — every DeepAgents
-  extension slot is a parameter from day one (proven seams). Week 2 passes: coordinator tools,
+  extension slot is a parameter from day one (proven seams). Week 2 / M1 passes: coordinator tools,
   `[sales_analyst]`, summarization + call-limit middleware, `skills=[]`, the `DockerSandbox` backend.
 - **Coordinator (main agent):** routes to sub-agents and holds its own tools (the backend file
   tools). Prompt from `prompts.yml:main_agent`.
@@ -90,12 +96,13 @@ No `session/`, `middleware/` (custom), or `checkpoint/` modules yet — Week 3 a
 
 ### 3.3 Documented insertion points (no rework later)
 
-| Future capability | Slot | Where |
-|-------------------|------|-------|
-| `web_search` (Week 2.5) | coordinator `tools` | append one `BaseTool` |
-| order-manager (Week 2.5) | a `SubAgent` with write `tools` + `interrupt_on` | `agents.py` factory + `subagents` |
-| skills / `assign_skill` (Week 3) | `skills=` + skills middleware | `build_agent` params |
-| memory (Week 3) | `middleware=` + `CompositeBackend` | `build_agent` params |
+| Future capability | Milestone | Slot | Where |
+|-------------------|-----------|------|-------|
+| file upload / reports | M1.5 artifact depth | sandbox upload/read/report tools | `sandbox/`, product API, artifact seam |
+| `web_search` | M4 product hardening | coordinator `tools` | append one `BaseTool` |
+| order-manager | M2 approved actions | a `SubAgent` with write `tools` + `interrupt_on` | `agents.py` factory + `subagents` |
+| skills / `assign_skill` | M4 product hardening | `skills=` + skills middleware | `build_agent` params |
+| memory | M4 product hardening | `middleware=` + `CompositeBackend` | `build_agent` params |
 
 ## 4. Sandbox (DockerSandbox)
 
@@ -111,9 +118,9 @@ executor later without touching agents/tools).
 - **Filesystem-stateful.** Files in `/workspace` persist across `execute` calls; each `execute`
   runs fresh code (`docker exec … python`). Full REPL/kernel state (a persistent IPython kernel)
   is a noted later upgrade and does not change the files-on-sandbox property.
-- **Week 2:** a single container (one session). **Week 3:** one container per `session_id`
+- **M1:** a single container (one session). **M2/M4:** one container per `session_id`
   ("singleton per session"). Warm pools / memory snapshots are a future scaling technique, not an
-  MVP need.
+  immediate product need.
 
 ### 4.2 Hardening (`sandbox/config.py`)
 
@@ -138,8 +145,8 @@ Because `--network none` blocks runtime `pip install`, ship a **prebuilt image**
 The DeepAgents backend *is* the sandbox, so the agent's file tools and `execute` share one
 workspace. MCP query **results return to the agent's context** (text); when the agent wants to
 analyze them, it `write_file`s them into `/workspace` and sandboxed code consumes them there —
-files used by code never touch the host (parent §2.2). Week 2 uses a single `DockerSandbox`
-backend; Week 3 wraps it in a `CompositeBackend` that keeps `/workspace` on the sandbox while
+files used by code never touch the host (parent §2.2). Week 2 / M1 uses a single `DockerSandbox`
+backend; M4 wraps it in a `CompositeBackend` that keeps `/workspace` on the sandbox while
 routing `/memories` and `/skills` to their own backends (parent §12).
 
 ## 5. Visualization (ModelScope MCP, behind a seam)
@@ -153,6 +160,9 @@ routing `/memories` and `/skills` to their own backends (parent §12).
   renderer without touching the agent. *Implementation-time item: confirm ModelScope endpoint/token.*
 - **Compute/render split:** sandbox computes aggregates → `generate_visualization` produces the
   spec → the operator console displays it later. Week 2 verifies the spec is produced.
+- **Artifact storage deferral:** M1 may stream the chart spec directly in the response. Assigning
+  durable artifact ids, ownership/session metadata, and artifact storage is an M1.5/M3 concern,
+  not an overlooked Week 2 requirement.
 
 ## 6. Prompts (YAML)
 
@@ -229,5 +239,5 @@ specs) with a compute (sandbox) / render (spec) split.
 - **`docker.sock` access** is a privilege surface; mitigated by the §4.2 hardening (one constrained
   container, no network, dropped caps). A remote executor (future) removes it entirely — and is a
   drop-in behind `BaseSandbox`.
-- **Container cleanup:** idle TTL + shutdown reaping prevent orphaned containers; Week 3's
+- **Container cleanup:** idle TTL + shutdown reaping prevent orphaned containers; M2/M4's
   per-session model formalizes this alongside session isolation.

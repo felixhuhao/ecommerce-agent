@@ -32,20 +32,8 @@ Mature agent products and platforms converge on a few patterns:
 | Stateful sandbox/artifacts | E2B, GitHub Copilot coding agent style task environments | Persistent per-session sandbox and artifact history are product-grade expectations. |
 | Operator visibility | Enterprise copilots show traces, tasks, approvals, and generated assets | The UI must expose agent work, not only final answers. |
 
-Detailed notes live in
+Detailed notes and source links live in
 [2026-06-09-mature-agent-product-research.md](2026-06-09-mature-agent-product-research.md).
-Reference links:
-
-- Anthropic: https://www.anthropic.com/engineering/built-multi-agent-research-system
-- OpenAI Agents SDK handoffs: https://openai.github.io/openai-agents-python/handoffs/
-- Microsoft Copilot Studio multi-agent patterns: https://learn.microsoft.com/en-us/microsoft-copilot-studio/guidance/architecture/multi-agent-patterns
-- Google ADK multi-agent systems: https://adk.dev/agents/multi-agents/
-- Salesforce Agentforce guide: https://www.salesforce.com/agentforce/guide
-- ServiceNow AI Agents guide: https://servicenow.github.io/sdk/guides/building-ai-agents-guide
-- Atlassian Rovo agents: https://support.atlassian.com/rovo/docs/agents/
-- Shopify Sidekick: https://help.shopify.com/en/manual/shopify-admin/productivity-tools/sidekick
-- GitHub Copilot coding agent: https://docs.github.com/en/copilot/using-github-copilot/coding-agent/about-assigning-tasks-to-copilot
-- E2B sandbox contexts: https://e2b.dev/docs/code-interpreting/contexts
 
 ## 3. Product Decision Rules
 
@@ -155,13 +143,12 @@ Acceptance:
 
 ## 5. Near-Term Sequencing
 
-1. **Close Week 1 locally.** Keep the two unpushed review/config commits until the user asks to push.
-2. **Before Week 2 implementation, update Week 2 spec if needed** to reflect M1 only:
-   coordinator + sales-analyst + sandbox + chart artifact. Keep order-manager in M2.
-3. **Build Week 2 in this order:**
+1. **Keep local commits local until explicitly pushed.** The branch may be ahead of origin with
+   product-roadmap and review commits; do not push without user approval.
+2. **Build Week 2 / M1 in this order:**
    prompts YAML -> agent factory/sub-agent wiring -> sandbox backend boundary -> visualization seam
    -> SSE/tool-event assertions -> live smoke.
-4. **After Week 2, decide M1.5 vs M2.**
+3. **After Week 2 / M1, decide M1.5 vs M2.**
    If artifacts feel weak, add upload/report. If action workflow is more important, start HITL.
 
 ## 6. Deferred Or Stretch Features

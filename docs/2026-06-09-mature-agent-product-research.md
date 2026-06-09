@@ -130,7 +130,7 @@ Use declarative specs as the durable artifact:
 - visualization tool returns chart spec,
 - operator console renders and stores/display-links the artifact.
 
-This avoids coupling business analysis to a single frontend renderer.
+This avoids coupling business analysis to a single UI renderer.
 
 ### 4.7 Memory And Skills
 
