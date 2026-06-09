@@ -23,6 +23,20 @@ HERO = (
 _LIVE_SMOKE_TIMEOUT_SECONDS = 180
 
 
+def _wait_for_agent_answer(client: TestClient, session_id: str) -> dict:
+    import time
+
+    deadline = time.monotonic() + _LIVE_SMOKE_TIMEOUT_SECONDS
+    last_thread: dict | None = None
+    while time.monotonic() < deadline:
+        last_thread = client.get(f"/api/sessions/{session_id}/thread").json()
+        if any(message["type"] == "agent_answer" for message in last_thread["messages"]):
+            return last_thread
+        time.sleep(0.25)
+    assert last_thread is not None
+    return last_thread
+
+
 @contextmanager
 def _fail_after(seconds: int) -> Iterator[None]:
     def raise_timeout(signum, frame):  # noqa: ARG001
@@ -60,12 +74,14 @@ async def test_hero_flow_single_run() -> None:
     app = create_app(settings=settings)
     try:
         with _fail_after(_LIVE_SMOKE_TIMEOUT_SECONDS), TestClient(app) as client:
-            with client.stream("POST", "/api/chat/stream", json={"message": HERO}) as response:
-                body = "".join(response.iter_text())
+            session_id = client.post("/api/sessions").json()["session_id"]
+            response = client.post(f"/api/sessions/{session_id}/messages", json={"message": HERO})
+            thread = _wait_for_agent_answer(client, session_id)
     except TimeoutError as exc:
         pytest.fail(str(exc))
 
-    assert response.status_code == 200
-    assert "event: done" in body
-    assert "event: error" not in body
-    assert ("execute" in body) or any(tool_name in body for tool_name in VIZ_TOOLS)
+    assert response.status_code == 202
+    assert any(message["type"] == "agent_answer" for message in thread["messages"])
+    assert app.state.last_trace is not None
+    tools = set(app.state.last_trace.tool_names())
+    assert "execute" in tools or bool(tools & VIZ_TOOLS)

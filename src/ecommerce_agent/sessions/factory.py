@@ -33,7 +33,10 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         try:
             viz_tools = await load_modelscope_viz_tools(mcp_client)
         except Exception:
-            logger.warning("ModelScope MCP unavailable; continuing without viz tools", exc_info=True)
+            logger.warning(
+                "ModelScope MCP unavailable; continuing without viz tools",
+                exc_info=True,
+            )
             viz_tools = []
     else:
         viz_tools = []

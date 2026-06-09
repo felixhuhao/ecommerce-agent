@@ -207,11 +207,14 @@ def _run_metadata(settings: Settings) -> dict:
     }
 
 
-def _close_sandbox(app: object) -> None:
-    backend = getattr(getattr(app, "state", None), "sandbox_backend", None)
-    close = getattr(backend, "close", None)
-    if callable(close):
-        close()
+def _wait_for_session_answer(client: object, session_id: str) -> tuple[str, dict]:
+    while True:
+        response = client.get(f"/api/sessions/{session_id}/thread")
+        body = response.text
+        thread = response.json()
+        if any(message["type"] == "agent_answer" for message in thread["messages"]):
+            return body, thread
+        time.sleep(0.25)
 
 
 def _run_single_attempt(
@@ -232,14 +235,37 @@ def _run_single_attempt(
     record = TraceRecord()
     try:
         with _attempt_timeout(attempt_timeout_seconds), TestClient(app) as client:
-            with client.stream("POST", "/api/chat/stream", json={"message": prompt}) as response:
-                status_code = response.status_code
-                body = "".join(response.iter_text())
+            session_response = client.post("/api/sessions")
+            if session_response.status_code != 201:
+                status_code = session_response.status_code
+                body = session_response.text
+                record = getattr(app.state, "last_trace", None) or TraceRecord()
+                return (
+                    _failure_result(
+                        failure=f"unexpected session status code: {status_code}",
+                        record=record,
+                        body=body,
+                        started_at=started_at,
+                        status_code=status_code,
+                    ),
+                    record,
+                )
+
+            session_id = session_response.json()["session_id"]
+            response = client.post(f"/api/sessions/{session_id}/messages", json={"message": prompt})
+            status_code = response.status_code
+            if status_code == 202:
+                thread_body, thread = _wait_for_session_answer(client, session_id)
+                body = f"{thread_body}\nevent: done\n"
+                if any(message.get("status") == "failed" for message in thread["messages"]):
+                    body += "event: error\n"
+            else:
+                body = response.text
             record = app.state.last_trace or TraceRecord()
             result = assess_attempt(record, body, require_viz=require_viz)
             result.status_code = status_code
             result.duration_ms = (time.monotonic() - started_at) * 1000.0
-            if status_code != 200:
+            if status_code != 202:
                 result.passed = False
                 result.failures.append(f"unexpected status code: {status_code}")
                 result.body_tail = body[-_TAIL_CHARS:]
@@ -271,8 +297,6 @@ def _run_single_attempt(
             ),
             record,
         )
-    finally:
-        _close_sandbox(app)
 
 
 def _default_attempt_timeout_seconds() -> int:

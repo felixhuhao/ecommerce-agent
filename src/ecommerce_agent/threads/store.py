@@ -52,5 +52,9 @@ async def append_and_publish(
     try:
         bus.publish(stored.session_id, {"event": "thread.append", "message": stored.model_dump()})
     except Exception:
-        logger.warning("thread.append publish failed for session %s", stored.session_id, exc_info=True)
+        logger.warning(
+            "thread.append publish failed for session %s",
+            stored.session_id,
+            exc_info=True,
+        )
     return stored

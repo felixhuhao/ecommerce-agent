@@ -38,7 +38,11 @@ async def get_thread(session_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/{session_id}/messages", status_code=status.HTTP_202_ACCEPTED)
-async def post_message(session_id: str, payload: MessageRequest, request: Request) -> dict[str, Any]:
+async def post_message(
+    session_id: str,
+    payload: MessageRequest,
+    request: Request,
+) -> dict[str, Any]:
     registry = request.app.state.session_registry
     try:
         runtime = await registry.get(session_id)
@@ -62,8 +66,10 @@ async def post_message(session_id: str, payload: MessageRequest, request: Reques
         ),
     )
 
-    task = asyncio.create_task(
-        run_turn(
+    app_state = request.app.state
+
+    async def run_and_record_trace() -> None:
+        record = await run_turn(
             agent=runtime.agent,
             message=payload.message,
             session_id=session_id,
@@ -72,7 +78,10 @@ async def post_message(session_id: str, payload: MessageRequest, request: Reques
             bus=bus,
             recursion_limit=settings.agent_recursion_limit,
         )
-    )
+        # Transitional dev/eval seam. Durable per-session trace storage is a later slice.
+        app_state.last_trace = record
+
+    task = asyncio.create_task(run_and_record_trace())
     background_tasks = request.app.state.background_tasks
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
@@ -101,6 +110,7 @@ async def _session_events(
                 "event": "thread.append",
                 "data": _data({"message": message.model_dump()}),
             }
+        yield {"event": "ready", "data": _data({"session_id": session_id, "cursor": cursor})}
         while True:
             if await request.is_disconnected():
                 return

@@ -5,7 +5,6 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from ecommerce_agent.api.chat import router as chat_router
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.config import Settings, get_settings
 from ecommerce_agent.mcp_client import (
@@ -20,16 +19,10 @@ from ecommerce_agent.mcp_client import (
     filter_viz_tools,
     tool_names,
 )
-from ecommerce_agent.sandbox import DockerSandbox
-from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.factory import build_session_runtime
 from ecommerce_agent.sessions.registry import SessionRegistry
 from ecommerce_agent.threads.mongo import MongoThreadStore
-
-
-def build_sandbox_backend(settings: Settings) -> DockerSandbox:
-    return DockerSandbox(limits_from_settings(settings))
 
 
 def make_runtime_builder(settings: Settings):
@@ -43,12 +36,6 @@ def make_runtime_builder(settings: Settings):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     app.state.mcp_client = getattr(app.state, "mcp_client", None) or build_mcp_client(settings)
-    app.state.sandbox_backend = getattr(
-        app.state, "sandbox_backend", None
-    ) or build_sandbox_backend(settings)
-    app.state.agent = getattr(app.state, "agent", None)
-    app.state.agent_lock = getattr(app.state, "agent_lock", asyncio.Lock())
-    app.state.tool_count = getattr(app.state, "tool_count", 0)
     app.state.thread_store = getattr(
         app.state, "thread_store", None
     ) or MongoThreadStore.from_settings(settings)
@@ -75,10 +62,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.gather(*pending_background_tasks, return_exceptions=True)
             app.state.background_tasks.clear()
         await app.state.session_registry.close_all()
-        backend = getattr(app.state, "sandbox_backend", None)
-        close = getattr(backend, "close", None)
-        if callable(close):
-            close()
 
 
 async def _reap_loop(app: FastAPI) -> None:
@@ -141,21 +124,16 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
 
 def create_app(
     settings: Settings | None = None,
-    agent: Any | None = None,
     mcp_client: Any | None = None,
-    tool_count: int | None = None,
 ) -> FastAPI:
     app = FastAPI(title="E-Commerce Agent", lifespan=lifespan)
     app.state.settings = settings or get_settings()
-    app.state.agent = agent
     app.state.mcp_client = mcp_client
-    app.state.sandbox_backend = None
     app.state.last_trace = None
     app.state.thread_store = None
     app.state.session_bus = None
     app.state.session_registry = None
     app.state.background_tasks = None
-    app.state.tool_count = tool_count if tool_count is not None else None if agent else 0
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -164,8 +142,7 @@ def create_app(
             "app": app.state.settings.app_name,
             "environment": app.state.settings.environment,
             "configured_mcp_servers": configured_mcp_servers(app.state.settings),
-            "agent_ready": app.state.agent is not None,
-            "tool_count": getattr(app.state, "tool_count", 0),
+            "agent_ready": app.state.session_registry is not None,
         }
 
     @app.get("/health/mcp")
@@ -182,7 +159,6 @@ def create_app(
         )
         return {"status": overall_status, "servers": server_results}
 
-    app.include_router(chat_router)
     app.include_router(sessions_router)
     return app
 

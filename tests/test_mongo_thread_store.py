@@ -38,7 +38,9 @@ class FakeMessages:
         self.docs.append(doc)
 
     def find(self, filt):  # noqa: ANN001
-        return FakeCursor([dict(doc) for doc in self.docs if doc["session_id"] == filt["session_id"]])
+        return FakeCursor(
+            [dict(doc) for doc in self.docs if doc["session_id"] == filt["session_id"]]
+        )
 
 
 @pytest.mark.asyncio

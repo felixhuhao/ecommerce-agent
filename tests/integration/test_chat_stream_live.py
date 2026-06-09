@@ -8,6 +8,20 @@ from ecommerce_agent.config import Settings
 from tests.integration.helpers import skip_unless_spring_mcp_is_running
 
 
+def _wait_for_agent_answer(client: TestClient, session_id: str) -> dict:
+    import time
+
+    deadline = time.monotonic() + 120
+    last_thread: dict | None = None
+    while time.monotonic() < deadline:
+        last_thread = client.get(f"/api/sessions/{session_id}/thread").json()
+        if any(message["type"] == "agent_answer" for message in last_thread["messages"]):
+            return last_thread
+        time.sleep(0.25)
+    assert last_thread is not None
+    return last_thread
+
+
 @pytest.mark.integration
 @pytest.mark.live
 async def test_live_chat_stream_can_call_spring_mcp_tools() -> None:
@@ -25,14 +39,14 @@ async def test_live_chat_stream_can_call_spring_mcp_tools() -> None:
 
     app = create_app(settings=settings)
     with TestClient(app) as client:
-        with client.stream(
-            "POST",
-            "/api/chat/stream",
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(
+            f"/api/sessions/{session_id}/messages",
             json={"message": "Check 手机 inventory. Keep the answer short."},
-        ) as response:
-            body = "".join(response.iter_text())
+        )
+        thread = _wait_for_agent_answer(client, session_id)
 
-    assert response.status_code == 200
-    assert "event: done" in body
-    assert "event: error" not in body
-    assert ("event: tool" in body) or ("event: token" in body)
+    assert response.status_code == 202
+    assert any(message["type"] == "agent_answer" for message in thread["messages"])
+    assert app.state.last_trace is not None
+    assert app.state.last_trace.tool_names() or app.state.last_trace.answer
