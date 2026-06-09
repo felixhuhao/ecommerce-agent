@@ -96,6 +96,11 @@ sales-analyst          order-manager
   └─────────────────────────────┘
 ```
 
+M1 intentionally runs the read-only `sales-analyst` as the runtime agent directly, rather than
+wrapping it in a coordinator that has no real routing choice yet. The coordinator/sub-agent shape
+above is the target product architecture and is activated in M2 when `order-manager` gives the
+system a second specialist with a distinct authority boundary.
+
 ### 2.2 Security Model: Sandbox as Agent Backend
 
 The sandbox is configured as the DeepAgents backend. In Week 2 this is a self-hosted
@@ -193,9 +198,10 @@ customers pay).
 
 Product rule: use sub-agents for **permission, tool, context, or workflow boundaries**. A
 sub-agent earns its existence when it narrows what the model can see or do, or when it owns a
-distinct phase of work. The first mature boundary is read-only analysis (`sales-analyst`). The
-action-proposing `order-manager` (reads + `request_approval`, never write tools) should not be
-enabled until the approval workflow + deterministic backend executor exist (§5.2).
+distinct phase of work. M1 runs the read-only analyst directly to avoid paying coordinator latency
+before there is a routing decision. The first multi-agent boundary is M2: read-only analysis
+(`sales-analyst`) versus action proposal (`order-manager`, reads + `request_approval`, never write
+tools) after the approval workflow + deterministic backend executor exist (§5.2).
 
 ### 4.1 Main Agent
 
@@ -242,7 +248,10 @@ Tools come from three MCP servers — only the first group is SpringBoot:
 
 Typical tasks:
 - "Show sales trends for last quarter"
-- "Compare sales by category"
+- "Which categories are trending up or down over the last 6 months, forecast next month's sales,
+  and chart the result"
+- "Compare sales by category" (simple aggregation; prefer authoritative `get_statistics`, not
+  sandbox)
 - "Which products need restocking?"
 - "Supplier performance radar chart"
 - "Generate a monthly sales report"
@@ -711,8 +720,9 @@ Status: Week 1 foundation complete; Week 2 in design.
 
 - FastAPI/SSE + DeepAgents connected to the SpringBoot MCP server.
 - Read-only SpringBoot tool allowlist enforced before the agent can use tools.
-- Coordinator + `sales-analyst` sub-agent.
-- Sandboxed Python analysis for aggregate computations.
+- Single read-only `sales-analyst` runtime agent; coordinator/sub-agent routing remains a dormant
+  seam until M2.
+- Sandboxed Python analysis for computations SpringBoot stats do not already own.
 - Declarative chart artifact generation through a visualization seam.
 - Operator-visible traces for tools and artifacts.
 

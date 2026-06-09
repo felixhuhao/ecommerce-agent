@@ -56,7 +56,7 @@ commerce operations assistant:
 | Shopify Sidekick | Commerce assistant works in store context, can analyze/manage/admin tasks, works in the background for longer tasks, and presents changes for review before applying them. | This is the closest commerce-product signal: analysis and admin action are both valuable, but changes need review before execution. |
 | GitHub Copilot cloud agent | Agent works in an isolated GitHub Actions environment, plans/changes/tests, and makes work visible through branches, commits, logs, and pull requests. | Treat agent work as artifacts and audit trail. For commerce, equivalents are chart specs, reports, approval records, diffs, and execution logs. |
 | E2B Code Interpreter | Supports sandbox code execution contexts with create/list/restart/remove operations and per-context execution. | A persistent per-session sandbox with lifecycle controls is more product-like than a fresh throwaway process per call. |
-| LangChain DeepAgents | Subagents help keep main context clean and provide specialized instructions/tools. DeepAgents supports custom subagents and compiled graphs. | Our Week 2 DeepAgents sub-agent plan is aligned with the framework's intended use. |
+| LangChain DeepAgents | Subagents help keep main context clean and provide specialized instructions/tools. DeepAgents supports custom subagents and compiled graphs. | Keep the sub-agent seam, but activate it only when a second specialist creates a real routing/context boundary. |
 | Google Conversational Analytics | Agent responses can include chart specifications, rendered separately with Vega-Lite/Altair. | Keep visualization as a declarative chart-spec artifact; UI rendering is separate from analysis computation. |
 
 ## 4. Design Implications
@@ -65,9 +65,11 @@ commerce operations assistant:
 
 Keep the sub-agent list short and permission-driven:
 
-- **Now:** `sales-analyst` because read-only analysis has a distinct tool set and context shape.
-- **Next:** `order-manager` only when `request_approval`, deterministic execute-by-`approval_id`,
-  and audit records are implemented. LangGraph checkpoint/resume is not required for write safety.
+- **Now:** run `sales-analyst` directly as the M1 runtime specialist; it has a distinct prompt/tool
+  set, but no coordinator is needed while there is only one specialist.
+- **Next:** enable coordinator + sub-agents when `order-manager` lands with `request_approval`,
+  deterministic execute-by-`approval_id`, and audit records. LangGraph checkpoint/resume is not
+  required for write safety.
 - **Later:** `customer-insight`, `procurement-planner`, or `catalog-manager` only when each has
   dedicated tools, permissions, and artifacts.
 
@@ -146,8 +148,8 @@ Memory and skills are not rejected, but they should be sequenced carefully:
 
 ## 5. Roadmap Consequences
 
-1. **Week 2 / M1 should stay read-only.** Build coordinator + sales-analyst + sandbox + chart
-   artifact. Do not sneak in order-manager writes.
+1. **Week 2 / M1 should stay read-only.** Build the direct sales-analyst runtime agent + sandbox +
+   chart artifact. Do not sneak in coordinator latency or order-manager writes.
 2. **M1.5 is artifact depth.** File upload and Markdown reports are useful if the sandbox path
    lands cleanly.
 3. **M2 is approved action workflow.** Order-manager, `request_approval`,

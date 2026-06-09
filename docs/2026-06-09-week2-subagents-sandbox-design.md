@@ -1,7 +1,8 @@
-# Week 2: Sub-Agents + Sandbox — Design Spec
+# Week 2: Analyst Agent + Sandbox — Design Spec
 
-> The analysis-and-charting path: a coordinator main agent routes to a read-only sales-analyst
-> sub-agent that runs isolated code in a Docker-backed sandbox and emits chart specs.
+> The analysis-and-charting path: a single read-only sales-analyst agent runs isolated code in a
+> Docker-backed sandbox and emits chart specs. Coordinator/sub-agent wiring remains a seam, activated
+> when M2 introduces a second specialist with a real routing boundary.
 > Status: Draft | Date: 2026-06-09
 > Product milestone: M1 — Trusted Read-Only Analysis Workspace
 > Parent spec: [2026-05-25-ecommerce-agent-design.md](2026-05-25-ecommerce-agent-design.md)
@@ -12,16 +13,18 @@
 ## 1. Scope
 
 Week 1 delivered a single agent + FastAPI/SSE + the SpringBoot MCP read tools. Week 2 builds the
-**read-only analysis-and-charting path end to end**: a coordinator main agent that routes to a
-**sales-analyst** sub-agent, which analyzes business data by running isolated Python in a
-Docker-backed sandbox and produces a chart spec via the ModelScope visualization MCP.
+**read-only analysis-and-charting path end to end**: a single **sales-analyst** deep agent that
+queries business data, runs isolated Python in a Docker-backed sandbox when computation earns it,
+and produces a chart spec via the ModelScope visualization MCP.
 
 Week 2 is the implementation slice for **Milestone 1 (M1): Trusted Read-Only Analysis Workspace**.
 Milestones are the canonical roadmap vocabulary; week labels describe implementation slices only.
 
 **In scope (Week 2 / M1):**
-- Main agent as **coordinator** (routes to sub-agents; holds its own tool list; never a tool-less router)
-- **sales-analyst** sub-agent (read-only): the 10 SpringBoot read tools + `generate_visualization`
+- **sales-analyst** runtime agent (read-only): the 10 SpringBoot read tools +
+  `generate_visualization`, backed by `DockerSandbox`
+- **Coordinator/sub-agent seam** only: factory shape exists, but M1 does not route through a
+  coordinator until M2 adds `order-manager`
 - **DockerSandbox** — a custom DeepAgents backend giving isolated code execution + a sandbox filesystem
 - **Visualization** via ModelScope MCP `generate_visualization`, behind a swappable seam
 - **YAML prompt management** (migrate the inline Week 1 prompt)
@@ -49,14 +52,15 @@ rendering belongs to the UI/artifact surface later.
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Sub-agents | DeepAgents native `subagents` (`SubAgent` dicts via a factory) | First-class framework feature; each sub-agent declares its own `tools`/`skills`/`interrupt_on`. |
-| Main agent | Coordinator that **holds its own tools** (file tools + routing) | Never a degenerate router, so `web_search` later is `+1` tool, not new machinery. |
+| Runtime agent | **Single sales-analyst deep agent** for M1 | With only one specialist, a coordinator adds serial model calls without a real routing decision. |
+| Coordinator seam | DeepAgents native `subagents` (`SubAgent` dicts via a factory), enabled at M2 | First-class framework feature; each sub-agent declares its own `tools`/`skills`/`interrupt_on`. |
+| Aggregation rule | Simple aggregation → authoritative Spring stats; sandbox only for computation stats do not own | Avoids latency and avoids pandas disagreeing with canonical `get_statistics`. |
 | Exec backend | Custom `DockerSandbox(BaseSandbox)` | Self-hosted isolation, no SaaS; conforms to DeepAgents' backend protocol; swappable for a remote executor later. |
 | Sandbox lifecycle | **Persistent per-session container**, reused across `execute` calls | Matches mature code-interpreters (§9): statefulness + no per-call cold start. |
 | Statefulness | **Filesystem-stateful** (files persist; each `execute` runs fresh code) | Agent round-trips data through sandbox files; simplest model that fits DeepAgents' shell-based `execute`. Full REPL/kernel state is a later upgrade. |
 | Files location | **On the sandbox** (backend = sandbox) | All file tools + `execute` share one workspace; code consumes the files the agent writes. Matches parent §2.2. |
 | Visualization | ModelScope MCP `generate_visualization` (declarative, 26→1) **behind a seam** | Conversational-BI products use declarative specs rendered in the UI; compute/render split. Self-hosted renderer is a drop-in if ModelScope is unavailable. |
-| Prompts | YAML (`prompts/prompts.yml` + loader) | Parent §4.5; keeps sub-agent definitions thin (config, not prose). |
+| Prompts | YAML (`prompts/prompts.yml` + loader) | Parent §4.5; keeps agent definitions thin (config, not prose). |
 | Structure | Option C: `sandbox/` package; `agents.py`; `prompts/`; viz seam in `mcp_client.py` | Pre-split only the certain-to-grow, multi-concern piece (sandbox); keep the rest flat with clean seams. |
 | Deferred features | M1.5/M2/M4 features deferred with **proven seams** | They are native additive slots (`tools`/`skills`/`interrupt_on`); `build_agent` threads all of them now. |
 
@@ -70,9 +74,9 @@ src/ecommerce_agent/
 ├── models.py            # unchanged
 ├── mcp_client.py        # + ModelScope connection enable + viz-tool allowlist seam
 ├── agent.py             # build_agent(model, *, tools, subagents, middleware, skills, backend)
-├── agents.py            # NEW: coordinator config + sub-agent factory (returns SubAgent dicts)
+├── agents.py            # NEW: sales-analyst factory + dormant coordinator/sub-agent seam
 ├── prompts/
-│   ├── prompts.yml      # NEW: main_agent + sales_analyst prompts
+│   ├── prompts.yml      # NEW: sales_analyst prompt (+ optional coordinator prompt for M2)
 │   └── loader.py        # NEW: tiny typed YAML loader (read once at build)
 ├── sandbox/             # NEW package (the one certain-to-grow, multi-concern piece)
 │   ├── __init__.py      # exports DockerSandbox
@@ -88,21 +92,24 @@ No `session/`, custom `middleware/`, or `checkpoint/` modules yet — those are 
 ### 3.2 Agent composition
 
 - **`build_agent(model, *, tools, subagents, middleware, skills, backend)`** — every DeepAgents
-  extension slot is a parameter from day one (proven seams). Week 2 / M1 passes: coordinator tools,
-  `[sales_analyst]`, summarization + call-limit middleware, `skills=[]`, the `DockerSandbox` backend.
-- **Coordinator (main agent):** routes to sub-agents and holds its own tools (the backend file
-  tools). Prompt from `prompts.yml:main_agent`.
-- **sales-analyst:** an `agents.py` factory returns a `SubAgent` dict — `name`, `description`,
-  `system_prompt` (from YAML), `tools` = the 10 SpringBoot read tools (reuse Week 1's
-  `READ_ONLY_SPRING_TOOLS`) **+** `generate_visualization`, with empty `skills`/`interrupt_on`
-  slots left explicit. `execute` + file tools come from the shared backend (no per-tool wiring).
+  extension slot is a parameter from day one (proven seams). Week 2 / M1 passes:
+  `subagents=[]`, `skills=[]`, the 10 SpringBoot read tools, `generate_visualization`, and the
+  `DockerSandbox` backend.
+- **sales-analyst runtime agent:** `agents.py` builds the M1 agent directly with a prompt from
+  `prompts.yml:sales_analyst`. It has read-only SpringBoot tools (reuse Week 1's
+  `READ_ONLY_SPRING_TOOLS`) **+** `generate_visualization`; `execute` + file tools come from the
+  shared backend (no per-tool wiring).
+- **Dormant coordinator seam:** `agents.py` may expose a `build_coordinator_agent` /
+  `build_sales_analyst_subagent` shape, but M1 does not put the analyst behind `subagents=[...]`.
+  M2 activates this once `subagents=[sales_analyst, order_manager]` gives the coordinator a real
+  routing decision.
 
 ### 3.3 Documented insertion points (no rework later)
 
 | Future capability | Milestone | Slot | Where |
 |-------------------|-----------|------|-------|
 | file upload / reports | M1.5 artifact depth | sandbox upload/read/report tools | `sandbox/`, product API, artifact seam |
-| `web_search` | M4 product hardening | coordinator `tools` | append one `BaseTool` |
+| `web_search` | M4 product hardening | coordinator or analyst `tools` | append one `BaseTool` |
 | order-manager | M2 approved actions | a `SubAgent` with **reads + `request_approval` only** (no write tools, no `interrupt_on`); writes run in a deterministic backend executor by `approval_id` | `agents.py` factory + `subagents`; executor + Java companion change |
 | skills / `assign_skill` | M4 product hardening | `skills=` + skills middleware | `build_agent` params |
 | memory | M4 product hardening | `middleware=` + `CompositeBackend` | `build_agent` params |
@@ -169,25 +176,31 @@ routing `/memories` and `/skills` to their own backends (parent §12).
 
 ## 6. Prompts (YAML)
 
-`prompts/prompts.yml` holds `main_agent` (coordinator/routing) and `sales_analyst` prompts, loaded
-once by `prompts/loader.py` at agent build. Week 1's inline `SYSTEM_PROMPT` migrates here.
-Sub-agent definitions reference prompt keys, keeping `agents.py` thin.
+`prompts/prompts.yml` holds the `sales_analyst` prompt, loaded once by `prompts/loader.py` at agent
+build. Week 1's inline `SYSTEM_PROMPT` migrates here. A `main_agent`/coordinator prompt can live in
+the same file as a dormant M2 seam, but M1 does not route through it.
 
 ## 7. Data flow (the Week 2 demo)
 
-"Compare sales by category":
+"Which categories are trending up or down over the last 6 months, forecast next month's sales, and
+chart the result":
 
 ```
 POST /api/chat/stream {message}
- → coordinator routes → sales-analyst
- → sales-analyst calls get_statistics / order_query (SpringBoot MCP) → data into context
- → write_file(result.json) [sandbox] → execute(pandas: group by category) [sandbox] → aggregates
+ → sales-analyst calls order_query pages for the last 6 months (SpringBoot MCP) → data into context
+ → write_file(orders.json) [sandbox]
+ → execute(pandas: bucket month×category, fit simple trends, forecast next month) [sandbox]
  → generate_visualization(spec from aggregates) [ModelScope MCP] → chart spec
- → sales-analyst returns analysis + chart spec → coordinator → SSE stream
+ → sales-analyst streams analysis + chart spec
 ```
 
 SSE frames are unchanged (`token` / `tool` / `done` / `error`); `tool` frames now also surface
 `execute` and `generate_visualization`, so the boundary is observable in tests.
+
+For simpler aggregation questions such as "compare sales by category," the agent should prefer
+authoritative SpringBoot statistics (`get_statistics`) and skip the sandbox unless the user asks for
+analysis the backend does not already own. The forecast hero is intentionally illustrative: six
+monthly points are enough to demonstrate the workflow, not enough to claim rigorous forecasting.
 
 ## 8. Testing & acceptance
 
@@ -198,18 +211,19 @@ Carries Week 1's two-tier shape.
   call fails); timeout + resource caps respected; files persist across `execute` calls in one
   session; container torn down. **Skips cleanly when Docker is absent** (like the Spring-reachable
   skip).
-- `agents.py` / `build_agent`: sub-agent factory wires the right tool allowlists; coordinator holds
-  its own tools; all extension slots threaded.
+- `agents.py` / `build_agent`: the M1 analyst factory wires the right tool allowlists; dormant
+  coordinator/sub-agent seams exist without being on the hot path; all extension slots threaded.
 - viz allowlist + ModelScope connection registry (mirrors the Spring allowlist tests).
 - prompt loader.
 
-**Opt-in live smoke (`RUN_LIVE_LLM=1`):** "compare sales by category" → assert the stream shows
-`execute` **and** `generate_visualization` tool events and completes. Run before dependency bumps
-(DeepAgents/LangGraph/LangChain/MCP adapters) per the Week 1 gate.
+**Opt-in live smoke (`RUN_LIVE_LLM=1`):** the 6-month category trend/forecast hero → assert the
+stream shows paginated `order_query`, `execute`, and `generate_visualization` tool events and
+completes. Run before dependency bumps (DeepAgents/LangGraph/LangChain/MCP adapters) per the Week 1
+gate.
 
 **Acceptance (definition of done):**
-- Coordinator routes to sales-analyst.
-- sales-analyst analyzes seeded data in the sandbox and emits a chart spec via ModelScope (or the
+- sales-analyst runs directly in M1; coordinator/sub-agent routing is present only as a dormant seam.
+- sales-analyst analyzes seeded order data in the sandbox and emits a chart spec via ModelScope (or the
   seam's renderer).
 - Default suite green, including the real-Docker sandbox boundary tests (skipped if no Docker).
 - Live smoke passes by hand.
@@ -239,6 +253,10 @@ specs) with a compute (sandbox) / render (spec) split.
   manage the MCP server or MySQL (see Week 1).
 - **ModelScope availability** is unconfirmed; the viz seam makes it non-blocking — confirm
   endpoint/token at implementation, else use the self-hosted declarative renderer.
+- **Pagination is the residual data cost:** the hero can use 2-3 `order_query` pages on the seed
+  data. If that starts to feel heavy at product scale, the scale fix is a SpringBoot
+  month×category aggregate endpoint that hands the sandbox a compact series for forecasting. Do not
+  build that Java change in M1.
 - **`docker.sock` access** is a privilege surface; mitigated by the §4.2 hardening (one constrained
   container, no network, dropped caps). A remote executor (future) removes it entirely — and is a
   drop-in behind `BaseSandbox`.

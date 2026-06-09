@@ -62,22 +62,27 @@ Goal: make the agent useful without granting it write authority.
 
 Status:
 - Week 1 foundation is complete.
-- Week 2 design targets coordinator + sales-analyst + sandbox + chart artifacts.
+- Week 2 design targets a single sales-analyst runtime agent + sandbox + chart artifacts.
 
 Capabilities:
 - FastAPI/SSE chat service.
 - SpringBoot MCP read tools discovered through `MultiServerMCPClient`.
 - Read-only allowlist enforced before tools reach the model.
-- Coordinator agent routes to `sales-analyst`.
-- `sales-analyst` can call read tools, run sandboxed Python analysis, and generate chart specs.
+- M1 runtime uses `sales-analyst` directly; the coordinator/sub-agent seam is deferred until M2
+  adds a second specialist with a real routing boundary.
+- `sales-analyst` can call read tools, use authoritative `get_statistics` for simple aggregates,
+  run sandboxed Python analysis for computations the backend does not own, and generate chart specs.
 - Operator-visible tool events for MCP, sandbox execution, and visualization.
 
 Acceptance:
 - Default suite passes.
 - Real Spring MCP integration passes against MySQL-backed data.
 - Real Docker sandbox boundary tests pass or skip clearly when Docker is absent.
-- Live smoke: "compare sales by category" calls Spring read tools, runs sandbox code, emits a chart
-  artifact/spec, and streams a final answer.
+- Live smoke: "Which categories are trending up or down over the last 6 months, forecast next
+  month's sales, and chart the result" calls paginated `order_query`, runs sandbox code, emits a
+  chart artifact/spec, and streams a final answer.
+- Simple aggregation questions such as "compare sales by category" prefer `get_statistics` and do
+  not force a sandbox hop.
 
 Cut line:
 - Do not enable `order-manager` writes here.
@@ -161,8 +166,8 @@ Acceptance:
 1. **Keep local commits local until explicitly pushed.** The branch may be ahead of origin with
    product-roadmap and review commits; do not push without user approval.
 2. **Build Week 2 / M1 in this order:**
-   prompts YAML -> agent factory/sub-agent wiring -> sandbox backend boundary -> visualization seam
-   -> SSE/tool-event assertions -> live smoke.
+   prompts YAML -> single analyst agent factory -> dormant coordinator/sub-agent seam -> sandbox
+   backend boundary -> visualization seam -> SSE/tool-event assertions -> live smoke.
 3. **After Week 2 / M1, decide M1.5 vs M2.**
    If artifacts feel weak, add upload/report. If the action workflow is more important, start M2
    (Approved Action Workflow).
@@ -197,7 +202,7 @@ Ranked by likelihood × impact for a **solo build pursuing both product and port
 | # | Risk | L×I | Mitigation |
 |---|------|-----|-----------|
 | R1 | **Scope vs solo throughput.** Product framing raises the "done" bar (console, RBAC, audit search, eval, packaging); likely outcome is M1–M2 done well and M3–M4 perpetually in progress, or endless M1 polish that never reaches the crown jewel. | High×High | Hero demo pulls the roadmap; timebox M1; M3/M4 as thin slices; depth over breadth; resist new domain agents/connectors. |
-| R2 | **Latency & context/token bloat.** Coordinator→sub-agent→MCP→sandbox→viz is many model calls + round-trips; the demo feels slow and context bloats, degrading quality. | Med-High×Med-High | Call-limit + summarization middleware; prefer `get_statistics` over raw rows; stream early tokens; budget hop count. |
+| R2 | **Latency & context/token bloat.** Agent→MCP→sandbox→viz is still a serial path; paginated `order_query` adds hops; product-scale raw rows would bloat context. | Med-High×Med-High | M1 skips coordinator; prefer `get_statistics` for simple aggregates; sandbox only for earned computation; stream tool progress; budget hop count. Scale fix later: backend month×category aggregate. |
 | R3 | **Demo non-determinism.** Agent nails the hero flow ~8/10; a 1-in-5 live failure is brutal. | Med×High | Hardened, rehearsed golden path; constrained prompts; retries on tool/codegen failure; known-good fallback query. |
 | R4 | **Framework/version drift.** `deepagents 0.6.8`, LangGraph, Spring AI MCP `2.0.0-M8` (pre-release); event shapes / `SubAgent` schema / backend protocol can shift; real stream path only covered by opt-in live test. | High×Med-High | Hard-pin versions; dependency-bump live-smoke gate (§3); one thin adapter around DeepAgents event shapes. |
 | R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval harness (M4) prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward; structured trace with correlation ids; a small golden-set eval before prompt/model changes. |
