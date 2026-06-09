@@ -17,3 +17,14 @@ def test_deepseek_api_key_alias_is_supported(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.llm_api_key == "deepseek-key"
+
+
+def test_sandbox_settings_have_safe_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.sandbox_image == "ecommerce-agent-sandbox:dev"
+    assert settings.sandbox_memory == "512m"
+    assert settings.sandbox_cpus == 1.0
+    assert settings.sandbox_pids == 128
+    assert settings.sandbox_execute_timeout_seconds == 30
+    assert settings.sandbox_idle_ttl_seconds == 600

@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "deepagents>=0.6.8",
+    "docker>=7.1.0",
     "fastapi>=0.136.3",
     "langchain-mcp-adapters>=0.2.2",
     "langchain-openai>=1.2.2",
@@ -22,7 +23,9 @@ ecommerce-agent = "ecommerce_agent.cli:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["sandbox_image"]
 markers = [
+    "docker: tests that require a running Docker daemon",
     "integration: tests that require external services such as the SpringBoot MCP server",
     "live: tests that call a real LLM provider",
 ]
@@ -41,6 +44,8 @@ build-backend = "uv_build"
 dev = [
     "anyio>=4.13.0",
     "httpx>=0.28.1",
+    "numpy>=2.1.0",
+    "pandas>=2.2.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.16",

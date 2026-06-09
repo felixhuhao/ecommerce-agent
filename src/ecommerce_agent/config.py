@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     mcp_request_timeout_seconds: float = Field(default=30.0, gt=0)
     mcp_sse_read_timeout_seconds: float = Field(default=300.0, gt=0)
 
+    # Sandbox (DockerSandbox backend)
+    sandbox_image: str = "ecommerce-agent-sandbox:dev"
+    sandbox_memory: str = "512m"
+    sandbox_cpus: float = Field(default=1.0, gt=0)
+    sandbox_pids: int = Field(default=128, gt=0)
+    sandbox_execute_timeout_seconds: int = Field(default=30, gt=0)
+    sandbox_idle_ttl_seconds: int = Field(default=600, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

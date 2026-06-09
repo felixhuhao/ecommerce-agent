@@ -55,3 +55,16 @@ async def skip_unless_spring_mcp_is_running(settings: Settings) -> None:
         pytest.skip(
             f"SpringBoot MCP server health check returned {response.status_code} at {health_url}"
         )
+
+
+def skip_unless_docker_available() -> None:
+    try:
+        import docker
+    except ImportError as exc:  # pragma: no cover
+        pytest.skip(f"docker SDK not installed: {exc}")
+
+    try:
+        client = docker.from_env()
+        client.ping()
+    except Exception as exc:
+        pytest.skip(f"Docker daemon not reachable: {exc}")

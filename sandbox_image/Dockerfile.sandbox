@@ -1,0 +1,19 @@
+# Sandbox image for agent-generated code execution.
+# Network-isolated at runtime (--network none), so all deps are baked in here.
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir "pandas>=2.2.0,<3" "numpy>=2.1.0,<3"
+
+RUN useradd --create-home --uid 10001 sandbox \
+ && mkdir -p /workspace \
+ && chown sandbox:sandbox /workspace
+
+COPY ecommerce_analysis /opt/ecommerce_analysis/ecommerce_analysis
+ENV PYTHONPATH=/opt/ecommerce_analysis
+
+USER sandbox
+WORKDIR /workspace
+
+# The backend keeps containers alive with `sleep infinity`; this CMD is for
+# ad-hoc smoke checks such as `docker run ... image`.
+CMD ["python3", "-c", "import ecommerce_analysis; print('sandbox image ready')"]
