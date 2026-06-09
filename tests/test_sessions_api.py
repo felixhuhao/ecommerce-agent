@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.sessions import _session_events
 from ecommerce_agent.api.sessions import router as sessions_router
+from ecommerce_agent.approvals import ApprovalApiError
 from ecommerce_agent.config import Settings
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
@@ -25,13 +26,40 @@ class FakeAgent:
 
 
 class FakeApprovalClient:
-    def __init__(self, *, execution_status: str = "consumed") -> None:
+    def __init__(
+        self,
+        *,
+        execution_status: str = "consumed",
+        approve_changed: bool = True,
+        reject_changed: bool = True,
+        get_error: ApprovalApiError | None = None,
+    ) -> None:
         self.execution_status = execution_status
+        self.approve_changed = approve_changed
+        self.reject_changed = reject_changed
+        self.get_error = get_error
         self.calls: list[str] = []
+
+    async def get_approval(self, approval_id: str) -> dict:
+        self.calls.append(f"get:{approval_id}")
+        if self.get_error is not None:
+            raise self.get_error
+        return {
+            "approvalId": approval_id,
+            "toolName": "purchase_order_create",
+            "operationType": "create",
+            "status": "pending",
+            "operationDetail": '{"title":"Create purchase order"}',
+        }
 
     async def approve(self, approval_id: str) -> dict:
         self.calls.append(f"approve:{approval_id}")
-        return {"approvalId": approval_id, "status": "approved", "changed": True}
+        return {
+            "approvalId": approval_id,
+            "status": "approved",
+            "changed": self.approve_changed,
+            "_http_status_code": 200 if self.approve_changed else 409,
+        }
 
     async def execute(self, approval_id: str) -> dict:
         self.calls.append(f"execute:{approval_id}")
@@ -54,8 +82,9 @@ class FakeApprovalClient:
         return {
             "approvalId": approval_id,
             "status": "rejected",
-            "changed": True,
+            "changed": self.reject_changed,
             "rejectionReason": reason,
+            "_http_status_code": 200 if self.reject_changed else 409,
         }
 
 
@@ -153,7 +182,7 @@ def test_approve_endpoint_orchestrates_execute_and_appends_messages() -> None:
         assert body["execution"]["status"] == "consumed"
         thread = client.get(f"/api/sessions/{session_id}/thread").json()
 
-    assert approval_client.calls == ["approve:a1", "execute:a1"]
+    assert approval_client.calls == ["get:a1", "approve:a1", "execute:a1"]
     assert [message["type"] for message in thread["messages"]] == [
         "approval_status",
         "execution_result",
@@ -183,6 +212,39 @@ def test_approve_endpoint_appends_invalidated_status_without_execution_result() 
     assert "fresh approval" in thread["messages"][1]["reason"]
 
 
+def test_approve_endpoint_does_not_append_when_approval_is_not_visible() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient(
+        get_error=ApprovalApiError(404, {"message": "approval not found"})
+    )
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 404
+    assert approval_client.calls == ["get:a1"]
+    assert thread["messages"] == []
+
+
+def test_approve_endpoint_replays_execute_without_duplicate_status() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient(approve_changed=False)
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 200
+    assert approval_client.calls == ["get:a1", "approve:a1", "execute:a1"]
+    assert [message["type"] for message in thread["messages"]] == ["execution_result"]
+    assert thread["messages"][0]["approval_id"] == "a1"
+
+
 def test_reject_endpoint_appends_rejected_status() -> None:
     app = build_test_app()
     approval_client = FakeApprovalClient()
@@ -197,10 +259,28 @@ def test_reject_endpoint_appends_rejected_status() -> None:
         thread = client.get(f"/api/sessions/{session_id}/thread").json()
 
     assert response.status_code == 200
-    assert approval_client.calls == ["reject:a1:too expensive"]
+    assert approval_client.calls == ["get:a1", "reject:a1:too expensive"]
     assert [message["type"] for message in thread["messages"]] == ["approval_status"]
     assert thread["messages"][0]["status"] == "rejected"
     assert thread["messages"][0]["reason"] == "too expensive"
+
+
+def test_reject_endpoint_does_not_append_when_decision_does_not_change() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient(reject_changed=False)
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(
+            f"/api/sessions/{session_id}/approvals/a1/reject",
+            json={"reason": "too expensive"},
+        )
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 409
+    assert approval_client.calls == ["get:a1", "reject:a1:too expensive"]
+    assert thread["messages"] == []
 
 
 def _decode_sse(body: str) -> list[dict]:

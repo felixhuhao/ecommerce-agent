@@ -51,6 +51,28 @@ def _proposal_failure_message(
     )
 
 
+def _proposal_fetch_failure_message(
+    *,
+    session_id: str,
+    turn_id: str,
+    trace_id: str,
+    approval_id: str,
+) -> ThreadMessage:
+    return ThreadMessage(
+        session_id=session_id,
+        type="agent_answer",
+        content=(
+            f"Approval {approval_id} was created, but I could not fetch its approval card. "
+            "Please reload the approval before approving it."
+        ),
+        turn_id=turn_id,
+        trace_id=trace_id,
+        actor_id="agent",
+        approval_id=approval_id,
+        status="failed",
+    )
+
+
 async def _append_turn_result(
     *,
     record: TraceRecord,
@@ -89,7 +111,22 @@ async def _append_turn_result(
         )
         return
 
-    approval = await approval_client.get_approval(approval_id)
+    try:
+        approval = await approval_client.get_approval(approval_id)
+    except Exception:
+        logger.exception("failed to fetch approval card for %s", approval_id)
+        await append_and_publish(
+            store,
+            bus,
+            _proposal_fetch_failure_message(
+                session_id=session_id,
+                turn_id=turn_id,
+                trace_id=record.trace_id,
+                approval_id=approval_id,
+            ),
+        )
+        return
+
     await append_and_publish(
         store,
         bus,

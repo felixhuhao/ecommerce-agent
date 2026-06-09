@@ -47,6 +47,18 @@ def _result_dict(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else {"value": value}
 
 
+async def _ensure_approval_visible(
+    *,
+    client: Any,
+    approval_id: str,
+) -> None:
+    await client.get_approval(approval_id)
+
+
+def _decision_changed(decision: dict[str, Any]) -> bool:
+    return decision.get("changed") is not False and decision.get("_http_status_code") != 409
+
+
 def _approval_status_content(approval_id: str, status_value: str, reason: str | None) -> str:
     suffix = f": {reason}" if reason else "."
     return f"Approval {approval_id} {status_value}{suffix}"
@@ -203,15 +215,17 @@ async def approve_approval(
     client = _approval_client(request, session_id)
     actor_id = request.app.state.settings.spring_mcp_user_id
     try:
+        await _ensure_approval_visible(client=client, approval_id=approval_id)
         decision = await client.approve(approval_id)
-        await _append_approval_status(
-            request=request,
-            session_id=session_id,
-            approval_id=approval_id,
-            status_value=decision.get("status") or "approved",
-            actor_id=actor_id,
-            reason=decision.get("rejectionReason"),
-        )
+        if _decision_changed(decision):
+            await _append_approval_status(
+                request=request,
+                session_id=session_id,
+                approval_id=approval_id,
+                status_value=decision.get("status") or "approved",
+                actor_id=actor_id,
+                reason=decision.get("rejectionReason"),
+            )
         execution = await execute_with_retry(client, approval_id)
     except ApprovalApiError as exc:
         _raise_approval_error(exc)
@@ -254,9 +268,13 @@ async def reject_approval(
     actor_id = request.app.state.settings.spring_mcp_user_id
     reason = payload.reason if payload else None
     try:
+        await _ensure_approval_visible(client=client, approval_id=approval_id)
         decision = await client.reject(approval_id, reason=reason)
     except ApprovalApiError as exc:
         _raise_approval_error(exc)
+
+    if not _decision_changed(decision):
+        raise HTTPException(status_code=409, detail=_public_payload(decision))
 
     message = await _append_approval_status(
         request=request,

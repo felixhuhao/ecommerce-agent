@@ -35,6 +35,34 @@ class FakeApprovalClient:
         }
 
 
+class ApprovalAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "request_approval",
+            "data": {
+                "input": {
+                    "toolName": "purchase_order_create",
+                    "operationType": "create",
+                }
+            },
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "data": {"output": {"approvalId": "approval-1"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": SimpleNamespace(content="Proposed restock.")},
+        }
+
+
 @pytest.mark.asyncio
 async def test_run_turn_publishes_events_and_appends_answer() -> None:
     store = InMemoryThreadStore()
@@ -69,33 +97,6 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
 
 @pytest.mark.asyncio
 async def test_run_turn_appends_agent_proposal_for_request_approval() -> None:
-    class ApprovalAgent:
-        async def astream_events(
-            self,
-            inputs: dict,
-            config: dict,
-            version: str,
-        ) -> AsyncIterator[dict]:
-            yield {
-                "event": "on_tool_start",
-                "name": "request_approval",
-                "data": {
-                    "input": {
-                        "toolName": "purchase_order_create",
-                        "operationType": "create",
-                    }
-                },
-            }
-            yield {
-                "event": "on_tool_end",
-                "name": "request_approval",
-                "data": {"output": {"approvalId": "approval-1"}},
-            }
-            yield {
-                "event": "on_chat_model_stream",
-                "data": {"chunk": SimpleNamespace(content="Proposed restock.")},
-            }
-
     store = InMemoryThreadStore()
     bus = SessionBus()
 
@@ -118,6 +119,34 @@ async def test_run_turn_appends_agent_proposal_for_request_approval() -> None:
     assert messages[0].content == "Proposed restock."
     assert messages[0].card is not None
     assert messages[0].card["title"] == "Create purchase order"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_preserves_approval_id_when_card_fetch_fails() -> None:
+    class FailingApprovalClient:
+        async def get_approval(self, approval_id: str) -> dict:
+            assert approval_id == "approval-1"
+            raise RuntimeError("approval API down")
+
+    store = InMemoryThreadStore()
+    bus = SessionBus()
+
+    await run_turn(
+        agent=ApprovalAgent(),
+        message="restock product 1",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=bus,
+        recursion_limit=80,
+        approval_client=FailingApprovalClient(),
+    )
+
+    messages = await store.list_messages("s1")
+    assert [message.type for message in messages] == ["agent_answer"]
+    assert messages[0].status == "failed"
+    assert messages[0].approval_id == "approval-1"
+    assert "Approval approval-1 was created" in messages[0].content
 
 
 @pytest.mark.asyncio
