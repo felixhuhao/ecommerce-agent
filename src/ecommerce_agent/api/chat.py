@@ -51,7 +51,14 @@ async def _ensure_agent(request: Request) -> Any:
         mcp_client = request.app.state.mcp_client
         spring_tools = await load_spring_read_tools(mcp_client)
         if settings.modelscope_mcp_url:
-            viz_tools = await load_modelscope_viz_tools(mcp_client)
+            try:
+                viz_tools = await load_modelscope_viz_tools(mcp_client)
+            except Exception:
+                logger.warning(
+                    "ModelScope MCP unavailable; continuing without visualization tools",
+                    exc_info=True,
+                )
+                viz_tools = []
         else:
             viz_tools = []
         model = get_primary_model(settings)

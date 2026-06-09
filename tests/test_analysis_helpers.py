@@ -80,6 +80,32 @@ def test_load_orders_df_flattens_raw_spring_orders_with_product_categories(tmp_p
     assert pd.api.types.is_datetime64_any_dtype(df["created_at"])
 
 
+def test_load_orders_df_buckets_non_numeric_product_ids_as_unknown(tmp_path) -> None:
+    orders_path = _write_orders(
+        tmp_path,
+        [
+            {
+                "orderId": 1,
+                "status": "paid",
+                "createdAt": "2026-01-15T10:00:00",
+                "items": [{"productId": "not-a-number", "subtotal": 20}],
+            }
+        ],
+        name="orders_raw.json",
+    )
+    products_path = _write_orders(
+        tmp_path,
+        [{"productId": "not-a-number", "category": "bad-data"}],
+        name="products_raw.json",
+    )
+
+    df = load_orders_df(orders_path, products_path)
+
+    assert df[["category", "amount"]].to_dict(orient="records") == [
+        {"category": "unknown", "amount": 20}
+    ]
+
+
 def test_load_orders_df_accepts_langchain_content_block_files(tmp_path) -> None:
     orders = [
         {

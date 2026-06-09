@@ -19,6 +19,13 @@ REALIZED_STATUSES = ("paid", "shipped", "completed")
 REQUIRED_COLUMNS = ("created_at", "status", "category", "amount")
 
 
+def _numeric_id(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _read_json_payload(path: Path) -> Any:
     data = json.loads(path.read_text())
     if (
@@ -51,7 +58,10 @@ def _product_category_map(products_path: str | None) -> dict[int, str]:
         category = product.get("category")
         if product_id is None or category is None:
             continue
-        categories[int(product_id)] = str(category)
+        numeric_product_id = _numeric_id(product_id)
+        if numeric_product_id is None:
+            continue
+        categories[numeric_product_id] = str(category)
     return categories
 
 
@@ -63,6 +73,7 @@ def _flatten_raw_orders(records: list[dict[str, Any]], products_path: str | None
         status = order.get("status")
         for item in order.get("items", []):
             product_id = item.get("productId", item.get("product_id"))
+            numeric_product_id = _numeric_id(product_id)
             amount = item.get("subtotal", item.get("amount"))
             if amount is None:
                 quantity = item.get("quantity")
@@ -73,9 +84,7 @@ def _flatten_raw_orders(records: list[dict[str, Any]], products_path: str | None
                 {
                     "created_at": created_at,
                     "status": status,
-                    "category": category_by_product.get(int(product_id), "unknown")
-                    if product_id is not None
-                    else "unknown",
+                    "category": category_by_product.get(numeric_product_id, "unknown"),
                     "amount": amount,
                 }
             )

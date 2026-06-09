@@ -10,6 +10,9 @@ from ecommerce_agent.config import Settings
 
 
 class FakeAgent:
+    def __init__(self, *, expected_recursion_limit: int | None = None) -> None:
+        self.expected_recursion_limit = expected_recursion_limit
+
     async def astream_events(
         self,
         inputs: dict,
@@ -17,7 +20,8 @@ class FakeAgent:
         version: str,
     ) -> AsyncIterator[dict]:
         assert inputs["messages"][0]["content"] == "hello"
-        assert config == {"recursion_limit": 80}
+        if self.expected_recursion_limit is not None:
+            assert config == {"recursion_limit": self.expected_recursion_limit}
         assert version == "v2"
         yield {"event": "on_tool_start", "name": "inventory_query", "data": {}}
         yield {
@@ -127,7 +131,11 @@ def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
 
 
 def test_chat_stream_maps_agent_events_to_sse_frames() -> None:
-    app = create_app(settings=make_settings(), agent=FakeAgent())
+    settings = make_settings(agent_recursion_limit=123)
+    app = create_app(
+        settings=settings,
+        agent=FakeAgent(expected_recursion_limit=settings.agent_recursion_limit),
+    )
 
     with TestClient(app) as client:
         with client.stream("POST", "/api/chat/stream", json={"message": "  hello  "}) as response:
@@ -238,11 +246,12 @@ def test_chat_stream_lazily_builds_analyst_with_backend(
     monkeypatch.setattr(chat_module, "get_primary_model", fake_get_primary_model)
     monkeypatch.setattr(chat_module, "build_sales_analyst", fake_build_sales_analyst)
 
+    settings = make_settings(
+        llm_api_key="test-key",
+        modelscope_mcp_url="http://modelscope.example/mcp",
+    )
     app = create_app(
-        settings=make_settings(
-            llm_api_key="test-key",
-            modelscope_mcp_url="http://modelscope.example/mcp",
-        ),
+        settings=settings,
         mcp_client=BuildableFakeMcpClient(),
     )
     app.state.sandbox_backend = object()
@@ -259,3 +268,58 @@ def test_chat_stream_lazily_builds_analyst_with_backend(
     assert calls == {"spring": 1, "viz": 1, "model": 1, "analyst": 1}
     assert health["agent_ready"] is True
     assert health["tool_count"] == 2
+
+
+def test_chat_stream_falls_back_when_modelscope_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls = {"spring": 0, "viz": 0, "model": 0, "analyst": 0}
+
+    async def fake_load_spring_read_tools(mcp_client: BuildableFakeMcpClient) -> list[FakeTool]:
+        calls["spring"] += 1
+        return [FakeTool("order_query")]
+
+    async def fake_load_modelscope_viz_tools(mcp_client: BuildableFakeMcpClient) -> list[FakeTool]:
+        calls["viz"] += 1
+        raise TimeoutError("modelscope down")
+
+    def fake_get_primary_model(settings: Settings) -> object:
+        calls["model"] += 1
+        return object()
+
+    def fake_build_sales_analyst(
+        model: object,
+        *,
+        spring_read_tools: list[FakeTool],
+        viz_tools: list[FakeTool],
+        backend: object,
+    ) -> FakeAgent:
+        calls["analyst"] += 1
+        assert [tool.name for tool in spring_read_tools] == ["order_query"]
+        assert viz_tools == []
+        return FakeAgent()
+
+    monkeypatch.setattr(chat_module, "load_spring_read_tools", fake_load_spring_read_tools)
+    monkeypatch.setattr(chat_module, "load_modelscope_viz_tools", fake_load_modelscope_viz_tools)
+    monkeypatch.setattr(chat_module, "get_primary_model", fake_get_primary_model)
+    monkeypatch.setattr(chat_module, "build_sales_analyst", fake_build_sales_analyst)
+
+    settings = make_settings(
+        llm_api_key="test-key",
+        modelscope_mcp_url="http://modelscope.example/mcp",
+    )
+    app = create_app(settings=settings, mcp_client=BuildableFakeMcpClient())
+    app.state.sandbox_backend = object()
+
+    with TestClient(app) as client:
+        with caplog.at_level("WARNING", logger="ecommerce_agent.api.chat"):
+            with client.stream("POST", "/api/chat/stream", json={"message": "hello"}) as response:
+                body = "".join(response.iter_text())
+        health = client.get("/health").json()
+
+    assert response.status_code == 200
+    assert "Inventory looks healthy." in body
+    assert calls == {"spring": 1, "viz": 1, "model": 1, "analyst": 1}
+    assert health["tool_count"] == 1
+    assert "ModelScope MCP unavailable" in caplog.text
