@@ -65,6 +65,25 @@ def test_spring_headers_are_never_tool_parameters() -> None:
     }
 
 
+def test_spring_headers_override_user_and_session() -> None:
+    settings = make_settings(spring_mcp_service_token="tok")
+
+    headers = spring_headers(settings, user_id="7", session_id="sess-abc")
+
+    assert headers["X-Service-Token"] == "tok"
+    assert headers["X-User-Id"] == "7"
+    assert headers["X-Session-Id"] == "sess-abc"
+
+
+def test_build_mcp_connections_uses_session_headers() -> None:
+    settings = make_settings()
+
+    connections = build_mcp_connections(settings, user_id="7", session_id="sess-abc")
+
+    assert connections["spring"]["headers"]["X-Session-Id"] == "sess-abc"
+    assert connections["spring"]["headers"]["X-User-Id"] == "7"
+
+
 def test_filter_spring_read_tools_excludes_write_and_approval_tools() -> None:
     tools = [
         SimpleNamespace(name="inventory_query"),
