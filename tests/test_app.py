@@ -116,15 +116,25 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     spring = body["servers"]["spring"]
     assert spring["status"] == "ok"
     assert spring["tool_count"] == 14
-    assert spring["agent_allowed_tool_count"] == 10
-    assert "inventory_query" in spring["agent_allowed_tools"]
-    assert spring["blocked_write_or_approval_tools"] == [
+    assert spring["sales_analyst_allowed_tool_count"] == 10
+    assert "inventory_query" in spring["sales_analyst_allowed_tools"]
+    assert "request_approval" not in spring["sales_analyst_allowed_tools"]
+    assert spring["order_manager_allowed_tool_count"] == 5
+    assert spring["order_manager_allowed_tools"] == [
+        "inventory_query",
+        "order_query",
+        "purchase_order_query",
+        "request_approval",
+        "supplier_query",
+    ]
+    assert spring["blocked_write_tools"] == [
         "order_update",
         "purchase_order_create",
         "purchase_order_receive",
-        "request_approval",
     ]
+    assert spring["approval_tools"] == ["request_approval"]
     assert spring["missing_expected_read_tools"] == []
+    assert spring["missing_expected_order_manager_tools"] == []
 
 
 def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:

@@ -17,6 +17,26 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "Never embed raw order or product payloads inside Python source" in prompt
 
 
+def test_get_order_manager_prompt_is_nonempty_and_approval_only() -> None:
+    prompt = get_prompt("order_manager")
+
+    assert isinstance(prompt, str) and len(prompt) > 100
+    assert "request_approval" in prompt
+    assert "purchase_order_create" in prompt
+    assert "purchase_order_receive" in prompt
+    assert "order_update" in prompt
+    assert "Never" in prompt and "executed" in prompt
+
+
+def test_get_coordinator_prompt_is_active_router() -> None:
+    prompt = get_prompt("coordinator")
+
+    assert "Dormant" not in prompt
+    assert "sales-analyst" in prompt
+    assert "order-manager" in prompt
+    assert "no business tools" in prompt
+
+
 def test_get_prompt_unknown_key_raises() -> None:
     with pytest.raises(KeyError, match="not found"):
         get_prompt("does_not_exist")

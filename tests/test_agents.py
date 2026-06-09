@@ -1,7 +1,12 @@
 import ecommerce_agent.agent as agent_module
 import ecommerce_agent.agents as agents_module
 from ecommerce_agent.agent import build_agent
-from ecommerce_agent.agents import build_sales_analyst, sales_analyst_subagent
+from ecommerce_agent.agents import (
+    build_coordinator,
+    build_sales_analyst,
+    order_manager_subagent,
+    sales_analyst_subagent,
+)
 
 
 class _Tool:
@@ -105,3 +110,59 @@ def test_sales_analyst_subagent_seam_shape() -> None:
         "order_query",
         "generate_line_chart",
     }
+
+
+def test_order_manager_subagent_shape() -> None:
+    subagent = order_manager_subagent(
+        order_manager_tools=[
+            _Tool("inventory_query"),  # type: ignore[list-item]
+            _Tool("request_approval"),  # type: ignore[list-item]
+        ]
+    )
+
+    assert subagent["name"] == "order-manager"
+    assert "approval" in subagent["description"].lower()
+    assert "request_approval" in subagent["system_prompt"]
+    assert {tool.name for tool in subagent["tools"]} == {
+        "inventory_query",
+        "request_approval",
+    }
+
+
+def test_build_coordinator_has_no_business_tools_and_delegates(monkeypatch) -> None:
+    captured = {}
+
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            middleware=list(middleware),
+            kwargs=kwargs,
+        )
+        return "COORDINATOR"
+
+    monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
+
+    backend = object()
+    analyst = {"name": "sales-analyst", "tools": [_Tool("order_query")]}
+    order_manager = {"name": "order-manager", "tools": [_Tool("request_approval")]}
+
+    result = build_coordinator(
+        "MODEL",  # type: ignore[arg-type]
+        sales_analyst_subagent=analyst,
+        order_manager_subagent=order_manager,
+        backend=backend,
+    )
+
+    assert result == "COORDINATOR"
+    assert captured["model"] == "MODEL"
+    assert captured["tools"] == []
+    assert captured["backend"] is backend
+    assert captured["kwargs"]["subagents"] == [analyst, order_manager]
+    assert captured["kwargs"]["skills"] == []
+    assert "sales-analyst" in captured["system_prompt"]
+    assert "order-manager" in captured["system_prompt"]
+    middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
+    assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= middleware_types

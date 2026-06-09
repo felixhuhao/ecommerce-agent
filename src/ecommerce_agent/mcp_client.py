@@ -25,12 +25,25 @@ READ_ONLY_SPRING_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = frozenset(
+APPROVAL_SPRING_TOOLS: frozenset[str] = frozenset({"request_approval"})
+
+WRITE_SPRING_TOOLS: frozenset[str] = frozenset(
     {
-        "request_approval",
         "purchase_order_create",
         "purchase_order_receive",
         "order_update",
+    }
+)
+
+WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = WRITE_SPRING_TOOLS | APPROVAL_SPRING_TOOLS
+
+ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = frozenset(
+    {
+        "purchase_order_query",
+        "order_query",
+        "inventory_query",
+        "supplier_query",
+        "request_approval",
     }
 )
 
@@ -110,6 +123,10 @@ def filter_spring_read_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in READ_ONLY_SPRING_TOOLS]
 
 
+def filter_order_manager_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in ORDER_MANAGER_SPRING_TOOLS]
+
+
 def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in VIZ_TOOLS]
 
@@ -117,6 +134,11 @@ def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:
 async def load_spring_read_tools(client: MultiServerMCPClient) -> list[BaseTool]:
     tools = await client.get_tools(server_name=SPRING_SERVER_NAME)
     return filter_spring_read_tools(tools)
+
+
+async def load_order_manager_tools(client: MultiServerMCPClient) -> list[BaseTool]:
+    tools = await client.get_tools(server_name=SPRING_SERVER_NAME)
+    return filter_order_manager_tools(tools)
 
 
 async def load_modelscope_viz_tools(client: MultiServerMCPClient) -> list[BaseTool]:

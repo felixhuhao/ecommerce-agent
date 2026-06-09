@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from ecommerce_agent.agents import build_sales_analyst
+from ecommerce_agent.agents import build_coordinator, order_manager_subagent, sales_analyst_subagent
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     build_mcp_client,
     load_modelscope_viz_tools,
+    load_order_manager_tools,
     load_spring_read_tools,
 )
 from ecommerce_agent.models import get_primary_model
@@ -29,6 +30,7 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         session_id=session_id,
     )
     spring_tools = await load_spring_read_tools(mcp_client)
+    order_manager_tools = await load_order_manager_tools(mcp_client)
     if settings.modelscope_mcp_url:
         try:
             viz_tools = await load_modelscope_viz_tools(mcp_client)
@@ -43,10 +45,15 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
 
     sandbox = build_session_sandbox(settings, session_id=session_id)
     model = get_primary_model(settings)
-    agent = build_sales_analyst(
-        model,
+    analyst = sales_analyst_subagent(
         spring_read_tools=spring_tools,
         viz_tools=viz_tools,
+    )
+    order_manager = order_manager_subagent(order_manager_tools=order_manager_tools)
+    agent = build_coordinator(
+        model,
+        sales_analyst_subagent=analyst,
+        order_manager_subagent=order_manager,
         backend=sandbox,
     )
     return SessionRuntime(

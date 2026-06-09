@@ -2,11 +2,15 @@ from types import SimpleNamespace
 
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
+    APPROVAL_SPRING_TOOLS,
+    ORDER_MANAGER_SPRING_TOOLS,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
     VIZ_TOOLS,
     WRITE_OR_APPROVAL_SPRING_TOOLS,
+    WRITE_SPRING_TOOLS,
     build_mcp_connections,
+    filter_order_manager_tools,
     filter_spring_read_tools,
     filter_viz_tools,
     spring_headers,
@@ -97,6 +101,28 @@ def test_filter_spring_read_tools_excludes_write_and_approval_tools() -> None:
     assert tool_names(filtered) == {"inventory_query", "get_statistics"}  # type: ignore[arg-type]
     assert WRITE_OR_APPROVAL_SPRING_TOOLS.isdisjoint(tool_names(filtered))  # type: ignore[arg-type]
     assert tool_names(filtered).issubset(READ_ONLY_SPRING_TOOLS)  # type: ignore[arg-type]
+
+
+def test_filter_order_manager_tools_keeps_reads_plus_request_approval() -> None:
+    tools = [
+        SimpleNamespace(name="inventory_query"),
+        SimpleNamespace(name="order_query"),
+        SimpleNamespace(name="supplier_query"),
+        SimpleNamespace(name="purchase_order_query"),
+        SimpleNamespace(name="request_approval"),
+        SimpleNamespace(name="get_statistics"),
+        SimpleNamespace(name="purchase_order_create"),
+        SimpleNamespace(name="purchase_order_receive"),
+        SimpleNamespace(name="order_update"),
+    ]
+
+    filtered = filter_order_manager_tools(tools)  # type: ignore[arg-type]
+    names = tool_names(filtered)  # type: ignore[arg-type]
+
+    assert names == ORDER_MANAGER_SPRING_TOOLS
+    assert APPROVAL_SPRING_TOOLS <= names
+    assert WRITE_SPRING_TOOLS.isdisjoint(names)
+    assert "request_approval" not in READ_ONLY_SPRING_TOOLS
 
 
 def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:

@@ -1,4 +1,4 @@
-"""M1 runtime agent factory and dormant M2 coordinator seam."""
+"""Runtime agent factories for the analyst, order-manager, and coordinator."""
 
 from __future__ import annotations
 
@@ -15,6 +15,11 @@ from ecommerce_agent.prompts.loader import get_prompt
 _ANALYST_DESCRIPTION = (
     "Read-only sales analyst: queries business data, runs sandboxed analysis when "
     "computation is needed, and produces chart specs."
+)
+
+_ORDER_MANAGER_DESCRIPTION = (
+    "Approval-only order manager: reads orders, inventory, suppliers, and purchase "
+    "orders, then requests human approval for proposed business writes."
 )
 
 _MAX_MODEL_CALLS_PER_RUN = 25
@@ -53,10 +58,39 @@ def sales_analyst_subagent(
     spring_read_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
 ) -> dict[str, Any]:
-    """Dormant M2 seam for using the analyst behind a coordinator."""
+    """Build the sales analyst sub-agent descriptor used by the coordinator."""
     return {
         "name": "sales-analyst",
         "description": _ANALYST_DESCRIPTION,
         "system_prompt": get_prompt("sales_analyst"),
         "tools": list(spring_read_tools) + list(viz_tools),
     }
+
+
+def order_manager_subagent(*, order_manager_tools: Sequence[BaseTool]) -> dict[str, Any]:
+    """Build the approval-only order manager sub-agent descriptor."""
+    return {
+        "name": "order-manager",
+        "description": _ORDER_MANAGER_DESCRIPTION,
+        "system_prompt": get_prompt("order_manager"),
+        "tools": list(order_manager_tools),
+    }
+
+
+def build_coordinator(
+    model: BaseChatModel,
+    *,
+    sales_analyst_subagent: dict[str, Any],
+    order_manager_subagent: dict[str, Any],
+    backend: Any,
+) -> Any:
+    """Build the M2 coordinator that routes to specialists without business tools."""
+    return build_agent(
+        model,
+        [],
+        system_prompt=get_prompt("coordinator"),
+        subagents=[sales_analyst_subagent, order_manager_subagent],
+        middleware=_reliability_middleware(),
+        skills=[],
+        backend=backend,
+    )
