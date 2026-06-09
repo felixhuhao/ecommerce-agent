@@ -1,6 +1,6 @@
 import pytest
 
-from ecommerce_agent.approvals import approval_card, execute_with_retry
+from ecommerce_agent.approvals import approval_card, execute_with_retry, extract_approval_id
 
 
 def test_approval_card_parses_operation_detail_and_keeps_identity_fields() -> None:
@@ -19,6 +19,19 @@ def test_approval_card_parses_operation_detail_and_keeps_identity_fields() -> No
     assert card["approvalId"] == "a1"
     assert card["toolName"] == "purchase_order_create"
     assert card["status"] == "pending"
+
+
+def test_extract_approval_id_handles_nested_mcp_text_result() -> None:
+    result = {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"approvalId":"approval-1","status":"pending"}',
+            }
+        ]
+    }
+
+    assert extract_approval_id(result) == "approval-1"
 
 
 @pytest.mark.asyncio

@@ -57,6 +57,21 @@ async def skip_unless_spring_mcp_is_running(settings: Settings) -> None:
         )
 
 
+async def skip_unless_mongo_is_running(settings: Settings) -> None:
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient
+    except ImportError as exc:  # pragma: no cover
+        pytest.skip(f"motor is not installed: {exc}")
+
+    client = AsyncIOMotorClient(settings.mongo_url, serverSelectionTimeoutMS=1500)
+    try:
+        await client.admin.command("ping")
+    except Exception as exc:
+        pytest.skip(f"MongoDB is not reachable at {settings.mongo_url}: {exc}")
+    finally:
+        client.close()
+
+
 def skip_unless_docker_available() -> None:
     try:
         import docker

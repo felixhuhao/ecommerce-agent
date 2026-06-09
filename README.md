@@ -105,3 +105,14 @@ RUN_LIVE_LLM=1 uv run pytest -m live
 
 When `MODELSCOPE_MCP_URL` is set, the live reliability harness also requires the
 hero run to call one allowlisted chart tool.
+
+Run the opt-in M2 approval loop when Spring MCP/MySQL and MongoDB are both
+available:
+
+```bash
+RUN_M2_APPROVAL_INTEGRATION=1 uv run pytest tests/integration/test_m2_approval_loop.py -v
+```
+
+This creates real pending approvals through the Spring MCP `request_approval`
+tool, then drives FastAPI approve/reject/execute orchestration against Java REST
+and verifies Mongo thread reload/stream replay.

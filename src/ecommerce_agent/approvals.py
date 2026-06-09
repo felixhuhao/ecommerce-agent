@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import httpx
@@ -126,6 +127,42 @@ def approval_card(approval: dict[str, Any]) -> dict[str, Any]:
         if approval.get(key) is not None:
             card.setdefault(key, approval[key])
     return card
+
+
+def extract_approval_id(value: Any) -> str | None:
+    if isinstance(value, dict):
+        approval_id = value.get("approvalId") or value.get("approval_id")
+        if approval_id:
+            return str(approval_id)
+        for nested in value.values():
+            approval_id = extract_approval_id(nested)
+            if approval_id:
+                return approval_id
+        return None
+    if isinstance(value, list):
+        for item in value:
+            approval_id = extract_approval_id(item)
+            if approval_id:
+                return approval_id
+        return None
+
+    for attr in ("approvalId", "approval_id"):
+        approval_id = getattr(value, attr, None)
+        if approval_id:
+            return str(approval_id)
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return extract_approval_id(json.loads(text))
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"approval[_-]?id['\"]?\s*[:=]\s*['\"]?([^,'\"\s})]+)", text, re.I)
+    return match.group(1) if match else None
 
 
 async def execute_with_retry(

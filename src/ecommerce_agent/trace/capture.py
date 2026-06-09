@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import AsyncIterator
 from typing import Any
 
+from ecommerce_agent.approvals import extract_approval_id
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 _SUMMARY_LIMIT = 500
@@ -39,36 +38,6 @@ def _parent_span(raw: dict) -> str | None:
     # parentage from framework-specific fields later.
     parents = raw.get("parent_ids") or []
     return parents[-1] if parents else None
-
-
-def _extract_approval_id(value: Any) -> str | None:
-    if isinstance(value, dict):
-        approval_id = value.get("approvalId") or value.get("approval_id")
-        return str(approval_id) if approval_id else None
-    if isinstance(value, list):
-        for item in value:
-            approval_id = _extract_approval_id(item)
-            if approval_id:
-                return approval_id
-        return None
-
-    for attr in ("approvalId", "approval_id"):
-        approval_id = getattr(value, attr, None)
-        if approval_id:
-            return str(approval_id)
-
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    try:
-        return _extract_approval_id(json.loads(text))
-    except json.JSONDecodeError:
-        pass
-
-    match = re.search(r"approval[_-]?id['\"]?\s*[:=]\s*['\"]?([^,'\"\s})]+)", text, re.I)
-    return match.group(1) if match else None
 
 
 def _to_trace_event(raw: dict, record: TraceRecord) -> TraceEvent | None:
@@ -112,7 +81,7 @@ def _to_trace_event(raw: dict, record: TraceRecord) -> TraceEvent | None:
             result_summary=_summarize(data.get("output")),
             tool_call_id=run_id,
             approval_id=(
-                _extract_approval_id(data.get("output"))
+                extract_approval_id(data.get("output"))
                 if raw.get("name") == "request_approval"
                 else None
             ),
