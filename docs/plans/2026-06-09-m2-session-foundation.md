@@ -742,11 +742,20 @@ class SessionRegistry:
 
     async def create(self) -> str:
         session_id = uuid.uuid4().hex
-        runtime = await self._build_runtime(session_id)
+        # Make room BEFORE building the (expensive, Docker-backed) runtime, so we never
+        # build a container only to discard it under the cap.
         async with self._lock:
-            if len(self._runtimes) >= self._max_live_sessions:
-                await self._reap_locked(force_oldest=True)
-            self._runtimes[session_id] = runtime
+            self._make_room_locked()
+        runtime = await self._build_runtime(session_id)
+        try:
+            async with self._lock:
+                # A concurrent create may have refilled the map during the build; evict
+                # again so this session fits without breaching the cap.
+                self._make_room_locked()
+                self._runtimes[session_id] = runtime
+        except Exception:
+            runtime.close()
+            raise
         return session_id
 
     async def get(self, session_id: str) -> SessionRuntime:
@@ -759,7 +768,7 @@ class SessionRegistry:
 
     async def reap_idle(self) -> list[str]:
         async with self._lock:
-            return await self._reap_locked(force_oldest=False)
+            return self._reap_idle_locked()
 
     async def close_all(self) -> None:
         async with self._lock:
@@ -767,14 +776,19 @@ class SessionRegistry:
                 runtime.close()
             self._runtimes.clear()
 
-    async def _reap_locked(self, *, force_oldest: bool) -> list[str]:
+    def _reap_idle_locked(self) -> list[str]:
         reaped: list[str] = []
         for session_id, runtime in list(self._runtimes.items()):
             if runtime.idle_seconds() >= self._idle_ttl_seconds:
                 runtime.close()
                 del self._runtimes[session_id]
                 reaped.append(session_id)
-        if force_oldest and not reaped and self._runtimes:
+        return reaped
+
+    def _make_room_locked(self) -> list[str]:
+        """Reap idle runtimes; if still at/over the cap, evict the oldest until under it."""
+        reaped = self._reap_idle_locked()
+        while len(self._runtimes) >= self._max_live_sessions:
             oldest = min(self._runtimes.values(), key=lambda r: r.last_used)
             oldest.close()
             del self._runtimes[oldest.session_id]
@@ -861,6 +875,32 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_failure_appends_durable_agent_answer() -> None:
+    class ExplodingAgent:
+        async def astream_events(self, inputs: dict, config: dict, version: str) -> AsyncIterator[dict]:
+            raise RuntimeError("boom")
+            yield  # pragma: no cover
+
+    store = InMemoryThreadStore()
+    bus = SessionBus()
+
+    await run_turn(
+        agent=ExplodingAgent(),
+        message="hi",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=bus,
+        recursion_limit=80,
+    )
+
+    # A late reload must show a durable failure response, not an orphan user turn.
+    messages = await store.list_messages("s1")
+    assert [m.type for m in messages] == ["agent_answer"]
+    assert messages[0].status == "failed"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -929,6 +969,20 @@ async def run_turn(
         )
     except Exception:
         logger.exception("agent turn failed for session %s", session_id)
+        # Durable failure response: a late reload must show a reply, not an orphan user turn.
+        await append_and_publish(
+            store,
+            bus,
+            ThreadMessage(
+                session_id=session_id,
+                type="agent_answer",
+                content="Sorry, I could not complete that request. Please try again.",
+                turn_id=turn_id,
+                trace_id=record.trace_id,
+                actor_id="agent",
+                status="failed",
+            ),
+        )
         bus.publish(session_id, {"event": "error", "message": "Unable to complete the turn."})
     finally:
         if record.ended_at is None:
@@ -1101,7 +1155,7 @@ git commit -m "feat(m2): add default per-session runtime factory"
 - Create: `src/ecommerce_agent/api/sessions.py`
 - Test: `tests/test_sessions_api.py`
 
-The router reads `store`, `bus`, `registry`, and `settings` from `request.app.state` (wired in Task 10). `POST /messages` appends the user message, spawns `run_turn` as a background task, and returns `202`. `GET /stream` subscribes-first-then-replays.
+The router reads `store`, `bus`, `registry`, and `settings` from `request.app.state` (wired in Task 11). `POST /messages` appends the user message, spawns `run_turn` as a background task, and returns `202`. `GET /stream` subscribes-first-then-replays.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1330,9 +1384,9 @@ async def stream(session_id: str, request: Request) -> EventSourceResponse:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_sessions_api.py -v`
-Expected: PASS. (The `background_tasks` set is created per-app in Task 10; the test app needs it — add `app.state.background_tasks = set()` to `build_test_app` if Task 10 isn't done yet.)
+Expected: PASS. (The `background_tasks` set is created per-app in Task 11; the test app needs it — add `app.state.background_tasks = set()` to `build_test_app`.)
 
-> Note for the implementer: add `app.state.background_tasks = set()` to the `build_test_app` helper in the test, mirroring Task 10's app wiring.
+> Note for the implementer: add `app.state.background_tasks = set()` to the `build_test_app` helper in the test, mirroring Task 11's app wiring.
 
 - [ ] **Step 5: Commit**
 
@@ -1343,142 +1397,15 @@ git commit -m "feat(m2): add sessions API with unified SSE stream and reload"
 
 ---
 
-### Task 10: Wire the app (state, router, reaper) and retire `/api/chat/stream`
-
-**Files:**
-- Modify: `src/ecommerce_agent/api/app.py`
-- Delete: `src/ecommerce_agent/api/chat.py`
-- Test: `tests/test_app.py` (migrated in Task 11)
-
-- [ ] **Step 1: Write the failing test**
-
-Add to `tests/test_app.py`:
-
-```python
-def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    import ecommerce_agent.api.app as app_module
-    from ecommerce_agent.sessions.registry import SessionRuntime
-
-    async def fake_build_runtime(session_id: str) -> SessionRuntime:
-        return SessionRuntime(
-            session_id=session_id, agent=FakeAgent(), mcp_client=object(), sandbox=object()
-        )
-
-    monkeypatch.setattr(app_module, "make_runtime_builder", lambda settings: fake_build_runtime)
-    monkeypatch.setattr(app_module, "build_sandbox_backend", lambda settings: SimpleNamespace(close=lambda: None))
-
-    app = create_app(settings=make_settings())
-    with TestClient(app) as client:
-        session_id = client.post("/api/sessions").json()["session_id"]
-        assert client.post(f"/api/sessions/{session_id}/messages", json={"message": "hello"}).status_code == 202
-        thread = client.get(f"/api/sessions/{session_id}/thread").json()
-        assert [m["type"] for m in thread["messages"]] == ["user", "agent_answer"]
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `uv run pytest tests/test_app.py::test_session_lifecycle_end_to_end -v`
-Expected: FAIL — `AttributeError: module 'ecommerce_agent.api.app' has no attribute 'make_runtime_builder'`.
-
-- [ ] **Step 3: Rewrite `app.py` wiring**
-
-In `src/ecommerce_agent/api/app.py`:
-
-1. Replace the chat router import with the sessions router and add the new imports:
-
-```python
-from ecommerce_agent.api.sessions import router as sessions_router
-from ecommerce_agent.config import Settings, get_settings
-from ecommerce_agent.sessions.factory import build_session_runtime
-from ecommerce_agent.sessions.registry import SessionRegistry
-from ecommerce_agent.sessions.bus import SessionBus
-from ecommerce_agent.threads.mongo import MongoThreadStore  # added in Task 11
-```
-
-2. Add the runtime-builder factory (a seam tests monkeypatch):
-
-```python
-def make_runtime_builder(settings: Settings):
-    async def build_runtime(session_id: str):
-        return await build_session_runtime(session_id, settings)
-
-    return build_runtime
-```
-
-3. In `lifespan`, initialize state and start the reaper:
-
-```python
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings: Settings = app.state.settings
-    app.state.thread_store = getattr(app.state, "thread_store", None) or MongoThreadStore.from_settings(settings)
-    app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
-    app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
-    app.state.session_registry = getattr(app.state, "session_registry", None) or SessionRegistry(
-        build_runtime=make_runtime_builder(settings),
-        idle_ttl_seconds=settings.session_idle_ttl_seconds,
-        max_live_sessions=settings.max_live_sessions,
-    )
-    reaper = asyncio.create_task(_reap_loop(app))
-    try:
-        yield
-    finally:
-        reaper.cancel()
-        await app.state.session_registry.close_all()
-
-
-async def _reap_loop(app: FastAPI) -> None:
-    registry = app.state.session_registry
-    try:
-        while True:
-            await asyncio.sleep(60)
-            await registry.reap_idle()
-    except asyncio.CancelledError:
-        pass
-```
-
-4. Update `create_app` to initialize the new state to `None` (so tests can inject) and mount the sessions router instead of the chat router. Replace the `app.state.last_trace`/sandbox-backend init and the `app.include_router(chat_router)` line:
-
-```python
-    app.state.thread_store = None
-    app.state.session_bus = None
-    app.state.session_registry = None
-    app.state.background_tasks = None
-    ...
-    app.include_router(sessions_router)
-```
-
-5. Keep the `/health` and `/health/mcp` endpoints. Remove the `agent`/`tool_count` lazy-build assumptions tied to the single shared agent (health `agent_ready` becomes `app.state.session_registry is not None`).
-
-- [ ] **Step 4: Delete the old chat module**
-
-```bash
-git rm src/ecommerce_agent/api/chat.py
-```
-
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `uv run pytest tests/test_app.py::test_session_lifecycle_end_to_end -v`
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/ecommerce_agent/api/app.py tests/test_app.py
-git commit -m "feat(m2): wire sessions/bus/registry into the app; retire /api/chat/stream"
-```
-
----
-
-### Task 11: `MongoThreadStore` + gated integration test, and migrate M1 chat/live tests
+### Task 10: `MongoThreadStore` + gated integration test
 
 **Files:**
 - Create: `src/ecommerce_agent/threads/mongo.py`
-- Create: `tests/integration/test_mongo_thread_store.py`
-- Modify: `tests/test_app.py` (remove the obsolete `/api/chat/stream` tests)
-- Modify: `tests/integration/test_chat_stream_live.py`, `tests/integration/test_hero_live_smoke.py`, `src/ecommerce_agent/evals/live_reliability.py` (point at the session endpoints)
+- Test: `tests/test_mongo_thread_store.py`, `tests/integration/test_mongo_thread_store.py`
 
-- [ ] **Step 1: Write the failing unit test (Mongo store, mocked motor)**
+This lands the production ThreadStore **before** the app wiring (Task 11) imports it, so no intermediate commit references a missing module.
+
+- [ ] **Step 1: Write the failing unit test (Mongo store, fake motor collections)**
 
 Create `tests/test_mongo_thread_store.py`:
 
@@ -1627,24 +1554,205 @@ async def test_real_mongo_append_and_reload() -> None:
     assert msgs[-1].seq >= 1
 ```
 
-- [ ] **Step 6: Migrate the obsolete `/api/chat/stream` tests**
+- [ ] **Step 6: Commit**
 
-In `tests/test_app.py`, delete the tests that POST to `/api/chat/stream` (`test_chat_stream_maps_agent_events_to_sse_frames`, `test_chat_stream_rejects_blank_message`, `test_chat_stream_error_message_does_not_leak_internal_exception`, `test_chat_stream_lazily_builds_analyst_with_backend`, `test_chat_stream_falls_back_when_modelscope_is_unavailable`, `test_health_reports_unknown_tool_count_for_injected_agent`). Their behavior is now covered by `tests/test_session_turn.py`, `tests/test_sessions_api.py`, and `test_session_lifecycle_end_to_end`. Keep the `/health` and `/health/mcp` tests.
+```bash
+git add src/ecommerce_agent/threads/mongo.py tests/test_mongo_thread_store.py tests/integration/test_mongo_thread_store.py
+git commit -m "feat(m2): add MongoThreadStore with per-session seq counter"
+```
 
-For the live integration helpers, update the request path and payload:
+---
 
-- In `tests/integration/test_chat_stream_live.py` and `tests/integration/test_hero_live_smoke.py`, and in `src/ecommerce_agent/evals/live_reliability.py`, replace the single `POST /api/chat/stream {"message": ...}` call with the two-step session flow: `POST /api/sessions` → take `session_id` → open `GET /api/sessions/{id}/stream` → `POST /api/sessions/{id}/messages {"message": ...}` → read frames until `event: done`. (These are `live`/`integration` gated and do not run in the default suite.)
+### Task 11: Wire sessions/bus/registry into the app (chat path still mounted)
 
-- [ ] **Step 7: Run the full default suite**
+**Files:**
+- Modify: `src/ecommerce_agent/api/app.py`
+- Test: `tests/test_app.py`
+
+This adds the session subsystem **alongside** the existing `/api/chat/stream` so the repo stays green; Task 12 retires the chat path after its consumers are migrated. Crucially, the existing global `app.state.mcp_client` is **kept** — `/health/mcp` continues to probe through it (a default-identity probe client, distinct from the per-session MCP clients that live inside each runtime).
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `tests/test_app.py`:
+
+```python
+def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.app as app_module
+    from ecommerce_agent.sessions.registry import SessionRuntime
+
+    async def fake_build_runtime(session_id: str) -> SessionRuntime:
+        return SessionRuntime(
+            session_id=session_id, agent=FakeAgent(), mcp_client=object(), sandbox=object()
+        )
+
+    monkeypatch.setattr(app_module, "make_runtime_builder", lambda settings: fake_build_runtime)
+    monkeypatch.setattr(
+        app_module, "build_sandbox_backend", lambda settings: SimpleNamespace(close=lambda: None)
+    )
+
+    app = create_app(settings=make_settings())
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        assert client.post(
+            f"/api/sessions/{session_id}/messages", json={"message": "hello"}
+        ).status_code == 202
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+        assert [m["type"] for m in thread["messages"]] == ["user", "agent_answer"]
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/test_app.py::test_session_lifecycle_end_to_end -v`
+Expected: FAIL — `AttributeError: module 'ecommerce_agent.api.app' has no attribute 'make_runtime_builder'`.
+
+- [ ] **Step 3: Extend `app.py` (additive — keep the chat path and the health probe client)**
+
+In `src/ecommerce_agent/api/app.py`:
+
+1. **Add** the new imports (keep the existing `chat_router` import):
+
+```python
+from ecommerce_agent.api.sessions import router as sessions_router
+from ecommerce_agent.sessions.factory import build_session_runtime
+from ecommerce_agent.sessions.registry import SessionRegistry
+from ecommerce_agent.sessions.bus import SessionBus
+from ecommerce_agent.threads.mongo import MongoThreadStore
+```
+
+2. Add the runtime-builder factory (a seam tests monkeypatch):
+
+```python
+def make_runtime_builder(settings: Settings):
+    async def build_runtime(session_id: str):
+        return await build_session_runtime(session_id, settings)
+
+    return build_runtime
+```
+
+3. In `lifespan`, **keep** the existing `app.state.mcp_client` and `app.state.sandbox_backend`
+   initialization (the chat path and `/health/mcp` need them) and **add** the session subsystem +
+   reaper:
+
+```python
+    app.state.thread_store = getattr(app.state, "thread_store", None) or MongoThreadStore.from_settings(settings)
+    app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
+    app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
+    app.state.session_registry = getattr(app.state, "session_registry", None) or SessionRegistry(
+        build_runtime=make_runtime_builder(settings),
+        idle_ttl_seconds=settings.session_idle_ttl_seconds,
+        max_live_sessions=settings.max_live_sessions,
+    )
+    app.state.reaper_task = asyncio.create_task(_reap_loop(app))
+```
+
+In the `finally` block, alongside the existing sandbox close, add:
+
+```python
+        app.state.reaper_task.cancel()
+        await app.state.session_registry.close_all()
+```
+
+And add the helper at module scope:
+
+```python
+async def _reap_loop(app: FastAPI) -> None:
+    registry = app.state.session_registry
+    try:
+        while True:
+            await asyncio.sleep(60)
+            await registry.reap_idle()
+    except asyncio.CancelledError:
+        pass
+```
+
+4. In `create_app`, initialize the new state to `None` (so tests can inject) and mount **both**
+   routers. Keep the existing chat router line for now:
+
+```python
+    app.state.thread_store = None
+    app.state.session_bus = None
+    app.state.session_registry = None
+    app.state.background_tasks = None
+    ...
+    app.include_router(chat_router)      # retired in Task 12
+    app.include_router(sessions_router)
+```
+
+5. Leave `/health` and `/health/mcp` unchanged in this task — `/health/mcp` keeps probing
+   `app.state.mcp_client`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `uv run pytest tests/test_app.py -v`
+Expected: PASS — the new session test passes and the existing chat/health tests still pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ecommerce_agent/api/app.py tests/test_app.py
+git commit -m "feat(m2): mount sessions/bus/registry alongside the chat path"
+```
+
+---
+
+### Task 12: Retire `/api/chat/stream` (migrate consumers first, then delete)
+
+**Files:**
+- Modify: `tests/integration/test_chat_stream_live.py`, `tests/integration/test_hero_live_smoke.py`, `src/ecommerce_agent/evals/live_reliability.py`
+- Modify: `tests/test_app.py` (remove obsolete chat/shared-backend tests; drop the now-defunct `build_sandbox_backend` monkeypatch in `test_session_lifecycle_end_to_end`)
+- Modify: `src/ecommerce_agent/api/app.py` (unmount chat router; drop the shared sandbox backend)
+- Delete: `src/ecommerce_agent/api/chat.py`
+
+Order matters: migrate consumers **before** deleting `chat.py`, so no commit leaves a broken suite.
+
+- [ ] **Step 1: Migrate the live/eval consumers to the session flow**
+
+In `tests/integration/test_chat_stream_live.py`, `tests/integration/test_hero_live_smoke.py`, and
+`src/ecommerce_agent/evals/live_reliability.py`, replace the single
+`POST /api/chat/stream {"message": ...}` call with the two-step session flow:
+`POST /api/sessions` → take `session_id` → open `GET /api/sessions/{id}/stream` →
+`POST /api/sessions/{id}/messages {"message": ...}` → read frames until `event: done`.
+(These are `live`/`integration` gated and do not run in the default suite.)
+
+- [ ] **Step 2: Remove the obsolete unit tests**
+
+In `tests/test_app.py`, delete the tests that POST to `/api/chat/stream` and the shared-backend
+lifespan test (per-session sandboxes via the registry replace the shared backend):
+`test_chat_stream_maps_agent_events_to_sse_frames`, `test_chat_stream_rejects_blank_message`,
+`test_chat_stream_error_message_does_not_leak_internal_exception`,
+`test_chat_stream_lazily_builds_analyst_with_backend`,
+`test_chat_stream_falls_back_when_modelscope_is_unavailable`,
+`test_health_reports_unknown_tool_count_for_injected_agent`, and
+`test_lifespan_builds_and_closes_sandbox_backend`. Their behavior is now covered by
+`tests/test_session_turn.py`, `tests/test_sessions_api.py`, `tests/test_session_registry.py`, and
+`test_session_lifecycle_end_to_end`. In `test_session_lifecycle_end_to_end`, remove the
+`monkeypatch.setattr(app_module, "build_sandbox_backend", ...)` line (that function is deleted in
+Step 3). Keep the `/health` and `/health/mcp` tests.
+
+- [ ] **Step 3: Delete `chat.py`; drop the chat path and shared sandbox from `app.py`**
+
+```bash
+git rm src/ecommerce_agent/api/chat.py
+```
+
+In `src/ecommerce_agent/api/app.py`: remove the `chat_router` import and its
+`app.include_router(chat_router)`; remove `build_sandbox_backend`, the
+`app.state.sandbox_backend` init, and its `close()` in `finally` (per-session sandboxes are built by
+the factory and closed by `SessionRegistry.close_all`). Set `/health`'s `agent_ready` to
+`app.state.session_registry is not None` and drop the `tool_count` field (per-agent tool counts move
+to `/health/mcp` in Phase 3).
+
+- [ ] **Step 4: Run the full default suite**
 
 Run: `uv run pytest -q`
-Expected: PASS (integration/live/docker tests skip without their env). Then `uv run ruff check .` → no errors.
+Expected: PASS (integration/live/docker tests skip without their env). Then `uv run ruff check .` →
+no errors.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add -A
-git commit -m "feat(m2): add MongoThreadStore and migrate chat tests to session endpoints"
+git commit -m "feat(m2): retire /api/chat/stream after migrating tests and evals"
 ```
 
 ---
@@ -1652,18 +1760,20 @@ git commit -m "feat(m2): add MongoThreadStore and migrate chat tests to session 
 ## Self-Review
 
 **Spec coverage (spec §3, §4, §10 step 2):**
-- §3.1 endpoints (`POST /api/sessions`, `GET …/thread`, `POST …/messages`, `GET …/stream`) → Task 9; `/api/chat/stream` retired → Task 10.
-- §3.2 ThreadStore async protocol + InMemoryThreadStore + MongoThreadStore + `seq` + best-effort publish → Tasks 2, 3, 11.
+- §3.1 endpoints (`POST /api/sessions`, `GET …/thread`, `POST …/messages`, `GET …/stream`) → Task 9; mounted in Task 11; `/api/chat/stream` retired → Task 12.
+- §3.2 ThreadStore async protocol + InMemoryThreadStore + MongoThreadStore + `seq` + best-effort publish → Tasks 2, 3, 10.
 - §3.2 message schema with `seq`/`turn_id`/`trace_id`/`actor_id`/`execution_id` → Task 2.
-- §3.3 per-session agent + session MCP headers + per-session DockerSandbox + idle reaper/cap → Tasks 5, 6, 8, 10.
+- §3.3 per-session agent + session MCP headers + per-session DockerSandbox + idle reaper/cap → Tasks 5, 6, 8, 11.
 - §3.4 per-session trace (`TraceRecord(session_id, turn_id)`) → Task 7.
 - §4 unified stream (token/tool ephemeral, thread.append durable, done marker) + subscribe-first-then-replay with seq cursor → Tasks 4, 7, 9.
-- §10 migrate M1 live/eval tests → Task 11 step 6.
+- §10 migrate M1 live/eval tests → Task 12 step 1.
+
+**Build-order safety (review fixes):** MongoThreadStore (Task 10) lands before the app wiring that imports it (Task 11); the chat path and its consumers are retired only after migration (Task 12), so every commit is green. `/health/mcp` keeps its global probe client (Task 11). The registry reaps/evicts *before* building a runtime (Task 6 `create`), and a failed turn appends a durable `agent_answer` (Task 7).
 
 **Out of Phase 1 (other plans):** order-manager + coordinator (step 3), approval orchestration + result re-entry (step 4), gated end-to-end approval loop (step 5). Phase 1 deliberately validates the foundation with the existing analyst.
 
 **Placeholder scan:** no TBD/TODO; every code step shows the code; commands have expected output.
 
-**Type consistency:** `ThreadMessage` fields used identically in Tasks 2/3/7/9/11; `SessionRuntime(session_id, agent, mcp_client, sandbox)` consistent in Tasks 6/8/9/10; `bus.subscription(session_id).queue` consistent in Tasks 4/7/9; `append_and_publish(store, bus, message)` consistent in Tasks 3/7/9; `build_mcp_client(..., user_id=, session_id=)` consistent in Tasks 5/8.
+**Type consistency:** `ThreadMessage` fields used identically in Tasks 2/3/7/9/10; `SessionRuntime(session_id, agent, mcp_client, sandbox)` consistent in Tasks 6/8/9/11; `bus.subscription(session_id).queue` consistent in Tasks 4/7/9; `append_and_publish(store, bus, message)` consistent in Tasks 3/7/9/(and Task 7 failure path); `build_mcp_client(..., user_id=, session_id=)` consistent in Tasks 5/8.
 
-**Known follow-up for the implementer:** Task 9's test app needs `app.state.background_tasks = set()` (noted inline); Task 10 supplies it for the real app.
+**Known follow-up for the implementer:** Task 9's test app needs `app.state.background_tasks = set()` (noted inline); Task 11 supplies it for the real app.
