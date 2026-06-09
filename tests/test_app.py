@@ -147,6 +147,10 @@ def test_chat_stream_maps_agent_events_to_sse_frames() -> None:
     assert "event: token" in body
     assert "Inventory looks healthy." in body
     assert "event: done" in body
+    record = app.state.last_trace
+    assert record is not None
+    assert record.tool_names() == ["inventory_query"]
+    assert "Inventory looks healthy." in record.answer
 
 
 def test_chat_stream_rejects_blank_message() -> None:
@@ -169,6 +173,8 @@ def test_chat_stream_error_message_does_not_leak_internal_exception() -> None:
     assert "event: error" in body
     assert chat_module.STREAM_ERROR_MESSAGE in body
     assert "secret provider stack trace" not in body
+    assert app.state.last_trace is not None
+    assert app.state.last_trace.duration_ms is not None
 
 
 def test_health_reports_unknown_tool_count_for_injected_agent() -> None:

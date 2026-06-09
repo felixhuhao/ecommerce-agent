@@ -10,6 +10,8 @@ from sse_starlette.sse import EventSourceResponse
 from ecommerce_agent.agents import build_sales_analyst
 from ecommerce_agent.mcp_client import load_modelscope_viz_tools, load_spring_read_tools
 from ecommerce_agent.models import get_primary_model
+from ecommerce_agent.trace.capture import capture
+from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -22,21 +24,6 @@ class ChatStreamRequest(BaseModel):
 
 def _json_data(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
-
-
-def _text_from_chunk(chunk: Any) -> str:
-    content = getattr(chunk, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return "".join(parts)
-    return ""
 
 
 async def _ensure_agent(request: Request) -> Any:
@@ -72,6 +59,17 @@ async def _ensure_agent(request: Request) -> Any:
         return request.app.state.agent
 
 
+def _trace_event_to_sse(event: TraceEvent) -> dict[str, str] | None:
+    if event.event_type == "answer_chunk":
+        return {"event": "token", "data": _json_data({"text": event.result_summary or ""})}
+    if event.event_type == "tool_call":
+        return {
+            "event": "tool",
+            "data": _json_data({"name": event.name, "phase": event.phase}),
+        }
+    return None
+
+
 async def _agent_sse_events(
     agent: Any,
     message: str,
@@ -79,30 +77,20 @@ async def _agent_sse_events(
 ) -> AsyncIterator[dict[str, str]]:
     inputs = {"messages": [{"role": "user", "content": message}]}
     config = {"recursion_limit": request.app.state.settings.agent_recursion_limit}
-    async for event in agent.astream_events(inputs, config=config, version="v2"):
-        if await request.is_disconnected():
-            return
+    record = TraceRecord()
+    raw_events = agent.astream_events(inputs, config=config, version="v2")
+    try:
+        async for event in capture(raw_events, record):
+            if await request.is_disconnected():
+                return
 
-        event_type = event.get("event")
-
-        if event_type == "on_chat_model_stream":
-            text = _text_from_chunk(event.get("data", {}).get("chunk"))
-            if text:
-                yield {"event": "token", "data": _json_data({"text": text})}
-            continue
-
-        if event_type == "on_tool_start":
-            yield {
-                "event": "tool",
-                "data": _json_data({"name": event.get("name"), "phase": "start"}),
-            }
-            continue
-
-        if event_type == "on_tool_end":
-            yield {
-                "event": "tool",
-                "data": _json_data({"name": event.get("name"), "phase": "end"}),
-            }
+            frame = _trace_event_to_sse(event)
+            if frame is not None:
+                yield frame
+    finally:
+        if record.ended_at is None:
+            record.finish()
+        request.app.state.last_trace = record
 
 
 @router.post("/stream")

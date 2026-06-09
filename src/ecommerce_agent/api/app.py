@@ -94,6 +94,7 @@ def create_app(
     app.state.agent = agent
     app.state.mcp_client = mcp_client
     app.state.sandbox_backend = None
+    app.state.last_trace = None
     app.state.tool_count = tool_count if tool_count is not None else None if agent else 0
 
     @app.get("/health")
