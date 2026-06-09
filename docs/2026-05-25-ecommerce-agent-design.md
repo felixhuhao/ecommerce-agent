@@ -36,7 +36,10 @@ trusted read-only analysis workspace; the second is approved action execution.
 5. **Business systems stay authoritative.** SpringBoot owns business rules, database writes,
    approvals, and operation hashes. Python owns orchestration, reasoning, sandboxed analysis, and
    presentation artifacts.
-6. **Extensibility is deliberate.** New MCP servers, tools, agents, prompts, models, and sandbox
+6. **Trace once, project many ways.** Capture one structured event stream for SSE, developer
+   debugging, eval regression detection, and future operator timelines. Do not build separate trace
+   systems for each consumer.
+7. **Extensibility is deliberate.** New MCP servers, tools, agents, prompts, models, and sandbox
    backends must attach through stable registries/seams rather than ad hoc wiring.
 
 ## 2. Architecture
@@ -54,6 +57,7 @@ Vue 3 Operator Console
 FastAPI Service Layer
   ├── REST API endpoints
   ├── SSE streaming response
+  ├── structured trace capture/projection
   ├── WebSocket Monitor
   └── ContextVar session isolation + MongoDB checkpoint
         │
@@ -732,6 +736,8 @@ Status: Week 1 foundation complete; Week 2 in design.
 - Declarative chart artifact generation through a visualization seam.
 - Operator-visible traces for tools and artifacts, plus an on-demand N-run live reliability harness
   that reports structural pass rate and failure reasons.
+- A reusable OTel-shaped trace schema/capture module; M1 stores local JSONL trace/eval records only
+  and defers durable audit storage to M2+.
 
 ### Milestone 2: Approved Action Workflow
 

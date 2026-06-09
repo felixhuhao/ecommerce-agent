@@ -34,7 +34,9 @@ commerce operations assistant:
    product, HITL is not polish.
 5. **Artifacts and traces matter as much as chat.** GitHub Copilot cloud agent turns work into
    branches, commits, logs, and pull requests. OpenAI Agents SDK emphasizes traces across model
-   calls, tools, handoffs, and guardrails. Operators need inspectable work products.
+   calls, tools, handoffs, and guardrails. Operators need inspectable work products. The trace should
+   be product-owned structured data; vendor tracing such as LangSmith can help development but
+   should not be load-bearing for product/eval/audit.
 6. **Stateful isolated execution is a mature pattern.** E2B and GitHub both point toward isolated
    task environments. For us, a persistent per-session Docker sandbox is directionally correct.
 7. **Declarative visualization specs are the right seam.** Google Conversational Analytics returns
@@ -113,6 +115,9 @@ The product should not be a chat transcript with hidden side effects. It should 
 - and audit ids linking conversation -> tool calls -> approvals -> execution results.
 
 This is the operator-console version of GitHub's PR/log/commit model for coding agents.
+In M1, the trace surface is intentionally thin: one OTel-shaped event schema captured from
+`astream_events`, local JSONL dumps for debugging/eval, and an eval baseline log. The M3 UI can
+render that same schema later; M1 does not need a trace database.
 
 ### 4.5 Sandbox
 
@@ -153,7 +158,8 @@ Memory and skills are not rejected, but they should be sequenced carefully:
 1. **Week 2 / M1 should stay read-only.** Build the direct sales-analyst runtime agent + sandbox +
    chart artifact. Do not sneak in coordinator latency or order-manager writes.
    Pull forward a thin reliability loop: run the live structural harness once as a baseline, add the
-   tested `ecommerce_analysis` helpers, then re-run and compare failure modes.
+   tested `ecommerce_analysis` helpers, then re-run and compare failure modes. The harness should
+   assert over the product-owned structured trace, not a separate eval-only log.
 2. **M1.5 is artifact depth.** File upload and Markdown reports are useful if the sandbox path
    lands cleanly.
 3. **M2 is approved action workflow.** Order-manager, `request_approval`,

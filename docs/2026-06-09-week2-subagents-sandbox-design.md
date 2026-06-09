@@ -60,8 +60,10 @@ rendering belongs to the UI/artifact surface later.
 | Aggregation rule | Simple aggregation → authoritative Spring stats; sandbox only for computation stats do not own | Avoids latency and avoids pandas disagreeing with canonical `get_statistics`. |
 | Analysis helpers | Pre-baked `ecommerce_analysis` package, capped at ~4 stable functions | Mature code-interpreter products are reliable because agents compose reliable building blocks instead of inventing fragile pandas every run. |
 | Reliability harness | RUN_LIVE_LLM-gated N-run structural eval with trace/failure capture | Measures the hero path before and after helper/prompt changes; no LLM-as-judge and no per-commit token burn. |
+| Structured trace | Own OTel-shaped trace schema + capture module | One event stream feeds SSE now, dev debugging now, eval assertions now, and the M3 operator timeline later. |
+| LangSmith | Optional dev-only side-channel, never load-bearing | Useful debugger when enabled, but product/eval/audit continue unchanged if it is off or down. |
 | Exec backend | Custom `DockerSandbox(BaseSandbox)` | Self-hosted isolation, no SaaS; conforms to DeepAgents' backend protocol; swappable for a remote executor later. |
-| Sandbox lifecycle | **Persistent per-session container**, reused across `execute` calls | Matches mature code-interpreters (§9): statefulness + no per-call cold start. |
+| Sandbox lifecycle | **Persistent per-session container**, reused across `execute` calls | Matches mature code-interpreters (§10): statefulness + no per-call cold start. |
 | Statefulness | **Filesystem-stateful** (files persist; each `execute` runs fresh code) | Agent round-trips data through sandbox files; simplest model that fits DeepAgents' shell-based `execute`. Full REPL/kernel state is a later upgrade. |
 | Files location | **On the sandbox** (backend = sandbox) | All file tools + `execute` share one workspace; code consumes the files the agent writes. Matches parent §2.2. |
 | Visualization | ModelScope MCP `generate_visualization` (declarative, 26→1) **behind a seam** | Conversational-BI products use declarative specs rendered in the UI; compute/render split. Self-hosted renderer is a drop-in if ModelScope is unavailable. |
@@ -80,6 +82,12 @@ src/ecommerce_agent/
 ├── mcp_client.py        # + ModelScope connection enable + viz-tool allowlist seam
 ├── agent.py             # build_agent(model, *, tools, subagents, middleware, skills, backend)
 ├── agents.py            # NEW: sales-analyst factory + dormant coordinator/sub-agent seam
+├── trace/               # NEW: OTel-shaped trace schema + astream_events capture/projections
+│   ├── schema.py        # TraceRecord / TraceEvent dataclasses
+│   ├── capture.py       # raw astream_events -> live TraceEvent stream + accumulated record
+│   └── jsonl.py         # end-of-turn local JSONL dumps + eval baseline append
+├── evals/
+│   └── live_reliability.py # NEW: RUN_LIVE_LLM N-run structural harness
 ├── prompts/
 │   ├── prompts.yml      # NEW: sales_analyst prompt (+ optional coordinator prompt for M2)
 │   ├── analysis_helpers.md # NEW: compact helper API reference included/linked from the prompt
@@ -93,7 +101,7 @@ src/ecommerce_agent/
 │   └── ecommerce_analysis/ # NEW: helper package copied/baked into the sandbox image
 └── api/
     ├── app.py           # lifespan builds the sandbox backend + wires it into the agent
-    └── chat.py          # unchanged request/SSE contract
+    └── chat.py          # SSE contract unchanged; renders trace events instead of raw events
 ```
 
 No `session/`, custom `middleware/`, or `checkpoint/` modules yet — those are M2/M4 additions.
@@ -251,7 +259,92 @@ authoritative SpringBoot statistics (`get_statistics`) and skip the sandbox unle
 analysis the backend does not already own. The forecast hero is intentionally illustrative: six
 monthly points are enough to demonstrate the workflow, not enough to claim rigorous forecasting.
 
-## 8. Testing & acceptance
+## 8. Structured Trace (One Stream, Three Consumers)
+
+M1 owns a thin structured trace because the reliability harness, developer debugging, and future M3
+operator timeline all need the same facts. Do **not** build three observability systems:
+
+| Consumer | Projection | M1 surface |
+|----------|------------|------------|
+| Operator | clean correlated timeline | schema only now; M3 UI later |
+| Developer | raw-ish args/result/error/timing/token summaries | local JSONL trace dump |
+| Eval harness | machine-readable structural events + failure reasons | RUN_LIVE_LLM harness |
+
+### 8.1 Capture pipeline
+
+Week 1's `api/chat.py` maps `agent.astream_events(...)` directly to SSE. In M1, that becomes:
+
+```
+agent.astream_events(...)
+  → trace.capture_astream_events(...)  # raw LangChain/DeepAgents events -> TraceEvent
+      ↳ yields TraceEvent immediately for SSE projection
+      ↳ accumulates TraceRecord in memory for the current turn
+  → api/chat.py / _agent_sse_events renders TraceEvent -> SSE token/tool/done/error frames
+  → turn end flushes TraceRecord JSONL + optional eval result JSONL
+```
+
+The pipeline is live and non-blocking: SSE frames stream as trace events arrive. It does not
+synchronously write to disk per event on the hot path; it accumulates in memory and flushes once at
+turn end. M1 uses **no trace database** and no audit datastore. Local JSONL is enough for dev/eval;
+durable audit storage belongs to M2+.
+
+LangSmith, if used, is an independent fire-and-forget side-channel:
+
+- `ENABLE_LANGSMITH=true` may attach LangSmith's own callback/handler to the same run.
+- The own trace reads `astream_events` directly and does not depend on LangSmith callbacks.
+- Do not route own-trace capture through LangSmith, or LangSmith callbacks through own-trace
+  capture. They tap the same run independently.
+- Product SSE, eval pass/fail, JSONL traces, and future audit behavior are unchanged if LangSmith is
+  disabled or unavailable.
+
+### 8.2 Minimal trace schema
+
+Use OpenTelemetry-shaped identifiers so M4 export can be a projection, not a rewrite:
+
+**TraceRecord (one chat turn / live eval attempt):**
+- `schema_version`
+- `trace_id` — OTel-compatible top-level id for the turn
+- `session_id`, `turn_id`
+- `run_id` — M1 equals the analyst run; M2 can use nested run ids for coordinator/sub-agents
+- `actor`: `user_id` / role when known
+- `model`: provider, model name, temperature/settings
+- `prompt_version` / `prompt_hash`
+- `git_commit`
+- `dependency_versions` / config snapshot
+- `started_at`, `ended_at`, `duration_ms`
+- `events[]`
+
+**TraceEvent (span-like event):**
+- IDs: `trace_id`, `span_id`, `parent_span_id`, `run_id`
+- Correlation ids: `model_call_id`, `tool_call_id`, `sandbox_exec_id`, `artifact_id`, future
+  `approval_id`, future `execution_id`
+- Metadata: `event_type` (`model_call`, `tool_call`, `sandbox_exec`, `artifact`, `error`,
+  `answer_chunk`), `name`, `ts`, `duration_ms`, `status` (`ok`, `error`, `degraded`)
+- Payload summaries: `args_summary`, `result_summary`, `error_message`
+- Model cost/context fields where available: `tokens_in`, `tokens_out`, `tokens_total`
+
+Keep payloads summarized and safe: enough for eval/debugging, not full secret-bearing raw blobs.
+Raw MCP rows can be summarized/count-limited; sandbox stdout/stderr should be truncated with a clear
+limit.
+
+### 8.3 Eval baseline log
+
+The live reliability harness appends an eval-result JSONL record per run batch, not per individual
+event. Minimum fields:
+
+- date/time and git commit
+- prompt version/hash and model/settings
+- dependency versions/config snapshot
+- `N`, pass count, pass rate
+- failed assertion names
+- failure-mode summaries
+- trace file references for failed attempts
+
+Treat this as a trend log, not a hard gate at small N. It lets prompt/model/framework changes be
+compared against the last known baseline and catches R4/R5 regressions without pulling M4's full
+evaluation suite into M1.
+
+## 9. Testing & acceptance
 
 Carries Week 1's two-tier shape.
 
@@ -283,9 +376,8 @@ reasons. Treat pass rate as a tracked metric, not a hard gate at small N. Struct
   renderer seam can return a default-chart fallback and record the degradation.
 - the stream completes with `done`, not `error`.
 
-Each live run writes a small structured trace: run id, model/settings, tool sequence, tool latencies,
-sandbox stdout/stderr summary, chart validation result, pass/fail assert, and failure reason. This
-is the first thin slice of R5 observability, not a separate product console.
+Each live run asserts over the structured trace and writes the end-of-turn trace JSONL described in
+§8. The harness also appends the eval baseline JSONL record for the batch.
 
 Recommended hardening order: implement the harness early and run it once against the from-scratch
 codegen baseline, then add `ecommerce_analysis` + prompt reference and re-run. That proves the
@@ -297,12 +389,15 @@ helper kit earned its place instead of tuning by vibes.
   seam's renderer).
 - `ecommerce_analysis` helpers are documented, baked into the sandbox image, and tested in the
   default suite.
+- Structured trace capture is implemented as a reusable module; SSE renders trace events rather than
+  raw `astream_events`.
+- Trace dumps and eval baseline records are append-only JSONL; no M1 datastore is introduced.
 - The on-demand live reliability harness produces a pass-rate/failure-reason report.
 - Default suite green, including the real-Docker sandbox boundary tests (skipped if no Docker).
 - A rehearsed single-run hero path passes by hand before demo; the N-run harness records the broader
   reliability metric.
 
-## 9. Research basis (sandbox lifecycle)
+## 10. Research basis (sandbox lifecycle)
 
 The persistent-per-session model (not a fresh container per `execute`) follows mature
 code-interpreter practice:
@@ -320,7 +415,7 @@ The declarative-spec visualization choice follows conversational-BI practice (e.
 the [MCP viz ecosystem](https://chatforest.com/reviews/data-visualization-mcp-servers/) passes JSON
 specs) with a compute (sandbox) / render (spec) split.
 
-## 10. Risks & notes
+## 11. Risks & notes
 
 - **Docker dependency for tests:** the sandbox boundary tests need a Docker daemon; they skip with
   a clear message otherwise (mirrors the Spring-reachable skip). The agent repo still does not

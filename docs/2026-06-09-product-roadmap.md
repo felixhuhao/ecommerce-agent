@@ -51,6 +51,9 @@ Detailed notes and source links live in
   MySQL, MCP servers, or the public network.
 - **UI rule:** the operator console must show enough trace/provenance for a human to trust or reject
   the agent's work.
+- **Trace rule:** own one structured trace stream and project it three ways: SSE/operator timeline,
+  developer debugging, and eval/regression detection. LangSmith may be enabled as a dev-only
+  side-channel, but product/eval/audit cannot depend on it.
 - **Dependency-bump rule:** run the opt-in live reliability harness before merging DeepAgents,
   LangGraph, LangChain, MCP adapter, or model-provider upgrades.
 
@@ -76,6 +79,8 @@ Capabilities:
   reliable time-series helpers instead of authoring fragile pandas from scratch on the hero path.
 - Operator-visible tool events for MCP, sandbox execution, and visualization.
 - On-demand live reliability harness tracks the hero flow pass rate and failure reasons.
+- Reusable OTel-shaped trace module captures `astream_events` once; SSE, local debug JSONL, and the
+  eval harness project from the same trace record.
 
 Acceptance:
 - Default suite passes.
@@ -88,6 +93,8 @@ Acceptance:
   chart artifact/spec, and streams a final answer.
 - The hero run can expand into an N-attempt, RUN_LIVE_LLM-gated reliability harness that reports
   structural pass rate and failure reasons without using an LLM judge or becoming a hard CI gate.
+- Trace dumps and eval baseline logs are append-only JSONL with prompt hash, model/settings,
+  dependency versions, git commit, pass rate, and failure modes. No M1 trace datastore.
 - Simple aggregation questions such as "compare sales by category" prefer `get_statistics` and do
   not force a sandbox hop.
 
@@ -174,9 +181,9 @@ Acceptance:
    product-roadmap and review commits; do not push without user approval.
 2. **Build Week 2 / M1 in this order:**
    prompts YAML -> single analyst agent factory -> dormant coordinator/sub-agent seam -> sandbox
-   backend boundary -> visualization seam -> structural live harness baseline -> `ecommerce_analysis`
-   helper kit + prompt API reference -> helper tests/image bake -> SSE/tool-event assertions ->
-   re-run live harness.
+   backend boundary -> visualization seam -> structured trace capture/projection -> structural live
+   harness baseline -> `ecommerce_analysis` helper kit + prompt API reference -> helper tests/image
+   bake -> SSE/tool-event assertions -> re-run live harness.
 3. **After Week 2 / M1, decide M1.5 vs M2.**
    If artifacts feel weak, add upload/report. If the action workflow is more important, start M2
    (Approved Action Workflow).
@@ -213,8 +220,8 @@ Ranked by likelihood × impact for a **solo build pursuing both product and port
 | R1 | **Scope vs solo throughput.** Product framing raises the "done" bar (console, RBAC, audit search, eval, packaging); likely outcome is M1–M2 done well and M3–M4 perpetually in progress, or endless M1 polish that never reaches the crown jewel. | High×High | Hero demo pulls the roadmap; timebox M1; M3/M4 as thin slices; depth over breadth; resist new domain agents/connectors. |
 | R2 | **Latency & context/token bloat.** Agent→MCP→sandbox→viz is still a serial path; paginated `order_query` adds hops; product-scale raw rows would bloat context. | Med-High×Med-High | M1 skips coordinator; prefer `get_statistics` for simple aggregates; sandbox only for earned computation; stream tool progress; budget hop count. Scale fix later: backend month×category aggregate. |
 | R3 | **Demo non-determinism.** Agent nails the hero flow ~8/10; a 1-in-5 live failure is brutal. | Med×High | Hardened, rehearsed golden path; pre-baked `ecommerce_analysis` helpers; bounded self-debug retry; N-run live harness pass-rate/failure report; known-good fallback query. |
-| R4 | **Framework/version drift.** `deepagents 0.6.8`, LangGraph, Spring AI MCP `2.0.0-M8` (pre-release); event shapes / `SubAgent` schema / backend protocol can shift; real stream path only covered by opt-in live test. | High×Med-High | Hard-pin versions; dependency-bump live-smoke gate (§3); one thin adapter around DeepAgents event shapes. |
-| R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval harness (M4) prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward in M1: per-run tool sequence, latencies, sandbox error summary, chart validation, pass/fail reason; keep semantic judging for M4. |
+| R4 | **Framework/version drift.** `deepagents 0.6.8`, LangGraph, Spring AI MCP `2.0.0-M8` (pre-release); event shapes / `SubAgent` schema / backend protocol can shift. | High×Med-High | Hard-pin versions; dependency-bump live reliability harness (§3); one thin trace adapter around DeepAgents event shapes. |
+| R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval baseline prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward in M1: OTel-shaped ids, per-run tool sequence, latencies, tokens, sandbox error summary, chart validation, pass/fail reason, JSONL baseline log; keep semantic judging for M4. |
 | R6 | **Agent/model quality.** `deepseek-chat` doing multi-step analysis + helper/glue code + valid chart spec + correct HITL behavior reliably. | Med×High | Exercise the real model on the hero flow early; low temperature for analytical/codegen steps; model is configurable; constrain each specialist's task surface. |
 | R7 | **Live-demo dependency fragility.** ModelScope (unconfirmed), DeepSeek (limits/outages), external Java server, MySQL, Mongo — each a break point; "reliability is impressiveness." | Med×High | A real fallback per critical-path dep (viz seam is the model); health-gate before demos; add Mongo only when HITL/continuity needs it. |
 | R8 | **Approve↔execute limbo + two-turn coherence** *(new from the redesign)*. A window where an approval is `approved` but `execute` then fails → limbo; and the execution result must re-enter the conversation the user is watching. | Med×Med-High | Idempotent executor; explicit `failed`/`invalidated` status + re-execute path; design where the result re-enters the thread before building M2. |
