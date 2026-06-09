@@ -39,14 +39,15 @@ Milestones are the canonical roadmap vocabulary; week labels describe implementa
 - **M2 approved action workflow:** `order-manager` sub-agent with **reads + `request_approval`
   only** (no write tools in the LLM's hands). Propose → human-approve (REST) → **deterministic
   backend executor keyed by `approval_id`**; the pending action is a durable MySQL `approval_record`
-  (no LangGraph interrupt/resume, no MongoDB checkpoint for write safety). Requires the Java
-  companion change (execute-by-`approval_id`; parent §5.2).
+  (no LangGraph interrupt/resume, no MongoDB checkpoint for write safety). M2 also adds the
+  server-owned conversation thread so execution results re-enter the user's session after the agent
+  turn ends. Requires the Java companion change (execute-by-`approval_id`; parent §5.2/§5.3).
 - **M4 product hardening:** skills/memory middleware, `web_search`, `assign_skill`, preferences,
   and long-lived memory — requires governance, session isolation, and audit policy.
 
-**Deferred infrastructure:** MongoDB checkpoint (conversation continuity only, *not* write safety),
-`ContextVar` session isolation, and `CompositeBackend` routing for `/memories` + `/skills` land when
-M2/M4 requires them, not in M1.
+**Deferred infrastructure:** MongoDB conversation thread (appendable/subscribable continuity only,
+*not* write safety), `ContextVar` session isolation, and `CompositeBackend` routing for memory/skill
+paths land when M2/M4 requires them, not in M1.
 
 **Out of scope:** the operator console milestone — Week 2 verifies a chart *spec* is produced;
 rendering belongs to the UI/artifact surface later.

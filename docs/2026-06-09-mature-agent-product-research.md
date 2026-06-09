@@ -70,8 +70,8 @@ Keep the sub-agent list short and permission-driven:
 - **Now:** run `sales-analyst` directly as the M1 runtime specialist; it has a distinct prompt/tool
   set, but no coordinator is needed while there is only one specialist.
 - **Next:** enable coordinator + sub-agents when `order-manager` lands with `request_approval`,
-  deterministic execute-by-`approval_id`, and audit records. LangGraph checkpoint/resume is not
-  required for write safety.
+  deterministic execute-by-`approval_id`, server-owned conversation result re-entry, and audit
+  records. LangGraph checkpoint/resume is not required for write safety.
 - **Later:** `customer-insight`, `procurement-planner`, or `catalog-manager` only when each has
   dedicated tools, permissions, and artifacts.
 
@@ -99,7 +99,11 @@ The commerce/admin product analogy is strongest here:
 - Approved writes should execute through a deterministic backend endpoint keyed by `approval_id`,
   loading the stored canonical payload rather than accepting write params from the LLM.
 - Approved writes must be one-time use, actor/session-bound, expiring, hash-validated,
-  transaction/lock-protected, and rechecked against live preconditions.
+  transaction/lock-protected, idempotently replayable from stored `execution_result`, and rechecked
+  against live preconditions.
+- Approval and execution are two auditable backend transitions but one human action in the UI.
+- Execution results should re-enter the same user-visible conversation as deterministic appended
+  messages, not as another LLM turn.
 - Batch/delete operations need a higher approval tier and should stay deferred.
 
 ### 4.4 Artifacts And Operator Console
@@ -163,8 +167,9 @@ Memory and skills are not rejected, but they should be sequenced carefully:
 2. **M1.5 is artifact depth.** File upload and Markdown reports are useful if the sandbox path
    lands cleanly.
 3. **M2 is approved action workflow.** Order-manager, `request_approval`,
-   execute-by-`approval_id`, approval cards, and audit trail should land together. Checkpoints are
-   for conversation continuity, not write safety.
+   execute-by-`approval_id`, idempotent execution replay/recovery, approval cards, server-owned
+   conversation thread, and audit trail should land together. MongoDB is for appendable conversation
+   continuity/result re-entry, not write safety.
 4. **M3 is operator console.** Traces, artifacts, approvals, and health surfaces are core product
    UX, not late polish.
 5. **M4 is hardening.** Multi-user permissions, prompt/model/tool versioning, evaluation suite,

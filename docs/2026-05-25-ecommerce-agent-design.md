@@ -59,7 +59,7 @@ FastAPI Service Layer
   ├── SSE streaming response
   ├── structured trace capture/projection
   ├── WebSocket Monitor
-  └── ContextVar session isolation + MongoDB checkpoint
+  └── ContextVar session isolation + MongoDB conversation thread
         │
         ▼
 Main Agent (primary reasoning model)
@@ -93,7 +93,7 @@ sales-analyst          order-manager
 
   ┌─────────────────────────────┐
   │   Memory System             │
-  │   Short-term: MongoDB       │
+  │   Conversation: MongoDB     │
   │   Preferences: Markdown     │
   │   Skills: TTL + grading     │
   │   Guidance: AGENTS.md       │
@@ -141,15 +141,21 @@ Decision rule: Agent only passes parameters → virtual path; Agent writes code 
 
 ### 2.3 Session Isolation
 
-Use Python `ContextVar` for asyncio coroutine-level isolation. Each user session gets a unique UUID and dedicated directory. MongoDB handles checkpoint persistence for **conversation continuity** across restarts (not write safety — approved actions are durable MySQL `approval_record`s, §5.2).
+Use Python `ContextVar` for asyncio coroutine-level isolation. Each user session gets a unique UUID
+and dedicated directory. In M2, MongoDB handles the **server-owned conversation thread**: persisted,
+appendable messages that survive restarts and let approval/execution results re-enter the thread
+the user is watching (not write safety — approved actions are durable MySQL `approval_record`s,
+§5.2).
 
 `ContextVar` only isolates within a single coroutine context — it does **not** automatically protect shared singletons. The session UUID must be propagated explicitly to every boundary that leaves the request coroutine:
 
 - **WebSocket tasks** and **background jobs** — set the ContextVar at task entry; spawned tasks don't inherit it for free.
 - **MCP clients** — propagate session/user identity as trusted request metadata (service-authenticated headers/JWT/session binding), not as Agent-controlled tool parameters. `request_approval` and the backend execution path bind to this trusted identity — see §5.2.
-- **Checkpoint `thread_id`** — derive from the session UUID so conversation continuity targets the correct thread.
+- **Conversation `thread_id`** — derive from the session UUID so user messages, agent proposals,
+  approval-status messages, and execution-result messages append to the same thread.
 - **Sandbox directories** — namespace under `{session_id}` (uploads, reports, skills) and never accept client-supplied paths.
-- **Cleanup** — define when a session's sandbox dir / checkpoints are reaped (e.g. TTL or on session close) to avoid unbounded growth and stale-state leakage.
+- **Cleanup** — define when a session's sandbox dir / conversation thread state is reaped or
+  archived (e.g. TTL or on session close) to avoid unbounded growth and stale-state leakage.
 
 ## 3. Database Design
 
@@ -349,20 +355,27 @@ Turn 1 — PROPOSE (agent):
 
 HUMAN — APPROVE (REST, not MCP, not the agent):
 → Frontend/FastAPI fetches the server-rendered card via GET /approvals/{id} and displays it
-→ Human approves via POST /approvals/{id}/approve   (authenticated; NEVER an MCP tool)
+→ Human clicks Approve once
+→ FastAPI calls POST /approvals/{id}/approve   (authenticated; NEVER an MCP tool)
   → Server marks approval_id as approved   (approve only flips status; it does NOT execute)
 → or rejects via POST /approvals/{id}/reject  (reason persisted)
 
 BACKEND EXECUTE — deterministic, keyed by approval_id (no LLM, no write params from the agent):
-→ After approval, Frontend/FastAPI calls POST /approvals/{id}/execute against SpringBoot
+→ After approval, FastAPI calls POST /approvals/{id}/execute against SpringBoot
 → SpringBoot LOADS the canonical operation_payload from approval_record (it is the source of truth)
 → re-derives trusted identity + current DB preconditions, then validates the Java spec §4 contract
   (exists + approved, hash integrity, tool/actor/session binding, not expired, one-time use,
    live preconditions unchanged)
   → Valid → execute the operation from the stored payload in a DB transaction, mark consumed
+  → Already consumed with execution_result → return the prior result (idempotent replay)
   → Invalid (e.g. preconditions drifted) → mark invalidated; a fresh approval is required
   → Execution error after validation → mark failed with execution_result for audit/retry policy
+→ FastAPI appends a deterministic execution-result message to the conversation thread
 ```
+
+This is **one human action** and **two auditable backend transitions**: approve, then execute. The
+human does not need two clicks. Keeping approve and execute separate creates an
+approved-but-not-executed window, but it also gives the product clean auditability and testability.
 
 The pending action lives as a **first-class `approval_record` in MySQL** with its own lifecycle
 (`pending → approved → consumed` / `rejected` / `expired` / `invalidated` / `failed`). Because the
@@ -400,7 +413,8 @@ CREATE TABLE approval_record (
   expires_at       DATETIME NOT NULL,
   consumed_at      DATETIME NULL,               -- one-time use
   executed_at      DATETIME NULL,
-  execution_result JSON NULL,                   -- result/error summary for audit
+  execution_id     VARCHAR(36) NULL,            -- execution correlation id
+  execution_result JSON NULL,                   -- queryable result/error summary for audit + replay
   KEY idx_status (status)
 );
 ```
@@ -415,6 +429,15 @@ Execution must claim the approval under a database transaction/row lock and tran
 `approved` atomically before or during execution, so two execute requests cannot double-spend the
 same approval.
 
+`POST /approvals/{approval_id}/execute` is **idempotent**. If a caller retries after a timeout and
+the approval is already `consumed`, SpringBoot returns the stored `execution_result` instead of a
+fresh error. This lets FastAPI distinguish "already executed successfully" from "rejected,
+invalidated, or failed." FastAPI should use bounded inline retry for transient execute failures, and
+M2 should include a recovery path for approved-but-unexecuted records: a manual "re-execute" control
+and/or a small sweeper that finds stale `status=approved` records and re-drives execution. If live
+preconditions drift, execution marks the approval `invalidated` and the conversation thread tells
+the user a fresh approval is required.
+
 > **Java companion change (tracked, sibling repo).** The implemented Java server currently exposes
 > the write tools as `@McpTool`s that take `approval_id` **+ params** and rebuild the hash from the
 > *incoming* params (Java spec §4.3). This design moves to **execute-by-`approval_id`**: the backend
@@ -424,13 +447,42 @@ same approval.
 > agent-reachable surface). It is a *simplification* of the Java side (no incoming-param mismatch
 > path), tracked in the roadmap, not yet applied.
 
+### 5.3 Conversation Re-Entry (Server-Owned Thread)
+
+M2 changes the conversation model from request-scoped streaming to a **server-owned persisted
+thread**. Turn 1 can end after the agent proposes an action; approval and execution happen
+out-of-band; the result must still re-enter the same thread the user is watching.
+
+MongoDB stores an appendable thread per `session_id` / `thread_id` with message kinds:
+
+- `user`
+- `agent_answer`
+- `agent_proposal`
+- `approval_status`
+- `execution_result`
+
+Execution result re-entry is deterministic, not an LLM turn. When execute completes, FastAPI
+appends a templated message such as: `Executed: PO #88 created, inventory +500 (approval #123)`.
+If execution is `failed` or `invalidated`, it appends that status and the safe server-rendered reason.
+The message carries `approval_id`, `execution_id`, trace ids, and artifact ids where applicable.
+
+This thread is also the UX answer to multi-tab/concurrency: every client renders the same
+server-owned append log, so a second tab sees "already executed" or "invalidated" instead of racing
+the first tab. The thread is a projection of the same trace/audit event backbone used for structured
+traces; it is not a separate source of truth for business writes.
+
+**M2 minimum:** persist and append messages; expose thread reload by session. **M2 recommended for
+demo coherence:** add a thin per-session SSE/WebSocket subscription so approval/execution status
+appears without refresh. Do not turn this into a generic messaging platform; M3 can render the
+operator console around the persisted thread later.
+
 ## 6. Memory System
 
 ### 6.1 Four-Layer Architecture
 
 | Layer | Storage | Purpose | Implementation |
 |-------|---------|---------|---------------|
-| Short-term | MongoDB checkpoint | Conversation state / multi-turn continuity (NOT write safety — approvals are durable MySQL records, §5.2) | LangGraph checkpointer |
+| Conversation thread | MongoDB append log | Server-owned user/agent/proposal/approval/execution messages (NOT write safety — approvals are durable MySQL records, §5.2/§5.3) | FastAPI thread store; LangGraph checkpoint optional later |
 | Preferences | `/memories/{user_id}/preferences.md` | Display prefs, business constraints | Virtual path read/write (Markdown) |
 | Skills | `/persisted-skills/` | Agent experience accumulation | Sandbox storage |
 | Guidance | `/AGENTS.md` | Behavior boundaries, compliance | Read-only at startup |
@@ -628,8 +680,9 @@ com.ecommerce.agent/
 └── config/         # Spring configuration (MCP server, datasource, auth)
 ```
 
-> The `controller/` layer is required for the human approval transition (§5.2). All business
-> reads/writes stay on the MCP `@Tool` path.
+> The `controller/` layer is required for human approval/read/execute transitions (§5.2). Business
+> reads stay on the MCP `@Tool` path; approved writes execute through the backend executor keyed by
+> `approval_id`.
 
 ## 9. Visualization
 
@@ -679,13 +732,17 @@ The frontend is an operator console, not a decorative chat shell. It can reuse E
 components where useful, but the product surface is defined by trust and work visibility.
 
 Core surfaces:
-- **Conversation + streaming answer** — SSE chat remains the main interaction pattern.
+- **Conversation + streaming answer** — SSE chat remains the main interaction pattern. M2 upgrades
+  this into a server-owned persisted thread that can append approval-status and execution-result
+  messages after the original agent turn ends.
 - **Tool trace timeline** — show read tools, sandbox execution, visualization calls, and write
   proposals in a human-readable sequence.
 - **Artifacts panel** — chart specs/rendered charts, generated Markdown reports, exported data
   snippets, and approval cards.
 - **HITL approval workspace** — server-rendered action cards with canonical payload, diff/impact,
-  expiry, actor/session binding, approve/reject controls, and final execution status.
+  expiry, actor/session binding, approve/reject controls, and final execution status. One human
+  Approve click triggers FastAPI's approve → execute sequence; backend steps remain separately
+  auditable.
 - **Session history** — conversation, artifacts, approvals, and audit references grouped by
   session.
 - **Health/operator checks** — dependency status for MCP servers, sandbox, model provider, and
@@ -703,7 +760,7 @@ Do not hide tool calls, approval preconditions, or generated artifacts behind a 
 | Real-time comms | WebSocket full-chain monitoring | Deep Search Pro |
 | Streaming output | SSE | ERP_OPENCLAW |
 | Session isolation | ContextVar (coroutine-level) | Deep Search Pro |
-| Session persistence | MongoDB checkpoint (conversation continuity only — not write safety, §5.2) | ERP_OPENCLAW |
+| Session persistence | MongoDB conversation thread append log (continuity/result re-entry only — not write safety, §5.2/§5.3) | Product decision |
 | Approved-action lifecycle | Durable MySQL `approval_record` + deterministic backend executor (§5.2) | Product decision |
 | Code execution | DockerSandbox now; managed sandbox/remote executor swappable | Product decision |
 | File operations | CompositeBackend routing | ERP_OPENCLAW |
@@ -749,6 +806,10 @@ Status: Week 1 foundation complete; Week 2 in design.
   actor/session binding.
 - **Deterministic backend executor keyed by `approval_id`**: SpringBoot loads the stored canonical
   payload and executes; the LLM never issues write params. Requires the Java companion change (§5.2).
+- **Server-owned conversation thread**: FastAPI appends deterministic proposal/approval/execution
+  messages to MongoDB so approved actions re-enter the user's thread (§5.3). A thin live
+  subscription is recommended for demo coherence, but persisted append/reload is the correctness
+  foundation.
 
 ### Milestone 3: Operator Console
 

@@ -117,18 +117,30 @@ Capabilities:
 - Human approve/reject lives on REST endpoints, never as MCP tools; **approve only flips status, it
   does not execute**. Execution is an explicit backend endpoint, e.g.
   `POST /approvals/{approval_id}/execute`.
+- One operator Approve click can orchestrate both backend calls in FastAPI: approve, then execute.
+  The backend transitions remain separate and auditable.
 - **Deterministic backend executor keyed by `approval_id`**: SpringBoot loads the stored canonical
   payload and executes from it in a transaction/row lock (the LLM never re-issues write params),
   validating approval status, hash integrity, actor/session, expiry, one-time use, and live
   preconditions.
+- **Idempotent execute + recovery:** replaying an already-consumed approval returns the stored
+  `execution_result`; FastAPI uses bounded retry; stale approved-but-unexecuted records have manual
+  re-execute and/or sweeper recovery.
+- **Server-owned conversation thread:** MongoDB stores appendable messages (`user`, `agent_answer`,
+  `agent_proposal`, `approval_status`, `execution_result`) so approval/execution results re-enter
+  the same thread without a new LLM turn.
 - Audit record links conversation, approval, canonical payload, execution result, and tool trace.
 - **Requires the Java companion change** (execute-by-`approval_id`; remove write `@McpTool`s from
   the agent surface) — tracked in §5.
 
 Acceptance:
 - Agent can propose a purchase order but holds no tool capable of executing it.
-- Approval card can be approved/rejected from the operator console; approving does not auto-execute,
-  and a separate execute call can be retried/idempotently reported.
+- Approval card can be approved/rejected from the operator console. The Java approve endpoint only
+  flips status; the UI presents one human action while FastAPI orchestrates separate approve/execute
+  backend events.
+- The separate execute call can be retried/idempotently reported.
+- Execution completion appends a deterministic result message to the conversation thread; reload
+  shows it, and a thin live subscription may push it without refresh.
 - A changed live DB precondition between approval and execution forces a fresh approval.
 - One approval cannot be replayed or double-spent.
 
@@ -137,6 +149,8 @@ Cut line:
 - No self-learning skills that affect write behavior.
 - LangGraph `interrupt()`/resume is **not** in scope here; if a mid-conversation pause UX is ever
   wanted, it is polish layered on top of the durable-approval model, never load-bearing for safety.
+- Do not build a generic messaging platform. M2 needs persisted append/reload for correctness; live
+  per-session SSE/WebSocket push is recommended for demo coherence but can be deferred if needed.
 
 ### M3. Operator Console
 
@@ -194,6 +208,10 @@ Acceptance:
    of the write `@McpTool`s from the agent-reachable surface. Update the Java spec
    (`docs/2026-06-05-ecommerce-mcp-server-spec.md` §4) before/with M2 implementation. (Not yet
    applied; the Java repo is untouched.)
+5. **M2 also has a Python/FastAPI thread prerequisite.** Before wiring the order-manager UI flow,
+   add the server-owned conversation thread: append proposal/approval/execution messages, reload by
+   session, and optionally push appends live over a per-session SSE/WebSocket stream. This is the
+   result re-entry mechanism; do not substitute an LLM follow-up turn for it.
 
 ## 6. Deferred Or Stretch Features
 
@@ -224,7 +242,7 @@ Ranked by likelihood × impact for a **solo build pursuing both product and port
 | R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval baseline prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward in M1: OTel-shaped ids, per-run tool sequence, latencies, tokens, sandbox error summary, chart validation, pass/fail reason, JSONL baseline log; keep semantic judging for M4. |
 | R6 | **Agent/model quality.** `deepseek-chat` doing multi-step analysis + helper/glue code + valid chart spec + correct HITL behavior reliably. | Med×High | Exercise the real model on the hero flow early; low temperature for analytical/codegen steps; model is configurable; constrain each specialist's task surface. |
 | R7 | **Live-demo dependency fragility.** ModelScope (unconfirmed), DeepSeek (limits/outages), external Java server, MySQL, Mongo — each a break point; "reliability is impressiveness." | Med×High | A real fallback per critical-path dep (viz seam is the model); health-gate before demos; add Mongo only when HITL/continuity needs it. |
-| R8 | **Approve↔execute limbo + two-turn coherence** *(new from the redesign)*. A window where an approval is `approved` but `execute` then fails → limbo; and the execution result must re-enter the conversation the user is watching. | Med×Med-High | Idempotent executor; explicit `failed`/`invalidated` status + re-execute path; design where the result re-enters the thread before building M2. |
+| R8 | **Approve↔execute limbo + two-turn coherence** *(new from the redesign)*. A window where an approval is `approved` but `execute` then fails → limbo; and the execution result must re-enter the conversation the user is watching. | Med×Med-High | Idempotent executor returns stored `execution_result`; bounded retry + stale-approved recovery; server-owned Mongo conversation thread appends deterministic approval/execution-result messages; thin live push for demo coherence. |
 | R9 | **Agent numbers vs authoritative `get_statistics`.** Self-computed pandas aggregates can mis-join or use the wrong status filter and disagree with canonical stats — confidently wrong. | Med×Med-High | Route headline figures through `get_statistics`; use the sandbox only for derivations stats don't cover; prompt prefers authoritative tools. |
 | R10 | **Sandbox robustness/security.** `docker.sock` ≈ host root; container leaks/zombies, timeout-not-killing, fork pressure, WSL2 quirks. | Med×Med-High | Dedicated sandbox test matrix; reaper + concurrency cap; the `BaseSandbox` seam lets a managed/remote executor remove the `docker.sock` privilege later. |
 | R11 | **Prompt injection via business data.** Review/product/customer text can carry instructions; the agent can call `request_approval`. | Med×Med | Human-approval gate is the backstop; `--network none` blocks sandbox exfil; frame untrusted data as data, treat review/customer text as tainted. |
