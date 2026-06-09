@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -18,11 +19,75 @@ REALIZED_STATUSES = ("paid", "shipped", "completed")
 REQUIRED_COLUMNS = ("created_at", "status", "category", "amount")
 
 
-def load_orders_df(path: str) -> pd.DataFrame:
+def _read_json_payload(path: Path) -> Any:
+    data = json.loads(path.read_text())
+    if (
+        isinstance(data, list)
+        and len(data) == 1
+        and isinstance(data[0], dict)
+        and isinstance(data[0].get("text"), str)
+    ):
+        return json.loads(data[0]["text"])
+    return data
+
+
+def _product_category_map(products_path: str | None) -> dict[int, str]:
+    if not products_path:
+        return {}
+
+    data = _read_json_payload(Path(products_path))
+    if isinstance(data, dict):
+        products = [data]
+    elif isinstance(data, list):
+        products = data
+    else:
+        raise ValueError("products file must contain a product object or list")
+
+    categories: dict[int, str] = {}
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        product_id = product.get("productId", product.get("product_id"))
+        category = product.get("category")
+        if product_id is None or category is None:
+            continue
+        categories[int(product_id)] = str(category)
+    return categories
+
+
+def _flatten_raw_orders(records: list[dict[str, Any]], products_path: str | None) -> pd.DataFrame:
+    category_by_product = _product_category_map(products_path)
+    rows: list[dict[str, Any]] = []
+    for order in records:
+        created_at = order.get("createdAt", order.get("created_at"))
+        status = order.get("status")
+        for item in order.get("items", []):
+            product_id = item.get("productId", item.get("product_id"))
+            amount = item.get("subtotal", item.get("amount"))
+            if amount is None:
+                quantity = item.get("quantity")
+                unit_price = item.get("unitPrice", item.get("unit_price"))
+                if quantity is not None and unit_price is not None:
+                    amount = float(quantity) * float(unit_price)
+            rows.append(
+                {
+                    "created_at": created_at,
+                    "status": status,
+                    "category": category_by_product.get(int(product_id), "unknown")
+                    if product_id is not None
+                    else "unknown",
+                    "amount": amount,
+                }
+            )
+    return pd.DataFrame.from_records(rows)
+
+
+def load_orders_df(path: str, products_path: str | None = None) -> pd.DataFrame:
     """Parse an order line-item file the agent wrote into /workspace.
 
-    Expects JSON (list of records) or CSV with at least:
-    created_at (ISO datetime), status (str), category (str), amount (numeric).
+    Accepts either:
+    - flat JSON/CSV records with created_at, status, category, amount
+    - raw Spring order_query JSON plus optional raw product_query JSON for category enrichment
     """
     order_path = Path(path)
     if not order_path.exists():
@@ -31,7 +96,18 @@ def load_orders_df(path: str) -> pd.DataFrame:
     if order_path.suffix.lower() == ".csv":
         df = pd.read_csv(order_path)
     else:
-        df = pd.DataFrame.from_records(json.loads(order_path.read_text()))
+        data = _read_json_payload(order_path)
+        if isinstance(data, dict):
+            records = [data]
+        elif isinstance(data, list):
+            records = data
+        else:
+            raise ValueError("orders file must contain an order object or list")
+
+        if records and isinstance(records[0], dict) and "items" in records[0]:
+            df = _flatten_raw_orders(records, products_path)
+        else:
+            df = pd.DataFrame.from_records(records)
 
     missing = [column for column in REQUIRED_COLUMNS if column not in df.columns]
     if missing:

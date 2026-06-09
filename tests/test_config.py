@@ -19,6 +19,14 @@ def test_deepseek_api_key_alias_is_supported(monkeypatch) -> None:
     assert settings.llm_api_key == "deepseek-key"
 
 
+def test_llm_temperature_defaults_low() -> None:
+    assert Settings(_env_file=None).llm_temperature == 0.1
+
+
+def test_agent_recursion_limit_has_explicit_default() -> None:
+    assert Settings(_env_file=None).agent_recursion_limit == 80
+
+
 def test_sandbox_settings_have_safe_defaults() -> None:
     settings = Settings(_env_file=None)
 

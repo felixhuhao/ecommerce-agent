@@ -1,4 +1,5 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -34,6 +35,16 @@ def test_execute_runs_command_and_returns_output(sandbox) -> None:
     result = sandbox.execute("echo hello-sandbox")
     assert result.exit_code == 0
     assert "hello-sandbox" in result.output
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+def test_concurrent_first_use_creates_one_container(sandbox) -> None:
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda index: sandbox.execute(f"echo run-{index}"), range(4)))
+
+    assert all(result.exit_code == 0 for result in results)
+    assert all(f"run-{index}" in result.output for index, result in enumerate(results))
 
 
 @pytest.mark.integration

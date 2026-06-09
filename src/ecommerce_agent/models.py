@@ -12,6 +12,7 @@ def get_primary_model(settings: Settings | None = None) -> ChatOpenAI:
         model=settings.llm_model,
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
+        temperature=settings.llm_temperature,
         streaming=True,
     )
 

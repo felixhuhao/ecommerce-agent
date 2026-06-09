@@ -17,16 +17,31 @@ from ecommerce_agent.mcp_client import (
     filter_spring_read_tools,
     tool_names,
 )
+from ecommerce_agent.sandbox import DockerSandbox
+from ecommerce_agent.sandbox.config import limits_from_settings
+
+
+def build_sandbox_backend(settings: Settings) -> DockerSandbox:
+    return DockerSandbox(limits_from_settings(settings))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     app.state.mcp_client = getattr(app.state, "mcp_client", None) or build_mcp_client(settings)
+    app.state.sandbox_backend = getattr(
+        app.state, "sandbox_backend", None
+    ) or build_sandbox_backend(settings)
     app.state.agent = getattr(app.state, "agent", None)
     app.state.agent_lock = getattr(app.state, "agent_lock", asyncio.Lock())
     app.state.tool_count = getattr(app.state, "tool_count", 0)
-    yield
+    try:
+        yield
+    finally:
+        backend = getattr(app.state, "sandbox_backend", None)
+        close = getattr(backend, "close", None)
+        if callable(close):
+            close()
 
 
 def configured_mcp_servers(settings: Settings) -> list[str]:
@@ -78,6 +93,7 @@ def create_app(
     app.state.settings = settings or get_settings()
     app.state.agent = agent
     app.state.mcp_client = mcp_client
+    app.state.sandbox_backend = None
     app.state.tool_count = tool_count if tool_count is not None else None if agent else 0
 
     @app.get("/health")

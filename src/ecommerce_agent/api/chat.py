@@ -7,8 +7,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, StringConstraints
 from sse_starlette.sse import EventSourceResponse
 
-from ecommerce_agent.agent import build_agent
-from ecommerce_agent.mcp_client import load_spring_read_tools
+from ecommerce_agent.agents import build_sales_analyst
+from ecommerce_agent.mcp_client import load_modelscope_viz_tools, load_spring_read_tools
 from ecommerce_agent.models import get_primary_model
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -48,10 +48,20 @@ async def _ensure_agent(request: Request) -> Any:
             return request.app.state.agent
 
         settings = request.app.state.settings
-        tools = await load_spring_read_tools(request.app.state.mcp_client)
+        mcp_client = request.app.state.mcp_client
+        spring_tools = await load_spring_read_tools(mcp_client)
+        if settings.modelscope_mcp_url:
+            viz_tools = await load_modelscope_viz_tools(mcp_client)
+        else:
+            viz_tools = []
         model = get_primary_model(settings)
-        request.app.state.agent = build_agent(model, tools)
-        request.app.state.tool_count = len(tools)
+        request.app.state.agent = build_sales_analyst(
+            model,
+            spring_read_tools=spring_tools,
+            viz_tools=viz_tools,
+            backend=request.app.state.sandbox_backend,
+        )
+        request.app.state.tool_count = len(spring_tools) + len(viz_tools)
         return request.app.state.agent
 
 
@@ -61,7 +71,8 @@ async def _agent_sse_events(
     request: Request,
 ) -> AsyncIterator[dict[str, str]]:
     inputs = {"messages": [{"role": "user", "content": message}]}
-    async for event in agent.astream_events(inputs, version="v2"):
+    config = {"recursion_limit": request.app.state.settings.agent_recursion_limit}
+    async for event in agent.astream_events(inputs, config=config, version="v2"):
         if await request.is_disconnected():
             return
 

@@ -6,6 +6,7 @@ import base64
 import binascii
 import posixpath
 import shlex
+import threading
 import time
 import uuid
 
@@ -60,6 +61,7 @@ class DockerSandbox(BaseSandbox):
         self._session_id = session_id or uuid.uuid4().hex[:12]
         self._client = client or docker.from_env()
         self._container = None
+        self._container_lock = threading.RLock()
         self._last_used = time.monotonic()
 
     @property
@@ -67,28 +69,32 @@ class DockerSandbox(BaseSandbox):
         return f"ecommerce-sandbox-{self._session_id}"
 
     def _ensure_container(self):
-        if self._container is not None:
-            try:
-                self._container.reload()
-                if self._container.status == "running":
-                    return self._container
-            except (APIError, NotFound):
-                self._container = None
+        with self._container_lock:
+            if self._container is not None:
+                try:
+                    self._container.reload()
+                    if self._container.status == "running":
+                        return self._container
+                except (APIError, NotFound):
+                    self._container = None
 
-        self._container = self._client.containers.run(
-            **container_run_kwargs(self._limits, name=self.id)
-        )
-        return self._container
+            self._container = self._client.containers.run(
+                **container_run_kwargs(self._limits, name=self.id)
+            )
+            return self._container
 
     def _remove_quietly(self) -> None:
         if self._container is None:
             return
-        try:
-            self._container.remove(force=True)
-        except NotFound:
-            pass
-        finally:
-            self._container = None
+        with self._container_lock:
+            if self._container is None:
+                return
+            try:
+                self._container.remove(force=True)
+            except NotFound:
+                pass
+            finally:
+                self._container = None
 
     def close(self) -> None:
         self._remove_quietly()

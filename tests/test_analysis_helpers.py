@@ -51,6 +51,63 @@ def test_load_orders_df_rejects_missing_columns(tmp_path) -> None:
         load_orders_df(_write_orders(tmp_path, records))
 
 
+def test_load_orders_df_flattens_raw_spring_orders_with_product_categories(tmp_path) -> None:
+    orders_path = _write_orders(
+        tmp_path,
+        [
+            {
+                "orderId": 1,
+                "status": "paid",
+                "createdAt": "2026-01-15T10:00:00",
+                "items": [
+                    {"productId": 1, "subtotal": 100.5},
+                    {"productId": 99, "quantity": 2, "unitPrice": 7.5},
+                ],
+            }
+        ],
+        name="orders_raw.json",
+    )
+    products_path = _write_orders(
+        tmp_path,
+        [{"productId": 1, "category": "electronics"}],
+        name="products_raw.json",
+    )
+
+    df = load_orders_df(orders_path, products_path)
+
+    assert list(df["category"]) == ["electronics", "unknown"]
+    assert list(df["amount"]) == pytest.approx([100.5, 15.0])
+    assert pd.api.types.is_datetime64_any_dtype(df["created_at"])
+
+
+def test_load_orders_df_accepts_langchain_content_block_files(tmp_path) -> None:
+    orders = [
+        {
+            "orderId": 1,
+            "status": "completed",
+            "createdAt": "2026-02-01T10:00:00",
+            "items": [{"productId": 2, "subtotal": 25}],
+        }
+    ]
+    products = [{"productId": 2, "category": "clothing"}]
+    orders_path = _write_orders(
+        tmp_path,
+        [{"type": "text", "text": json.dumps(orders)}],
+        name="orders_block.json",
+    )
+    products_path = _write_orders(
+        tmp_path,
+        [{"type": "text", "text": json.dumps(products)}],
+        name="products_block.json",
+    )
+
+    df = load_orders_df(orders_path, products_path)
+
+    assert df[["status", "category", "amount"]].to_dict(orient="records") == [
+        {"status": "completed", "category": "clothing", "amount": 25}
+    ]
+
+
 def test_load_orders_df_missing_file_raises(tmp_path) -> None:
     with pytest.raises(FileNotFoundError):
         load_orders_df(str(tmp_path / "nope.json"))

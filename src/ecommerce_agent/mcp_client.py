@@ -34,6 +34,8 @@ WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+VIZ_TOOLS: frozenset[str] = frozenset({"generate_visualization"})
+
 
 def spring_headers(settings: Settings) -> dict[str, str]:
     return {
@@ -85,9 +87,18 @@ def filter_spring_read_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in READ_ONLY_SPRING_TOOLS]
 
 
+def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in VIZ_TOOLS]
+
+
 async def load_spring_read_tools(client: MultiServerMCPClient) -> list[BaseTool]:
     tools = await client.get_tools(server_name=SPRING_SERVER_NAME)
     return filter_spring_read_tools(tools)
+
+
+async def load_modelscope_viz_tools(client: MultiServerMCPClient) -> list[BaseTool]:
+    tools = await client.get_tools(server_name=MODELSCOPE_SERVER_NAME)
+    return filter_viz_tools(tools)
 
 
 def tool_names(tools: list[BaseTool]) -> set[str]:

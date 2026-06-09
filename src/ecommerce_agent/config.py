@@ -23,6 +23,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LLM_API_KEY", "DEEPSEEK_API_KEY"),
     )
     llm_model: str = "deepseek-chat"
+    llm_temperature: float = Field(default=0.1, ge=0)
+    agent_recursion_limit: int = Field(default=80, gt=0)
 
     spring_mcp_url: str = "http://localhost:8080/mcp"
     spring_mcp_service_token: str = "dev-service-token"

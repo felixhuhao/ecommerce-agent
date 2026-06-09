@@ -4,9 +4,11 @@ from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
+    VIZ_TOOLS,
     WRITE_OR_APPROVAL_SPRING_TOOLS,
     build_mcp_connections,
     filter_spring_read_tools,
+    filter_viz_tools,
     spring_headers,
     tool_names,
 )
@@ -76,3 +78,15 @@ def test_filter_spring_read_tools_excludes_write_and_approval_tools() -> None:
     assert tool_names(filtered) == {"inventory_query", "get_statistics"}  # type: ignore[arg-type]
     assert WRITE_OR_APPROVAL_SPRING_TOOLS.isdisjoint(tool_names(filtered))  # type: ignore[arg-type]
     assert tool_names(filtered).issubset(READ_ONLY_SPRING_TOOLS)  # type: ignore[arg-type]
+
+
+def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
+    tools = [
+        SimpleNamespace(name="generate_visualization"),
+        SimpleNamespace(name="some_other_modelscope_tool"),
+    ]
+
+    filtered = filter_viz_tools(tools)  # type: ignore[arg-type]
+
+    assert tool_names(filtered) == {"generate_visualization"}  # type: ignore[arg-type]
+    assert VIZ_TOOLS == frozenset({"generate_visualization"})
