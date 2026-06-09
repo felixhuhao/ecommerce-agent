@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
@@ -97,6 +98,18 @@ class BuildableFakeMcpClient:
 
 def make_settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **overrides)
+
+
+def wait_for_thread_types(client: TestClient, session_id: str, expected_types: list[str]) -> dict:
+    deadline = time.monotonic() + 2.0
+    last_thread: dict | None = None
+    while time.monotonic() < deadline:
+        last_thread = client.get(f"/api/sessions/{session_id}/thread").json()
+        if [message["type"] for message in last_thread["messages"]] == expected_types:
+            return last_thread
+        time.sleep(0.01)
+    assert last_thread is not None
+    return last_thread
 
 
 def test_health_reports_external_mcp_configuration() -> None:
@@ -253,6 +266,36 @@ def test_lifespan_builds_and_closes_sandbox_backend(monkeypatch: pytest.MonkeyPa
         assert app.state.sandbox_backend is not None
 
     assert events["closed"] == 1
+
+
+def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.app as app_module
+    from ecommerce_agent.sessions.registry import SessionRuntime
+    from ecommerce_agent.threads.store import InMemoryThreadStore
+
+    async def fake_build_runtime(session_id: str) -> SessionRuntime:
+        return SessionRuntime(
+            session_id=session_id,
+            agent=FakeAgent(),
+            mcp_client=object(),
+            sandbox=object(),
+        )
+
+    monkeypatch.setattr(app_module, "make_runtime_builder", lambda settings: fake_build_runtime)
+    monkeypatch.setattr(
+        app_module,
+        "build_sandbox_backend",
+        lambda settings: SimpleNamespace(close=lambda: None),
+    )
+
+    app = create_app(settings=make_settings())
+    app.state.thread_store = InMemoryThreadStore()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/messages", json={"message": "hello"})
+        assert response.status_code == 202
+        thread = wait_for_thread_types(client, session_id, ["user", "agent_answer"])
+        assert [message["type"] for message in thread["messages"]] == ["user", "agent_answer"]
 
 
 def test_chat_stream_lazily_builds_analyst_with_backend(

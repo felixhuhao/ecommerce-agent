@@ -1,11 +1,12 @@
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI
 
 from ecommerce_agent.api.chat import router as chat_router
+from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.config import Settings, get_settings
 from ecommerce_agent.mcp_client import (
     MODELSCOPE_SERVER_NAME,
@@ -21,10 +22,21 @@ from ecommerce_agent.mcp_client import (
 )
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
+from ecommerce_agent.sessions.bus import SessionBus
+from ecommerce_agent.sessions.factory import build_session_runtime
+from ecommerce_agent.sessions.registry import SessionRegistry
+from ecommerce_agent.threads.mongo import MongoThreadStore
 
 
 def build_sandbox_backend(settings: Settings) -> DockerSandbox:
     return DockerSandbox(limits_from_settings(settings))
+
+
+def make_runtime_builder(settings: Settings):
+    async def build_runtime(session_id: str):
+        return await build_session_runtime(session_id, settings)
+
+    return build_runtime
 
 
 @asynccontextmanager
@@ -37,13 +49,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent = getattr(app.state, "agent", None)
     app.state.agent_lock = getattr(app.state, "agent_lock", asyncio.Lock())
     app.state.tool_count = getattr(app.state, "tool_count", 0)
+    app.state.thread_store = getattr(
+        app.state, "thread_store", None
+    ) or MongoThreadStore.from_settings(settings)
+    app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
+    app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
+    app.state.session_registry = getattr(app.state, "session_registry", None) or SessionRegistry(
+        build_runtime=make_runtime_builder(settings),
+        idle_ttl_seconds=settings.session_idle_ttl_seconds,
+        max_live_sessions=settings.max_live_sessions,
+    )
+    app.state.reaper_task = asyncio.create_task(_reap_loop(app))
     try:
         yield
     finally:
+        reaper_task = getattr(app.state, "reaper_task", None)
+        if reaper_task is not None:
+            reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reaper_task
+        pending_background_tasks = list(getattr(app.state, "background_tasks", set()))
+        for task in pending_background_tasks:
+            task.cancel()
+        if pending_background_tasks:
+            await asyncio.gather(*pending_background_tasks, return_exceptions=True)
+            app.state.background_tasks.clear()
+        await app.state.session_registry.close_all()
         backend = getattr(app.state, "sandbox_backend", None)
         close = getattr(backend, "close", None)
         if callable(close):
             close()
+
+
+async def _reap_loop(app: FastAPI) -> None:
+    registry = app.state.session_registry
+    try:
+        while True:
+            await asyncio.sleep(60)
+            await registry.reap_idle()
+    except asyncio.CancelledError:
+        pass
 
 
 def configured_mcp_servers(settings: Settings) -> list[str]:
@@ -106,6 +151,10 @@ def create_app(
     app.state.mcp_client = mcp_client
     app.state.sandbox_backend = None
     app.state.last_trace = None
+    app.state.thread_store = None
+    app.state.session_bus = None
+    app.state.session_registry = None
+    app.state.background_tasks = None
     app.state.tool_count = tool_count if tool_count is not None else None if agent else 0
 
     @app.get("/health")
@@ -134,6 +183,7 @@ def create_app(
         return {"status": overall_status, "servers": server_results}
 
     app.include_router(chat_router)
+    app.include_router(sessions_router)
     return app
 
 
