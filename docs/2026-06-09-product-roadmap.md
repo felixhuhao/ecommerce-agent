@@ -51,8 +51,8 @@ Detailed notes and source links live in
   MySQL, MCP servers, or the public network.
 - **UI rule:** the operator console must show enough trace/provenance for a human to trust or reject
   the agent's work.
-- **Dependency-bump rule:** run the opt-in live smoke before merging DeepAgents, LangGraph,
-  LangChain, MCP adapter, or model-provider upgrades.
+- **Dependency-bump rule:** run the opt-in live reliability harness before merging DeepAgents,
+  LangGraph, LangChain, MCP adapter, or model-provider upgrades.
 
 ## 4. Milestones
 
@@ -72,15 +72,22 @@ Capabilities:
   adds a second specialist with a real routing boundary.
 - `sales-analyst` can call read tools, use authoritative `get_statistics` for simple aggregates,
   run sandboxed Python analysis for computations the backend does not own, and generate chart specs.
+- The sandbox image includes a small tested `ecommerce_analysis` helper kit so the agent composes
+  reliable time-series helpers instead of authoring fragile pandas from scratch on the hero path.
 - Operator-visible tool events for MCP, sandbox execution, and visualization.
+- On-demand live reliability harness tracks the hero flow pass rate and failure reasons.
 
 Acceptance:
 - Default suite passes.
 - Real Spring MCP integration passes against MySQL-backed data.
 - Real Docker sandbox boundary tests pass or skip clearly when Docker is absent.
-- Live smoke: "Which categories are trending up or down over the last 6 months, forecast next
+- `ecommerce_analysis` helper unit tests pass in the default suite, and the sandbox image can import
+  the helper package.
+- Hero live run: "Which categories are trending up or down over the last 6 months, forecast next
   month's sales, and chart the result" calls paginated `order_query`, runs sandbox code, emits a
   chart artifact/spec, and streams a final answer.
+- The hero run can expand into an N-attempt, RUN_LIVE_LLM-gated reliability harness that reports
+  structural pass rate and failure reasons without using an LLM judge or becoming a hard CI gate.
 - Simple aggregation questions such as "compare sales by category" prefer `get_statistics` and do
   not force a sandbox hop.
 
@@ -167,7 +174,9 @@ Acceptance:
    product-roadmap and review commits; do not push without user approval.
 2. **Build Week 2 / M1 in this order:**
    prompts YAML -> single analyst agent factory -> dormant coordinator/sub-agent seam -> sandbox
-   backend boundary -> visualization seam -> SSE/tool-event assertions -> live smoke.
+   backend boundary -> visualization seam -> structural live harness baseline -> `ecommerce_analysis`
+   helper kit + prompt API reference -> helper tests/image bake -> SSE/tool-event assertions ->
+   re-run live harness.
 3. **After Week 2 / M1, decide M1.5 vs M2.**
    If artifacts feel weak, add upload/report. If the action workflow is more important, start M2
    (Approved Action Workflow).
@@ -203,10 +212,10 @@ Ranked by likelihood × impact for a **solo build pursuing both product and port
 |---|------|-----|-----------|
 | R1 | **Scope vs solo throughput.** Product framing raises the "done" bar (console, RBAC, audit search, eval, packaging); likely outcome is M1–M2 done well and M3–M4 perpetually in progress, or endless M1 polish that never reaches the crown jewel. | High×High | Hero demo pulls the roadmap; timebox M1; M3/M4 as thin slices; depth over breadth; resist new domain agents/connectors. |
 | R2 | **Latency & context/token bloat.** Agent→MCP→sandbox→viz is still a serial path; paginated `order_query` adds hops; product-scale raw rows would bloat context. | Med-High×Med-High | M1 skips coordinator; prefer `get_statistics` for simple aggregates; sandbox only for earned computation; stream tool progress; budget hop count. Scale fix later: backend month×category aggregate. |
-| R3 | **Demo non-determinism.** Agent nails the hero flow ~8/10; a 1-in-5 live failure is brutal. | Med×High | Hardened, rehearsed golden path; constrained prompts; retries on tool/codegen failure; known-good fallback query. |
+| R3 | **Demo non-determinism.** Agent nails the hero flow ~8/10; a 1-in-5 live failure is brutal. | Med×High | Hardened, rehearsed golden path; pre-baked `ecommerce_analysis` helpers; bounded self-debug retry; N-run live harness pass-rate/failure report; known-good fallback query. |
 | R4 | **Framework/version drift.** `deepagents 0.6.8`, LangGraph, Spring AI MCP `2.0.0-M8` (pre-release); event shapes / `SubAgent` schema / backend protocol can shift; real stream path only covered by opt-in live test. | High×Med-High | Hard-pin versions; dependency-bump live-smoke gate (§3); one thin adapter around DeepAgents event shapes. |
-| R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval harness (M4) prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward; structured trace with correlation ids; a small golden-set eval before prompt/model changes. |
-| R6 | **Agent/model quality.** `deepseek-chat` doing multi-step orchestration + codegen + valid chart spec + correct HITL behavior reliably. | Med×High | Exercise the real model on the hero flow early; model is configurable (use a stronger one for demos); constrain each sub-agent's task surface. |
+| R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval harness (M4) prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward in M1: per-run tool sequence, latencies, sandbox error summary, chart validation, pass/fail reason; keep semantic judging for M4. |
+| R6 | **Agent/model quality.** `deepseek-chat` doing multi-step analysis + helper/glue code + valid chart spec + correct HITL behavior reliably. | Med×High | Exercise the real model on the hero flow early; low temperature for analytical/codegen steps; model is configurable; constrain each specialist's task surface. |
 | R7 | **Live-demo dependency fragility.** ModelScope (unconfirmed), DeepSeek (limits/outages), external Java server, MySQL, Mongo — each a break point; "reliability is impressiveness." | Med×High | A real fallback per critical-path dep (viz seam is the model); health-gate before demos; add Mongo only when HITL/continuity needs it. |
 | R8 | **Approve↔execute limbo + two-turn coherence** *(new from the redesign)*. A window where an approval is `approved` but `execute` then fails → limbo; and the execution result must re-enter the conversation the user is watching. | Med×Med-High | Idempotent executor; explicit `failed`/`invalidated` status + re-execute path; design where the result re-enters the thread before building M2. |
 | R9 | **Agent numbers vs authoritative `get_statistics`.** Self-computed pandas aggregates can mis-join or use the wrong status filter and disagree with canonical stats — confidently wrong. | Med×Med-High | Route headline figures through `get_statistics`; use the sandbox only for derivations stats don't cover; prompt prefers authoritative tools. |

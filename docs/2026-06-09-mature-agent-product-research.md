@@ -47,7 +47,7 @@ commerce operations assistant:
 | Product / platform | Observed pattern | Implication for this project |
 |--------------------|------------------|------------------------------|
 | Anthropic Research | Lead agent decomposes research into parallel subagents, each with separate context and exploration path; Anthropic also warns multi-agent systems use substantially more tokens and are best for high-value, broad tasks. | Use sub-agents where they buy context isolation or parallel breadth. Avoid splitting simple sequential workflows. |
-| OpenAI Agents SDK | Agents have tools, handoffs, guardrails, sessions, streaming, tracing, and human-review paths. Handoffs delegate to specialist agents. | Our coordinator -> specialist structure is normal. We should keep explicit traces and live smoke gates because SDK/runtime event shapes matter. |
+| OpenAI Agents SDK | Agents have tools, handoffs, guardrails, sessions, streaming, tracing, and human-review paths. Handoffs delegate to specialist agents. | Our coordinator -> specialist structure is normal. We should keep explicit traces and live reliability gates because SDK/runtime event shapes matter. |
 | Microsoft agent architecture | Recommends platform-native orchestration for internal subagents, MCP for secure tool/data access, A2A for cross-platform peer agents, least privilege, auditability, typed payloads, and governance. | MCP is the correct tool/data protocol now. A2A is future-facing only when we integrate external peer agents. |
 | Google ADK | Frames mature agent applications as multi-agent, multi-node workflows, mixing AI agents with deterministic graph/workflow nodes for predictability and reliability. | For HITL and writes, do not rely on agent-only loops. Use deterministic backend approval and execution nodes. |
 | Salesforce Agentforce | Subagents own their actions; actions can be deterministic or exposed to the LLM as tools; action metadata includes confirmation and output/context controls. | Give each sub-agent its own tool/action set. Do not share write-capable actions broadly. Treat confirmation as action metadata/policy, not just prompt text. |
@@ -55,7 +55,7 @@ commerce operations assistant:
 | Atlassian Rovo | Agents have specialized objectives, knowledge sources, tools, permissions/governance, usage tracking, subagents, and automation integrations. | Product needs agent registry/governance eventually, but first needs visible tool traces and permission boundaries. |
 | Shopify Sidekick | Commerce assistant works in store context, can analyze/manage/admin tasks, works in the background for longer tasks, and presents changes for review before applying them. | This is the closest commerce-product signal: analysis and admin action are both valuable, but changes need review before execution. |
 | GitHub Copilot cloud agent | Agent works in an isolated GitHub Actions environment, plans/changes/tests, and makes work visible through branches, commits, logs, and pull requests. | Treat agent work as artifacts and audit trail. For commerce, equivalents are chart specs, reports, approval records, diffs, and execution logs. |
-| E2B Code Interpreter | Supports sandbox code execution contexts with create/list/restart/remove operations and per-context execution. | A persistent per-session sandbox with lifecycle controls is more product-like than a fresh throwaway process per call. |
+| E2B Code Interpreter | Supports sandbox code execution contexts with create/list/restart/remove operations and per-context execution. | A persistent per-session sandbox with lifecycle controls and preinstalled analysis helpers is more product-like than a fresh throwaway process per call. |
 | LangChain DeepAgents | Subagents help keep main context clean and provide specialized instructions/tools. DeepAgents supports custom subagents and compiled graphs. | Keep the sub-agent seam, but activate it only when a second specialist creates a real routing/context boundary. |
 | Google Conversational Analytics | Agent responses can include chart specifications, rendered separately with Vega-Lite/Altair. | Keep visualization as a declarative chart-spec artifact; UI rendering is separate from analysis computation. |
 
@@ -122,10 +122,12 @@ The sandbox should be:
 - network-isolated,
 - resource-limited,
 - file/artifact oriented,
+- equipped with a small tested commerce-analysis helper package,
 - and disposable/reapable by TTL or session close.
 
 The current Week 2 DockerSandbox plan is compatible with this. A managed sandbox can replace it
-later behind the backend seam.
+later behind the backend seam. Helpers should parse files the agent wrote into `/workspace`, never
+fetch from the business backend directly.
 
 ### 4.6 Visualization
 
@@ -150,6 +152,8 @@ Memory and skills are not rejected, but they should be sequenced carefully:
 
 1. **Week 2 / M1 should stay read-only.** Build the direct sales-analyst runtime agent + sandbox +
    chart artifact. Do not sneak in coordinator latency or order-manager writes.
+   Pull forward a thin reliability loop: run the live structural harness once as a baseline, add the
+   tested `ecommerce_analysis` helpers, then re-run and compare failure modes.
 2. **M1.5 is artifact depth.** File upload and Markdown reports are useful if the sandbox path
    lands cleanly.
 3. **M2 is approved action workflow.** Order-manager, `request_approval`,

@@ -114,9 +114,12 @@ Python code runs inside the sandbox, not on the host machine.
 2. MySQL is trusted persistent data that must stay outside the Agent's execution environment
 3. Sandbox code can NEVER directly connect to MySQL — all DB access goes through MCP tools → SpringBoot
 
-**Data flow: MCP query results → Agent context (same as ERP_OPENCLAW)**
+**Data flow: MCP query results → Agent context → optional sandbox file**
 
-MCP tools return data directly to the Agent's context. The Agent sees query results and can respond immediately or use `run_code` in Sandbox for deeper analysis. No intermediate file-saving wrapper.
+MCP tools return data directly to the Agent's context. The Agent sees query results and can respond
+immediately, or write selected data into `/workspace` for sandboxed analysis. Sandbox helpers parse
+files the Agent already wrote; they never fetch from SpringBoot/MySQL directly. There is no
+intermediate service-side file-saving wrapper.
 
 | Operation | Execution | Reason |
 |-----------|-----------|--------|
@@ -245,6 +248,8 @@ Tools come from three MCP servers — only the first group is SpringBoot:
 - `run_code` — execute Python code in Sandbox (pandas, numpy)
 - `read_uploaded_file` — parse uploaded files (CSV, Excel) in Sandbox
 - `write_report` — generate Markdown report and save to Sandbox for download
+- `ecommerce_analysis` helper package — pre-baked into the sandbox image for the M1 forecast hero;
+  helpers parse files in `/workspace`, bucket month×category sales, forecast, and validate outputs
 
 Typical tasks:
 - "Show sales trends for last quarter"
@@ -722,9 +727,11 @@ Status: Week 1 foundation complete; Week 2 in design.
 - Read-only SpringBoot tool allowlist enforced before the agent can use tools.
 - Single read-only `sales-analyst` runtime agent; coordinator/sub-agent routing remains a dormant
   seam until M2.
-- Sandboxed Python analysis for computations SpringBoot stats do not already own.
+- Sandboxed Python analysis for computations SpringBoot stats do not already own, with a small
+  tested `ecommerce_analysis` helper kit baked into the sandbox image for the forecast hero.
 - Declarative chart artifact generation through a visualization seam.
-- Operator-visible traces for tools and artifacts.
+- Operator-visible traces for tools and artifacts, plus an on-demand N-run live reliability harness
+  that reports structural pass rate and failure reasons.
 
 ### Milestone 2: Approved Action Workflow
 
@@ -747,7 +754,7 @@ Status: Week 1 foundation complete; Week 2 in design.
 ### Milestone 4: Product Hardening
 
 - Multi-user session isolation, role-based permissions, audit search, model/provider fallback,
-  evaluation suite, dependency-bump live smoke gates, and deployment packaging.
+  evaluation suite, dependency-bump live reliability gates, and deployment packaging.
 - Memory and skills are product hardening/stretch features, not prerequisites for the first two
   milestones.
 

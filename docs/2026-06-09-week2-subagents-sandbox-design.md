@@ -26,9 +26,12 @@ Milestones are the canonical roadmap vocabulary; week labels describe implementa
 - **Coordinator/sub-agent seam** only: factory shape exists, but M1 does not route through a
   coordinator until M2 adds `order-manager`
 - **DockerSandbox** — a custom DeepAgents backend giving isolated code execution + a sandbox filesystem
+- **Pre-baked `ecommerce_analysis` helper kit** in the sandbox image — four stable commerce
+  analysis helpers, used by agent-written glue code instead of fresh pandas from scratch
 - **Visualization** via ModelScope MCP `generate_visualization`, behind a swappable seam
 - **YAML prompt management** (migrate the inline Week 1 prompt)
-- Two-tier tests (default boundary tests incl. real-Docker sandbox tests; opt-in live smoke)
+- Two-tier tests (default boundary tests incl. helper + real-Docker sandbox tests; opt-in live
+  reliability harness)
 
 **Deferred by milestone:**
 - **M1.5 artifact depth:** file upload (`POST /api/upload`) + `read_uploaded_file` +
@@ -55,6 +58,8 @@ rendering belongs to the UI/artifact surface later.
 | Runtime agent | **Single sales-analyst deep agent** for M1 | With only one specialist, a coordinator adds serial model calls without a real routing decision. |
 | Coordinator seam | DeepAgents native `subagents` (`SubAgent` dicts via a factory), enabled at M2 | First-class framework feature; each sub-agent declares its own `tools`/`skills`/`interrupt_on`. |
 | Aggregation rule | Simple aggregation → authoritative Spring stats; sandbox only for computation stats do not own | Avoids latency and avoids pandas disagreeing with canonical `get_statistics`. |
+| Analysis helpers | Pre-baked `ecommerce_analysis` package, capped at ~4 stable functions | Mature code-interpreter products are reliable because agents compose reliable building blocks instead of inventing fragile pandas every run. |
+| Reliability harness | RUN_LIVE_LLM-gated N-run structural eval with trace/failure capture | Measures the hero path before and after helper/prompt changes; no LLM-as-judge and no per-commit token burn. |
 | Exec backend | Custom `DockerSandbox(BaseSandbox)` | Self-hosted isolation, no SaaS; conforms to DeepAgents' backend protocol; swappable for a remote executor later. |
 | Sandbox lifecycle | **Persistent per-session container**, reused across `execute` calls | Matches mature code-interpreters (§9): statefulness + no per-call cold start. |
 | Statefulness | **Filesystem-stateful** (files persist; each `execute` runs fresh code) | Agent round-trips data through sandbox files; simplest model that fits DeepAgents' shell-based `execute`. Full REPL/kernel state is a later upgrade. |
@@ -77,11 +82,15 @@ src/ecommerce_agent/
 ├── agents.py            # NEW: sales-analyst factory + dormant coordinator/sub-agent seam
 ├── prompts/
 │   ├── prompts.yml      # NEW: sales_analyst prompt (+ optional coordinator prompt for M2)
+│   ├── analysis_helpers.md # NEW: compact helper API reference included/linked from the prompt
 │   └── loader.py        # NEW: tiny typed YAML loader (read once at build)
 ├── sandbox/             # NEW package (the one certain-to-grow, multi-concern piece)
 │   ├── __init__.py      # exports DockerSandbox
 │   ├── backend.py       # DockerSandbox(BaseSandbox): execute() + upload_files() + lifecycle
 │   └── config.py        # container hardening flags / resource limits builder
+├── sandbox_image/
+│   ├── Dockerfile.sandbox
+│   └── ecommerce_analysis/ # NEW: helper package copied/baked into the sandbox image
 └── api/
     ├── app.py           # lifespan builds the sandbox backend + wires it into the agent
     └── chat.py          # unchanged request/SSE contract
@@ -148,7 +157,12 @@ Settings in `config.py`: `SANDBOX_IMAGE`, `SANDBOX_MEMORY`, `SANDBOX_CPUS`, `SAN
 ### 4.3 Sandbox image (deliverable)
 
 Because `--network none` blocks runtime `pip install`, ship a **prebuilt image** with
-`python + pandas + numpy` baked in: `Dockerfile.sandbox` → `ecommerce-agent-sandbox:dev`.
+`python + pandas + numpy + ecommerce_analysis` baked in:
+`Dockerfile.sandbox` → `ecommerce-agent-sandbox:dev`.
+
+Helper/package changes mean a sandbox image rebuild. In development, mounting the helper source into
+the container is acceptable for fast iteration; for demos and CI images, bake the exact helper
+version into the image so the agent sees the same API every run.
 
 ### 4.4 Files-on-sandbox & the data path
 
@@ -158,6 +172,36 @@ analyze them, it `write_file`s them into `/workspace` and sandboxed code consume
 files used by code never touch the host (parent §2.2). Week 2 / M1 uses a single `DockerSandbox`
 backend; M4 wraps it in a `CompositeBackend` that keeps `/workspace` on the sandbox while
 routing `/memories` and `/skills` to their own backends (parent §12).
+
+### 4.5 Pre-baked commerce analysis helpers
+
+M1 includes a tiny, source-controlled Python package baked into the sandbox image:
+`ecommerce_analysis`. It is a reliability tool, not a demo script. The agent still fetches data,
+chooses the analysis path, writes glue code, and interprets results; the helper kit removes the
+most fragile from-scratch pandas pieces from the golden path.
+
+Stable API contract:
+
+```python
+load_orders_df(path) -> pandas.DataFrame
+monthly_sales_by_category(orders_df) -> pandas.DataFrame
+simple_forecast(monthly_df, periods=1) -> pandas.DataFrame
+validate_forecast_result(forecast_df) -> None
+```
+
+Rules:
+- `load_orders_df(path)` only parses an order JSON/CSV file already written by the agent into
+  `/workspace`; it never fetches data and never reaches the network. The fetch boundary remains:
+  MCP/SpringBoot fetches, the agent writes the result file, the sandbox parses and computes.
+- Keep the helper kit small, roughly these four functions. More helpers become M4 skills/library
+  governance, not Week 2 scope.
+- Signatures are stable contracts the prompt depends on. If a signature changes, update the compact
+  `prompts/analysis_helpers.md` reference and helper tests in the same change.
+- Helpers are deterministic and unit-tested in the default suite. The whole point is to move
+  fragile codegen into fixable code that CI can catch.
+- Scope honesty: helpers harden the rehearsed hero path. Off-path improv questions may still need
+  fresh agent-written code, so the live demo should lead with the golden path before exploratory
+  questions.
 
 ## 5. Visualization (ModelScope MCP, behind a seam)
 
@@ -180,6 +224,11 @@ routing `/memories` and `/skills` to their own backends (parent §12).
 build. Week 1's inline `SYSTEM_PROMPT` migrates here. A `main_agent`/coordinator prompt can live in
 the same file as a dormant M2 seam, but M1 does not route through it.
 
+The sales analyst prompt points to a compact helper API reference
+(`prompts/analysis_helpers.md`) and says: for commerce time-series analysis, prefer
+`ecommerce_analysis` helpers before writing custom pandas. It also states the data boundary:
+helpers read files in `/workspace`; they do not fetch from SpringBoot or the network.
+
 ## 7. Data flow (the Week 2 demo)
 
 "Which categories are trending up or down over the last 6 months, forecast next month's sales, and
@@ -189,7 +238,7 @@ chart the result":
 POST /api/chat/stream {message}
  → sales-analyst calls order_query pages for the last 6 months (SpringBoot MCP) → data into context
  → write_file(orders.json) [sandbox]
- → execute(pandas: bucket month×category, fit simple trends, forecast next month) [sandbox]
+ → execute(glue code using ecommerce_analysis: load, bucket month×category, forecast) [sandbox]
  → generate_visualization(spec from aggregates) [ModelScope MCP] → chart spec
  → sales-analyst streams analysis + chart spec
 ```
@@ -207,26 +256,51 @@ monthly points are enough to demonstrate the workflow, not enough to claim rigor
 Carries Week 1's two-tier shape.
 
 **Default boundary tests (deterministic, no LLM):**
+- `ecommerce_analysis` helper unit tests: parse representative `order_query` result files; bucket
+  month×category; produce finite one-period forecasts; reject invalid/empty forecast outputs.
 - `sandbox/` against **real Docker**: `execute` runs code; `--network none` enforced (a network
   call fails); timeout + resource caps respected; files persist across `execute` calls in one
   session; container torn down. **Skips cleanly when Docker is absent** (like the Spring-reachable
   skip).
+- sandbox image smoke: `python -c "import ecommerce_analysis"` succeeds in the built image.
 - `agents.py` / `build_agent`: the M1 analyst factory wires the right tool allowlists; dormant
   coordinator/sub-agent seams exist without being on the hot path; all extension slots threaded.
 - viz allowlist + ModelScope connection registry (mirrors the Spring allowlist tests).
 - prompt loader.
 
-**Opt-in live smoke (`RUN_LIVE_LLM=1`):** the 6-month category trend/forecast hero → assert the
-stream shows paginated `order_query`, `execute`, and `generate_visualization` tool events and
-completes. Run before dependency bumps (DeepAgents/LangGraph/LangChain/MCP adapters) per the Week 1
-gate.
+**Opt-in live reliability harness (`RUN_LIVE_LLM=1`):** parameterized live run for the 6-month
+category trend/forecast hero. Run it on demand before demos, and after prompt/model/helper changes
+or dependency bumps (DeepAgents/LangGraph/LangChain/MCP adapters). Keep it out of default pytest and
+per-commit CI; full multi-hop runs cost minutes and model tokens.
+
+The harness runs `N` attempts (e.g. `LIVE_EVAL_RUNS=5` or `10`) and reports pass rate plus failure
+reasons. Treat pass rate as a tracked metric, not a hard gate at small N. Structural assertions:
+- `order_query` is called and paginated as needed.
+- no write/approval tools appear.
+- `execute` is called and either succeeds or performs a bounded self-debug retry before failing.
+- forecast outputs are non-empty finite numbers.
+- `generate_visualization` is called with a schema-valid chart spec; if validation fails, the
+  renderer seam can return a default-chart fallback and record the degradation.
+- the stream completes with `done`, not `error`.
+
+Each live run writes a small structured trace: run id, model/settings, tool sequence, tool latencies,
+sandbox stdout/stderr summary, chart validation result, pass/fail assert, and failure reason. This
+is the first thin slice of R5 observability, not a separate product console.
+
+Recommended hardening order: implement the harness early and run it once against the from-scratch
+codegen baseline, then add `ecommerce_analysis` + prompt reference and re-run. That proves the
+helper kit earned its place instead of tuning by vibes.
 
 **Acceptance (definition of done):**
 - sales-analyst runs directly in M1; coordinator/sub-agent routing is present only as a dormant seam.
 - sales-analyst analyzes seeded order data in the sandbox and emits a chart spec via ModelScope (or the
   seam's renderer).
+- `ecommerce_analysis` helpers are documented, baked into the sandbox image, and tested in the
+  default suite.
+- The on-demand live reliability harness produces a pass-rate/failure-reason report.
 - Default suite green, including the real-Docker sandbox boundary tests (skipped if no Docker).
-- Live smoke passes by hand.
+- A rehearsed single-run hero path passes by hand before demo; the N-run harness records the broader
+  reliability metric.
 
 ## 9. Research basis (sandbox lifecycle)
 
