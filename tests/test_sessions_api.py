@@ -70,11 +70,16 @@ class FakeApprovalClient:
                 "executionResult": {"purchaseOrderId": 88},
                 "message": "approval executed successfully",
             }
+        message = (
+            "order status transition is not allowed: cancelled -> cancelled"
+            if self.execution_status == "invalidated"
+            else "approved operation is stale; request a fresh approval"
+        )
         return {
             "approvalId": approval_id,
             "status": self.execution_status,
             "executionResult": {"status": self.execution_status},
-            "message": "approved operation is stale; request a fresh approval",
+            "message": message,
         }
 
     async def reject(self, approval_id: str, *, reason: str | None = None) -> dict:

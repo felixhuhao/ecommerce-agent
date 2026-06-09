@@ -64,6 +64,17 @@ def _approval_status_content(approval_id: str, status_value: str, reason: str | 
     return f"Approval {approval_id} {status_value}{suffix}"
 
 
+def _execution_status_reason(execution: dict[str, Any]) -> str | None:
+    message = execution.get("message")
+    if execution.get("status") == "invalidated":
+        suffix = "Request a fresh approval."
+        if not message:
+            return suffix
+        if "fresh approval" not in message.lower():
+            return f"{message}. {suffix}"
+    return message
+
+
 async def _append_approval_status(
     *,
     request: Request,
@@ -246,7 +257,7 @@ async def approve_approval(
             approval_id=approval_id,
             status_value=execution_status,
             actor_id=actor_id,
-            reason=execution.get("message"),
+            reason=_execution_status_reason(execution),
             result=_result_dict(execution.get("executionResult")),
         )
 
