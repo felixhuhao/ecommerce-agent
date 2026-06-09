@@ -202,12 +202,13 @@ suspended; the turn ends normally (parent §5.2).
 
 ### 6.2 One human action, two backend transitions
 
-`POST /api/sessions/{sid}/approvals/{aid}/approve` orchestrates, using the **human/approval
-credential** (distinct from the MCP service token — Java spec §4.2). Concretely, FastAPI calls the
-Java `/approvals/**` endpoints with `Authorization: Bearer {approval_api_token}` and forwards the
-acting user's `X-User-Id`/`X-Session-Id`; for M2 the acting user is the single configured operator
-`user_id` (§12), which must match the approval's binding or Java rejects (actor binding). M3 swaps in
-the authenticated console user.
+`POST /api/sessions/{sid}/approvals/{aid}/approve` orchestrates the two Java transitions. The
+implemented Java scope kept the **shared `X-Service-Token`** auth model (a distinct human/approval
+credential is a documented deployment-hardening item, deferred to M4 — Java spec §4.1, parent Java
+spec §4.2). So FastAPI calls the Java `/approvals/**` endpoints with `X-Service-Token` plus the acting
+user's `X-User-Id`/`X-Session-Id`; for M2 the acting user is the single configured operator `user_id`
+(§12), which must match the approval's binding or Java rejects (actor binding). M4 introduces the
+distinct authenticated console-user credential.
 1. `POST /approvals/{aid}/approve` on Java → flips status to `approved`.
 2. `POST /approvals/{aid}/execute` on Java → deterministic backend execute from the stored payload.
 3. Append `approval_status(approved)` then `execution_result` messages → published live + persisted.
@@ -230,8 +231,10 @@ is built deterministically from Java's response.
 
 ### 6.4 Settings
 
-Add: `mongo_url`, `approval_api_base_url`, `approval_api_token` (human/approval credential), and
-optional `session_idle_ttl_seconds`.
+Add: `mongo_url`, `approval_api_base_url` (the Spring REST base, e.g. `http://localhost:8080`; the
+`/mcp` path is separate), and optional `session_idle_ttl_seconds`. The approval REST calls **reuse the
+existing `spring_mcp_service_token`** (shared `X-Service-Token`) — no distinct approval credential in
+M2.
 
 ## 7. Infrastructure
 
