@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import pytest
 
 from ecommerce_agent.config import Settings
+from ecommerce_agent.evals import live_reliability
 from ecommerce_agent.evals.live_reliability import assess_attempt, run_reliability
 from ecommerce_agent.trace.jsonl import append_eval_baseline
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
@@ -54,6 +55,45 @@ def test_assess_attempt_flags_write_tool_and_missing_done() -> None:
     assert not result.passed
     assert any("write/approval" in failure for failure in result.failures)
     assert any("did not complete" in failure for failure in result.failures)
+    assert result.body_tail == "event: error\n"
+    assert result.trace_summary is not None
+    assert result.trace_summary["tool_names"] == ["order_query", "purchase_order_create"]
+
+
+def test_run_reliability_records_failed_attempt_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    def fake_run_single_attempt(
+        settings: Settings,  # noqa: ARG001
+        *,
+        prompt: str,  # noqa: ARG001
+        attempt_timeout_seconds: int,
+    ) -> tuple[live_reliability.AttemptResult, TraceRecord]:
+        record = _record_with_tools("order_query")
+        record.answer = "partial answer"
+        result = assess_attempt(record, "event: token\ndata: {}\n")
+        result.duration_ms = float(attempt_timeout_seconds)
+        return result, record
+
+    trace_path = tmp_path / "failed-traces.jsonl"
+    monkeypatch.setattr(live_reliability, "_run_single_attempt", fake_run_single_attempt)
+
+    report = run_reliability(
+        1,
+        Settings(_env_file=None),
+        attempt_timeout_seconds=7,
+        failure_trace_path=str(trace_path),
+    )
+
+    assert report["passed"] == 0
+    assert report["pass_rate"] == 0.0
+    assert report["attempt_timeout_seconds"] == 7
+    assert report["failure_trace_path"] == str(trace_path)
+    assert report["attempts"][0]["trace_path"] == str(trace_path)
+    assert report["attempts"][0]["body_tail"] == "event: token\ndata: {}\n"
+    assert report["attempts"][0]["trace_summary"]["answer_tail"] == "partial answer"
+    assert trace_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.integration
@@ -87,4 +127,12 @@ async def test_live_reliability_batch_records_baseline(tmp_path) -> None:
 
     assert report["n"] == runs
     assert 0.0 <= report["pass_rate"] <= 1.0
-    print("reliability:", report["passed"], "/", report["n"], report["failure_modes"])
+    print(
+        "reliability:",
+        report["passed"],
+        "/",
+        report["n"],
+        report["failure_modes"],
+        "failure_trace_path:",
+        report["failure_trace_path"],
+    )

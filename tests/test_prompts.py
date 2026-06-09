@@ -12,6 +12,7 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "read-only" in prompt.lower()
     assert "ecommerce_analysis" in prompt
     assert "generate_visualization" in prompt
+    assert "Never embed raw order or product payloads inside Python source" in prompt
 
 
 def test_get_prompt_unknown_key_raises() -> None:
