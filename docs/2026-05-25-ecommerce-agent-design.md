@@ -5,23 +5,49 @@
 
 ## 1. Project Overview
 
-**What:** An intelligent e-commerce operations assistant that uses multi-agent architecture to handle sales analysis, inventory management, order processing, and data visualization through natural language conversation.
+**What:** A product-grade e-commerce operations assistant that helps operators analyze business
+data, produce auditable artifacts, and safely execute approved operational actions through a
+multi-agent architecture.
 
-**Why:** Portfolio project demonstrating Agent intelligence, end-to-end architecture, and Java backend engineering. Built by analyzing two existing projects (ERP_OPENCLAW, Deep Search Pro) and combining their strengths.
+**Why:** Build an extensible agentic operations platform, not only a demo. The system should prove
+that AI agents can work inside real commerce workflows while preserving the properties mature
+business software needs: permission boundaries, reviewable actions, auditability, data provenance,
+and reliable integration with existing backend systems.
 
-**Who:** Interview showcase. Target audience: technical interviewers evaluating AI/Agent and backend engineering skills.
+**Who:** Commerce operators, analysts, and operations managers who need faster answers and safer
+workflow execution. The engineering audience is still important, but the product should be
+understandable as a real operator console.
 
-**Timeline:** 4 weeks.
+**Cadence:** Build in weekly vertical slices, with a product roadmap in
+[2026-06-09-product-roadmap.md](2026-06-09-product-roadmap.md). The first product milestone is a
+trusted read-only analysis workspace; the second is approved action execution.
+
+### 1.1 Product Principles
+
+1. **Trust before autonomy.** Agents may reason and propose, but the backend remains authoritative
+   for permissions, writes, approvals, and canonical business state.
+2. **Sub-agents need real boundaries.** Create a sub-agent only when it has a distinct permission
+   set, tool set, context budget, or workflow phase. Do not split agents just to appear
+   "multi-agent."
+3. **Artifacts over chat-only answers.** Valuable outputs should become inspectable artifacts:
+   chart specs, reports, approval requests, diffs, tool traces, and audit records.
+4. **Operator control stays visible.** The UI must show what the agent did, what data it used,
+   which tools it called, and which actions still require human confirmation.
+5. **Business systems stay authoritative.** SpringBoot owns business rules, database writes,
+   approvals, and operation hashes. Python owns orchestration, reasoning, sandboxed analysis, and
+   presentation artifacts.
+6. **Extensibility is deliberate.** New MCP servers, tools, agents, prompts, models, and sandbox
+   backends must attach through stable registries/seams rather than ad hoc wiring.
 
 ## 2. Architecture
 
 ### 2.1 System Diagram
 
 ```
-Vue 3 Frontend (adapted from ERP_OPENCLAW)
+Vue 3 Operator Console
   ├── SSE streaming chat
-  ├── WebSocket real-time progress
-  └── HITL approval cards
+  ├── tool traces + artifact panel
+  └── HITL approval workspace
         │
         │ HTTP / SSE / WebSocket
         ▼
@@ -55,7 +81,7 @@ sales-analyst          order-manager
          MySQL (ecommerce_db)
 
   ┌─────────────────────────────┐
-  │   OpenSandbox               │
+  │   Sandbox Execution         │
   │   Data files → Code exec →  │
   │   Report generation         │
   └─────────────────────────────┘
@@ -71,7 +97,11 @@ sales-analyst          order-manager
 
 ### 2.2 Security Model: Sandbox as Agent Backend
 
-OpenSandbox is configured as the DeepAgents backend (same as ERP_OPENCLAW). All Agent file operations (`write_file`, `read_file`) are routed to Sandbox automatically through the framework layer. The security purpose is **code execution isolation** — Agent-generated Python code runs inside Sandbox, not on the host machine.
+The sandbox is configured as the DeepAgents backend. In Week 2 this is a self-hosted
+`DockerSandbox`; a managed sandbox such as OpenSandbox can replace it later behind the same backend
+seam. All Agent file operations (`write_file`, `read_file`) are routed to the sandbox automatically
+through the framework layer. The security purpose is **code execution isolation** — Agent-generated
+Python code runs inside the sandbox, not on the host machine.
 
 **Database stays outside Sandbox because:**
 1. Sandbox is ephemeral — rebuilt/cleared between sessions
@@ -160,11 +190,19 @@ customers pay).
 
 ## 4. Agent Architecture
 
+Product rule: use sub-agents for **permission, tool, context, or workflow boundaries**. A
+sub-agent earns its existence when it narrows what the model can see or do, or when it owns a
+distinct phase of work. The first mature boundary is read-only analysis (`sales-analyst`). The
+write-capable `order-manager` should not be enabled until HITL/checkpoint enforcement exists.
+
 ### 4.1 Main Agent
 
 Role: "E-commerce Operations AI Assistant" — coordinator, not executor.
 
-The main agent analyzes user intent and routes to appropriate sub-agents. It never calls business MCP tools directly.
+The main agent analyzes user intent, routes to appropriate sub-agents, aggregates returned
+artifacts, and keeps the interaction understandable to the operator. It should not call business
+MCP tools directly once sub-agents are enabled; domain tools live on specialists with scoped
+permissions.
 
 Tools available to main agent: `web_search`, `assign_skill`, `download_file`, `read_file`, `write_file`
 
@@ -547,14 +585,26 @@ before streaming it.
 
 No PDF generation — Markdown only. Keeps it cross-platform and simple.
 
-## 11. Frontend
+## 11. Operator Console
 
-Adapted from ERP_OPENCLAW Vue 3 frontend. Changes:
-- Replace motorcycle parts terminology with e-commerce
-- Adjust sidebar for e-commerce session history
-- Keep: SSE streaming chat, HITL approval banner, chart rendering, markdown display
+The frontend is an operator console, not a decorative chat shell. It can reuse ERP_OPENCLAW Vue 3
+components where useful, but the product surface is defined by trust and work visibility.
 
-Not a focus area. "Good enough to demo" is the bar.
+Core surfaces:
+- **Conversation + streaming answer** — SSE chat remains the main interaction pattern.
+- **Tool trace timeline** — show read tools, sandbox execution, visualization calls, and write
+  proposals in a human-readable sequence.
+- **Artifacts panel** — chart specs/rendered charts, generated Markdown reports, exported data
+  snippets, and approval cards.
+- **HITL approval workspace** — server-rendered action cards with canonical payload, diff/impact,
+  expiry, actor/session binding, approve/reject controls, and final execution status.
+- **Session history** — conversation, artifacts, approvals, and audit references grouped by
+  session.
+- **Health/operator checks** — dependency status for MCP servers, sandbox, model provider, and
+  database connectivity. `/health/mcp` is a live operator probe, not a high-frequency poll target.
+
+Product rule: the console should make agent work **inspectable and reversible where possible**.
+Do not hide tool calls, approval preconditions, or generated artifacts behind a pure chat transcript.
 
 ## 12. Technology Stack
 
@@ -566,7 +616,7 @@ Not a focus area. "Good enough to demo" is the bar.
 | Streaming output | SSE | ERP_OPENCLAW |
 | Session isolation | ContextVar (coroutine-level) | Deep Search Pro |
 | Session persistence | MongoDB checkpoint | ERP_OPENCLAW |
-| Code execution | OpenSandbox (full sandbox model) | ERP_OPENCLAW |
+| Code execution | DockerSandbox now; managed sandbox/remote executor swappable | Product decision |
 | File operations | CompositeBackend routing | ERP_OPENCLAW |
 | Tool protocol | MCP (Spring AI MCP server + MultiServerMCPClient) | New (replaces FastMCP proxy) |
 | Tool merging | 26→1 compact reference strategy | ERP_OPENCLAW |
@@ -578,51 +628,48 @@ Not a focus area. "Good enough to demo" is the bar.
 | File upload | Sandbox storage | Deep Search Pro |
 | Report generation | Markdown via Sandbox run_code | Deep Search Pro (simplified) |
 
-## 13. Development Roadmap
+## 13. Product Roadmap
 
-> **Scope reality check:** this 4-week plan spans a lot (SpringBoot MCP, FastAPI, DeepAgents,
-> Sandbox, MongoDB checkpoint, HITL, memory, visualization, upload, Vue). For a portfolio MVP,
-> treat **read-only analysis + one chart** (Weeks 1–2) and the **HITL purchase-order write**
-> (Week 3) as the marquee features that must land; memory layers, skills, and frontend polish
-> are the first things to cut if time runs short.
+The detailed roadmap lives in
+[2026-06-09-product-roadmap.md](2026-06-09-product-roadmap.md). The parent spec keeps the product
+direction; the roadmap owns sequencing and cut lines.
 
-### Week 1: Foundation
+### Milestone 1: Trusted Read-Only Analysis Workspace
 
-- SpringBoot project setup + MySQL schema (9 tables incl. `purchase_order*` + `approval_record`) *(7 base tables + seed already done; PO/approval tables to add)*
-- Seed sample data (50 products, 200 customer orders, 30 users, 10 suppliers, a few historical POs) *(base done)*
-- SpringBoot MCP server (Spring AI) exposing 6 read-only `@Tool` methods over streamable-HTTP/SSE
-- FastAPI project setup (web/SSE/WebSocket service layer for the frontend)
-- Single agent + `MultiServerMCPClient` connecting to the SpringBoot MCP server
-- SSE streaming response
-- **Demo:** "Check phone category inventory" → Agent calls SpringBoot MCP tool → returns data
+Status: Week 1 foundation complete; Week 2 in design.
 
-### Week 2: Sub-Agents + Sandbox
+- FastAPI/SSE + DeepAgents connected to the SpringBoot MCP server.
+- Read-only SpringBoot tool allowlist enforced before the agent can use tools.
+- Coordinator + `sales-analyst` sub-agent.
+- Sandboxed Python analysis for aggregate computations.
+- Declarative chart artifact generation through a visualization seam.
+- Operator-visible traces for tools and artifacts.
 
-- Split into sales-analyst and order-manager sub-agents
-- Migrate prompts to YAML configuration
-- Integrate OpenSandbox for code execution
-- Implement `run_code` tool (query results → sandbox file → pandas analysis)
-- Implement 26→1 visualization tool merging
-- **Demo:** "Compare sales by category" → Agent analyzes → generates bar chart
+### Milestone 2: Approved Operational Actions
 
-### Week 3: HITL + Memory
+- `order-manager` sub-agent with write tools only after HITL is implemented.
+- MongoDB checkpoint/resume for interrupted approval flows.
+- Server-rendered approval cards, canonical operation hashes, one-time-use approvals, expiry, and
+  actor/session binding.
+- Write execution through SpringBoot only; no Python-side business writes.
 
-- MongoDB checkpoint integration
-- Implement `request_approval` + full enforcement (canonical hash incl. server preconditions, status, actor/session, expiry, one-time use)
-- Write tools: `purchase_order_create`, `purchase_order_receive`, `order_update`
-- ContextVar session isolation
-- User preference read/write (preferences.md)
-- Skill creation with TTL and grading
-- AGENTS.md guidance loading
-- **Demo:** "Restock 500 phone cases from supplier A" → approval card → confirm → PO created → receive → inventory +500
+### Milestone 3: Operator Console
 
-### Week 4: Frontend + Polish
+- Conversation, tool timeline, artifacts panel, approval workspace, session history, and dependency
+  health views.
+- Markdown report downloads and chart rendering.
+- Audit references for approvals and executed actions.
 
-- Adapt ERP_OPENCLAW Vue 3 frontend for e-commerce
-- HITL approval card component
-- WebSocket progress monitoring
-- Enrich sample data for convincing demo
-- Tune YAML prompts for better responses
-- End-to-end testing
-- Record demo video
-- **Demo:** Full conversation → analysis → chart → order → approval flow
+### Milestone 4: Product Hardening
+
+- Multi-user session isolation, role-based permissions, audit search, model/provider fallback,
+  evaluation suite, dependency-bump live smoke gates, and deployment packaging.
+- Memory and skills are product hardening/stretch features, not prerequisites for the first two
+  milestones.
+
+### Future Expansion
+
+- Additional domain agents: `customer-insight`, `procurement-planner`, `catalog-manager`.
+- External connectors and additional MCP servers.
+- A2A-style peer agents only when integrating independent external agent systems; MCP remains the
+  main tool/data protocol for this product.
