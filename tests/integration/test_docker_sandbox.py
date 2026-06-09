@@ -99,6 +99,59 @@ def test_file_transfer_rejects_paths_outside_workspace(sandbox) -> None:
 
 @pytest.mark.integration
 @pytest.mark.docker
+def test_upload_rejects_oversized_heredoc_payload(sandbox) -> None:
+    [upload] = sandbox.upload_files([("/workspace/huge.txt", b"x" * (513 * 1024))])
+
+    assert upload.error == "invalid_path"
+    missing = sandbox.execute("test ! -f /workspace/huge.txt")
+    assert missing.exit_code == 0
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+def test_large_edit_via_deepagents_temp_upload(sandbox) -> None:
+    old = "old-line\n" * 7000
+    new = "new-line\n" * 7000
+
+    write = sandbox.write("/workspace/large.txt", old)
+    assert write.error is None
+
+    edit = sandbox.edit("/workspace/large.txt", old, new)
+    assert edit.error is None
+
+    read = sandbox.execute(
+        "python3 - <<'PY'\n"
+        "from pathlib import Path\n"
+        "print(Path('/workspace/large.txt').read_text().count('new-line'))\n"
+        "PY"
+    )
+    assert read.exit_code == 0
+    assert "7000" in read.output
+    tmp_check = sandbox.execute("ls /tmp/.deepagents_edit_* 2>/dev/null || true")
+    assert tmp_check.output.strip() == ""
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+def test_context_manager_closes_container() -> None:
+    skip_unless_docker_available()
+    import docker
+
+    client = docker.from_env()
+    with DockerSandbox(
+        limits_from_settings(Settings(_env_file=None)),
+        session_id=uuid.uuid4().hex[:8],
+    ) as managed:
+        managed.execute("true")
+        sandbox_id = managed.id
+        assert client.containers.get(sandbox_id) is not None
+
+    with pytest.raises(docker.errors.NotFound):
+        client.containers.get(sandbox_id)
+
+
+@pytest.mark.integration
+@pytest.mark.docker
 def test_network_is_isolated(sandbox) -> None:
     code = (
         "import socket,sys\n"

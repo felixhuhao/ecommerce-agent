@@ -22,15 +22,21 @@ from docker.errors import APIError, NotFound
 from ecommerce_agent.sandbox.config import SandboxLimits, container_run_kwargs
 
 _OUTPUT_LIMIT = 64 * 1024
+_MAX_UPLOAD_BYTES = 512 * 1024
 _TIMEOUT_EXIT = 124
 _WORKSPACE_ROOT = "/workspace"
+_DEEPAGENTS_EDIT_TMP_PREFIX = "/tmp/.deepagents_edit_"
 
 
-def _workspace_file_path(path: str) -> str:
+def _sandbox_file_path(path: str) -> str:
     raw_path = path if posixpath.isabs(path) else posixpath.join(_WORKSPACE_ROOT, path)
     normalized = posixpath.normpath(raw_path)
-    if normalized == _WORKSPACE_ROOT or not normalized.startswith(f"{_WORKSPACE_ROOT}/"):
-        raise PermissionError(f"path must be inside {_WORKSPACE_ROOT}: {path!r}")
+    is_workspace_file = normalized.startswith(f"{_WORKSPACE_ROOT}/")
+    is_deepagents_edit_tmp = normalized.startswith(_DEEPAGENTS_EDIT_TMP_PREFIX)
+    if normalized == _WORKSPACE_ROOT or not (is_workspace_file or is_deepagents_edit_tmp):
+        raise PermissionError(
+            f"path must be inside {_WORKSPACE_ROOT} or a DeepAgents edit temp file: {path!r}"
+        )
     name = posixpath.basename(normalized)
     if not name:
         raise ValueError(f"invalid file path: {path!r}")
@@ -99,6 +105,12 @@ class DockerSandbox(BaseSandbox):
     def close(self) -> None:
         self._remove_quietly()
 
+    def __enter__(self) -> DockerSandbox:
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:  # noqa: ANN001
+        self.close()
+
     def idle_seconds(self) -> float:
         return time.monotonic() - self._last_used
 
@@ -124,7 +136,10 @@ class DockerSandbox(BaseSandbox):
         responses: list[FileUploadResponse] = []
         for path, content in files:
             try:
-                target_path = _workspace_file_path(path)
+                if len(content) > _MAX_UPLOAD_BYTES:
+                    responses.append(FileUploadResponse(path=path, error="invalid_path"))
+                    continue
+                target_path = _sandbox_file_path(path)
                 directory = posixpath.dirname(target_path)
                 encoded = base64.b64encode(content).decode("ascii")
                 script = (
@@ -153,7 +168,7 @@ class DockerSandbox(BaseSandbox):
         responses: list[FileDownloadResponse] = []
         for path in paths:
             try:
-                target_path = _workspace_file_path(path)
+                target_path = _sandbox_file_path(path)
             except Exception as exc:
                 responses.append(
                     FileDownloadResponse(
