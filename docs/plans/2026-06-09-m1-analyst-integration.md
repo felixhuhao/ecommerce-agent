@@ -396,10 +396,15 @@ from ecommerce_agent.agents import build_sales_analyst, sales_analyst_subagent
 
 
 def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch):
+    from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
+
     captured = {}
 
-    def fake_build_agent(model, tools, *, system_prompt, backend, **kwargs):
-        captured.update(model=model, tools=tools, system_prompt=system_prompt, backend=backend)
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model, tools=tools, system_prompt=system_prompt,
+            backend=backend, middleware=list(middleware),
+        )
         return "ANALYST"
 
     monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
@@ -416,6 +421,9 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch):
     assert captured["backend"] is backend
     assert [t.name for t in captured["tools"]] == ["order_query", "get_statistics", "generate_visualization"]
     assert "read-only" in captured["system_prompt"].lower()
+    # bounded self-debug retry (R3/R5): per-run model + tool call limits prevent runaway loops
+    mw_types = {type(m).__name__ for m in captured["middleware"]}
+    assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= mw_types
 
 
 def test_sales_analyst_subagent_seam_shape():
@@ -443,6 +451,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
@@ -453,6 +462,19 @@ _ANALYST_DESCRIPTION = (
     "Read-only sales analyst: queries business data, runs sandboxed analysis when "
     "computation is needed, and produces chart specs."
 )
+
+# Bounded self-debug retry (R3/R5): cap model + tool calls per run so a looping
+# analyst (e.g. repeatedly retrying broken sandbox code) ends gracefully instead of
+# burning the budget. Generous vs the ~6-12 calls of the hero flow; configurable later.
+_MAX_MODEL_CALLS_PER_RUN = 25
+_MAX_TOOL_CALLS_PER_RUN = 40
+
+
+def _reliability_middleware() -> list[Any]:
+    return [
+        ModelCallLimitMiddleware(run_limit=_MAX_MODEL_CALLS_PER_RUN, exit_behavior="end"),
+        ToolCallLimitMiddleware(run_limit=_MAX_TOOL_CALLS_PER_RUN, exit_behavior="end"),
+    ]
 
 
 def build_sales_analyst(
@@ -466,6 +488,7 @@ def build_sales_analyst(
 
     No coordinator and no `subagents` in M1 — with one specialist a coordinator only
     adds serial model calls. The coordinator seam is `sales_analyst_subagent` below.
+    Call-limit middleware bounds self-debug retries so loops end gracefully.
     """
     tools = list(spring_read_tools) + list(viz_tools)
     return build_agent(
@@ -473,6 +496,7 @@ def build_sales_analyst(
         tools,
         system_prompt=get_prompt("sales_analyst"),
         subagents=[],
+        middleware=_reliability_middleware(),
         skills=[],
         backend=backend,
     )
@@ -779,6 +803,73 @@ git commit -m "test(live): single-run hero flow smoke (opt-in)"
 
 ---
 
+## Task 9: Low LLM temperature (reliability)
+
+Determinism control (R6/R3): analytical + codegen steps want consistency, not creativity. Set a
+low default temperature on the primary model.
+
+**Files:**
+- Modify: `src/ecommerce_agent/config.py`
+- Modify: `src/ecommerce_agent/models.py`
+- Test: `tests/test_config.py`, `tests/test_models.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_config.py`:
+```python
+def test_llm_temperature_defaults_low() -> None:
+    assert Settings(_env_file=None).llm_temperature == 0.1
+```
+
+Create `tests/test_models.py`:
+```python
+from ecommerce_agent.config import Settings
+from ecommerce_agent.models import get_primary_model
+
+
+def test_primary_model_uses_configured_low_temperature():
+    settings = Settings(_env_file=None, llm_api_key="test-key", llm_temperature=0.1)
+    model = get_primary_model(settings)
+    assert model.temperature == 0.1
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `uv run pytest tests/test_config.py::test_llm_temperature_defaults_low tests/test_models.py -v`
+Expected: FAIL — `llm_temperature` field and the model wiring don't exist yet.
+
+- [ ] **Step 3: Add the setting and wire it**
+
+In `src/ecommerce_agent/config.py`, in `Settings` next to the other `llm_*` fields:
+```python
+    llm_temperature: float = Field(default=0.1, ge=0)
+```
+
+In `src/ecommerce_agent/models.py`, pass it in `get_primary_model`'s `ChatOpenAI(...)` call:
+```python
+    return ChatOpenAI(
+        model=settings.llm_model,
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        temperature=settings.llm_temperature,
+        streaming=True,
+    )
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `uv run pytest tests/test_config.py tests/test_models.py -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ecommerce_agent/config.py src/ecommerce_agent/models.py tests/test_config.py tests/test_models.py
+git commit -m "feat(models): low default LLM temperature for analytical determinism"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
@@ -787,6 +878,8 @@ git commit -m "test(live): single-run hero flow smoke (opt-in)"
 - §6 YAML prompts + helper reference + data boundary → Task 2. ✅
 - §7 hero data-flow exercised by the live smoke → Task 8. ✅
 - backend ownership/lifecycle (build at startup, close at shutdown) → Task 6. ✅
+- Reliability controls: bounded self-debug retry via call-limit middleware (Task 5) + low LLM
+  temperature (Task 9) — realizes the R3/R5/R6 mitigations rather than leaving them aspirational. ✅
 - Deferred correctly to Plan 3: trace module, N-run eval harness, SSE-renders-trace.
 
 **Placeholder scan:** None. The prompt and helper reference are full text; all code steps complete.
