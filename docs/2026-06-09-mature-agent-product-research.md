@@ -50,7 +50,7 @@ commerce operations assistant:
 | OpenAI Agents SDK | Agents have tools, handoffs, guardrails, sessions, streaming, tracing, and human-review paths. Handoffs delegate to specialist agents. | Our coordinator -> specialist structure is normal. We should keep explicit traces and live smoke gates because SDK/runtime event shapes matter. |
 | Microsoft agent architecture | Recommends platform-native orchestration for internal subagents, MCP for secure tool/data access, A2A for cross-platform peer agents, least privilege, auditability, typed payloads, and governance. | MCP is the correct tool/data protocol now. A2A is future-facing only when we integrate external peer agents. |
 | Google ADK | Frames mature agent applications as multi-agent, multi-node workflows, mixing AI agents with deterministic graph/workflow nodes for predictability and reliability. | For HITL and writes, do not rely on agent-only loops. Use deterministic backend approval and execution nodes. |
-| Salesforce Agentforce | Subagents own their actions; actions can be deterministic or exposed to the LLM as tools; action metadata includes confirmation and output/context controls. | Give each sub-agent its own tool/action set. Do not share write tools broadly. Treat confirmation as action metadata/policy, not just prompt text. |
+| Salesforce Agentforce | Subagents own their actions; actions can be deterministic or exposed to the LLM as tools; action metadata includes confirmation and output/context controls. | Give each sub-agent its own tool/action set. Do not share write-capable actions broadly. Treat confirmation as action metadata/policy, not just prompt text. |
 | ServiceNow AI Agents | Separates `securityAcl` from execution identity/data access; recommends built-in/reference tools before scripts; supports MCP among many tool types. | Keep trusted user/session identity in headers/context. Keep Java business services authoritative; use generated scripts only for sandbox analysis. |
 | Atlassian Rovo | Agents have specialized objectives, knowledge sources, tools, permissions/governance, usage tracking, subagents, and automation integrations. | Product needs agent registry/governance eventually, but first needs visible tool traces and permission boundaries. |
 | Shopify Sidekick | Commerce assistant works in store context, can analyze/manage/admin tasks, works in the background for longer tasks, and presents changes for review before applying them. | This is the closest commerce-product signal: analysis and admin action are both valuable, but changes need review before execution. |
@@ -66,7 +66,8 @@ commerce operations assistant:
 Keep the sub-agent list short and permission-driven:
 
 - **Now:** `sales-analyst` because read-only analysis has a distinct tool set and context shape.
-- **Next:** `order-manager` only when HITL, checkpoint/resume, and audit records are implemented.
+- **Next:** `order-manager` only when `request_approval`, deterministic execute-by-`approval_id`,
+  and audit records are implemented. LangGraph checkpoint/resume is not required for write safety.
 - **Later:** `customer-insight`, `procurement-planner`, or `catalog-manager` only when each has
   dedicated tools, permissions, and artifacts.
 
@@ -91,8 +92,10 @@ The commerce/admin product analogy is strongest here:
 - Read operations are low risk and can execute directly.
 - Write proposals require server-rendered approval cards.
 - Approval must not be an MCP tool.
-- Approved writes must be one-time use, actor/session-bound, expiring, hash-validated, and
-  rechecked against live preconditions.
+- Approved writes should execute through a deterministic backend endpoint keyed by `approval_id`,
+  loading the stored canonical payload rather than accepting write params from the LLM.
+- Approved writes must be one-time use, actor/session-bound, expiring, hash-validated,
+  transaction/lock-protected, and rechecked against live preconditions.
 - Batch/delete operations need a higher approval tier and should stay deferred.
 
 ### 4.4 Artifacts And Operator Console
@@ -147,8 +150,9 @@ Memory and skills are not rejected, but they should be sequenced carefully:
    artifact. Do not sneak in order-manager writes.
 2. **M1.5 is artifact depth.** File upload and Markdown reports are useful if the sandbox path
    lands cleanly.
-3. **M2 is action workflow.** Order-manager, HITL, checkpoints, approval cards, and audit trail
-   should land together.
+3. **M2 is approved action workflow.** Order-manager, `request_approval`,
+   execute-by-`approval_id`, approval cards, and audit trail should land together. Checkpoints are
+   for conversation continuity, not write safety.
 4. **M3 is operator console.** Traces, artifacts, approvals, and health surfaces are core product
    UX, not late polish.
 5. **M4 is hardening.** Multi-user permissions, prompt/model/tool versioning, evaluation suite,
@@ -162,7 +166,8 @@ Memory and skills are not rejected, but they should be sequenced carefully:
 - Should the first operator console be built before or after HITL, given that approval cards need a
   UI anyway?
 - Should the sandbox support persistent Python kernel state in M1.5, or is filesystem state enough?
-- What is the minimum audit schema that can survive future write tools and multi-user permissions?
+- What is the minimum audit schema that can survive future approved operations and multi-user
+  permissions?
 - Do we need a formal agent/tool registry before adding the third domain agent?
 
 ## 7. Sources

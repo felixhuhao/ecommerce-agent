@@ -30,14 +30,17 @@ Milestones are the canonical roadmap vocabulary; week labels describe implementa
 **Deferred by milestone:**
 - **M1.5 artifact depth:** file upload (`POST /api/upload`) + `read_uploaded_file` +
   `write_report` — sandbox-only, can land after the sandbox path is stable; no HITL needed.
-- **M2 approved operational actions:** `order-manager` sub-agent + write tools
-  (`purchase_order_create`, `purchase_order_receive`, `order_update`, `request_approval`) —
-  requires HITL, checkpoint/resume, approval cards, and audit records.
+- **M2 approved action workflow:** `order-manager` sub-agent with **reads + `request_approval`
+  only** (no write tools in the LLM's hands). Propose → human-approve (REST) → **deterministic
+  backend executor keyed by `approval_id`**; the pending action is a durable MySQL `approval_record`
+  (no LangGraph interrupt/resume, no MongoDB checkpoint for write safety). Requires the Java
+  companion change (execute-by-`approval_id`; parent §5.2).
 - **M4 product hardening:** skills/memory middleware, `web_search`, `assign_skill`, preferences,
   and long-lived memory — requires governance, session isolation, and audit policy.
 
-**Deferred infrastructure:** MongoDB checkpoint, `ContextVar` session isolation, and
-`CompositeBackend` routing for `/memories` + `/skills` land when M2/M4 requires them, not in M1.
+**Deferred infrastructure:** MongoDB checkpoint (conversation continuity only, *not* write safety),
+`ContextVar` session isolation, and `CompositeBackend` routing for `/memories` + `/skills` land when
+M2/M4 requires them, not in M1.
 
 **Out of scope:** the operator console milestone — Week 2 verifies a chart *spec* is produced;
 rendering belongs to the UI/artifact surface later.
@@ -100,7 +103,7 @@ No `session/`, custom `middleware/`, or `checkpoint/` modules yet — those are 
 |-------------------|-----------|------|-------|
 | file upload / reports | M1.5 artifact depth | sandbox upload/read/report tools | `sandbox/`, product API, artifact seam |
 | `web_search` | M4 product hardening | coordinator `tools` | append one `BaseTool` |
-| order-manager | M2 approved actions | a `SubAgent` with write `tools` + `interrupt_on` | `agents.py` factory + `subagents` |
+| order-manager | M2 approved actions | a `SubAgent` with **reads + `request_approval` only** (no write tools, no `interrupt_on`); writes run in a deterministic backend executor by `approval_id` | `agents.py` factory + `subagents`; executor + Java companion change |
 | skills / `assign_skill` | M4 product hardening | `skills=` + skills middleware | `build_agent` params |
 | memory | M4 product hardening | `middleware=` + `CompositeBackend` | `build_agent` params |
 

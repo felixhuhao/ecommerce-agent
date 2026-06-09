@@ -39,8 +39,10 @@ Detailed notes and source links live in
 
 - **Sub-agent rule:** add a sub-agent only for a distinct permission set, tool set, context budget,
   or workflow phase.
-- **Write rule:** no write-capable agent is enabled until server-enforced HITL, checkpoint/resume,
-  and audit records are in place.
+- **Write rule:** the LLM never holds write tools. Agents *propose* via `request_approval`; risky
+  writes execute only through a server-enforced, human-approved, **deterministic backend executor**
+  keyed by `approval_id`, with audit records in place. No suspended-agent checkpoint/resume is
+  required for write safety — the pending action is a durable MySQL `approval_record`.
 - **Artifact rule:** if the result will be reused, reviewed, approved, downloaded, or rendered, make
   it an artifact with an id and ownership/session metadata.
 - **Backend authority rule:** SpringBoot owns business writes, approval validation, actor/session
@@ -81,28 +83,41 @@ Cut line:
 - Do not enable `order-manager` writes here.
 - File upload/report generation may be M1.5 if the sandbox path is stable.
 
-### M2. Approved Operational Actions
+### M2. Approved Action Workflow
 
-Goal: let agents propose and execute business actions under explicit human control.
+Goal: let agents *propose* business actions that a human approves and the backend executes — under
+explicit human control, with the LLM structurally unable to write.
 
 Capabilities:
-- `order-manager` sub-agent with scoped read/write tools.
-- MongoDB checkpoint/resume for interrupted HITL flows.
+- `order-manager` sub-agent with **reads + `request_approval` only** (no write tools in the LLM's
+  hands).
+- **Propose → approve → execute**, with a durable MySQL `approval_record` as the pending-action
+  lifecycle (`pending → approved → consumed`/`rejected`/`expired`/`invalidated`/`failed`). No
+  MongoDB checkpoint/resume on the write path.
 - `request_approval` creates server-rendered cards from canonical operation payloads.
-- Human approve/reject lives on REST endpoints, never as MCP tools.
-- Write tools validate `approval_id`, operation hash, actor/session, expiry, one-time use, and live
-  preconditions before execution.
+- Human approve/reject lives on REST endpoints, never as MCP tools; **approve only flips status, it
+  does not execute**. Execution is an explicit backend endpoint, e.g.
+  `POST /approvals/{approval_id}/execute`.
+- **Deterministic backend executor keyed by `approval_id`**: SpringBoot loads the stored canonical
+  payload and executes from it in a transaction/row lock (the LLM never re-issues write params),
+  validating approval status, hash integrity, actor/session, expiry, one-time use, and live
+  preconditions.
 - Audit record links conversation, approval, canonical payload, execution result, and tool trace.
+- **Requires the Java companion change** (execute-by-`approval_id`; remove write `@McpTool`s from
+  the agent surface) — tracked in §5.
 
 Acceptance:
-- Agent can propose a purchase order but cannot execute it before approval.
-- Approval card can be approved/rejected from the operator console.
-- A changed payload or changed live DB precondition forces a fresh approval.
-- One approval cannot be replayed.
+- Agent can propose a purchase order but holds no tool capable of executing it.
+- Approval card can be approved/rejected from the operator console; approving does not auto-execute,
+  and a separate execute call can be retried/idempotently reported.
+- A changed live DB precondition between approval and execution forces a fresh approval.
+- One approval cannot be replayed or double-spent.
 
 Cut line:
 - No batch/delete tools until double-confirm + impact preview exists.
 - No self-learning skills that affect write behavior.
+- LangGraph `interrupt()`/resume is **not** in scope here; if a mid-conversation pause UX is ever
+  wanted, it is polish layered on top of the durable-approval model, never load-bearing for safety.
 
 ### M3. Operator Console
 
@@ -149,7 +164,15 @@ Acceptance:
    prompts YAML -> agent factory/sub-agent wiring -> sandbox backend boundary -> visualization seam
    -> SSE/tool-event assertions -> live smoke.
 3. **After Week 2 / M1, decide M1.5 vs M2.**
-   If artifacts feel weak, add upload/report. If action workflow is more important, start HITL.
+   If artifacts feel weak, add upload/report. If the action workflow is more important, start M2
+   (Approved Action Workflow).
+4. **M2 has a cross-repo prerequisite (sibling `ecommerce-mcp-server`).** Today the Java write tools
+   are agent-reachable `@McpTool`s that take `approval_id` + params and rehash incoming params. M2's
+   execute-by-`approval_id` model requires a Java companion change: a backend
+   `POST /approvals/{approval_id}/execute` path that loads the stored canonical payload, and removal
+   of the write `@McpTool`s from the agent-reachable surface. Update the Java spec
+   (`docs/2026-06-05-ecommerce-mcp-server-spec.md` §4) before/with M2 implementation. (Not yet
+   applied; the Java repo is untouched.)
 
 ## 6. Deferred Or Stretch Features
 
@@ -161,3 +184,30 @@ Acceptance:
 - Batch/delete operations.
 
 These are useful only after the product has strong trust, artifact, and approval foundations.
+
+## 7. Risks & Mitigations
+
+**Profile note.** The propose→approve→execute redesign (§3 write rule, M2) *retired* the largest
+prior risk — the suspended-graph HITL (LangGraph `interrupt()`/resume + MongoDB-checkpoint-for-write
+-safety + LLM reproducing write params). It *introduced* one new risk (R8, the approve↔execute
+window). Net: the risk profile is better, but shifted.
+
+Ranked by likelihood × impact for a **solo build pursuing both product and portfolio** goals.
+
+| # | Risk | L×I | Mitigation |
+|---|------|-----|-----------|
+| R1 | **Scope vs solo throughput.** Product framing raises the "done" bar (console, RBAC, audit search, eval, packaging); likely outcome is M1–M2 done well and M3–M4 perpetually in progress, or endless M1 polish that never reaches the crown jewel. | High×High | Hero demo pulls the roadmap; timebox M1; M3/M4 as thin slices; depth over breadth; resist new domain agents/connectors. |
+| R2 | **Latency & context/token bloat.** Coordinator→sub-agent→MCP→sandbox→viz is many model calls + round-trips; the demo feels slow and context bloats, degrading quality. | Med-High×Med-High | Call-limit + summarization middleware; prefer `get_statistics` over raw rows; stream early tokens; budget hop count. |
+| R3 | **Demo non-determinism.** Agent nails the hero flow ~8/10; a 1-in-5 live failure is brutal. | Med×High | Hardened, rehearsed golden path; constrained prompts; retries on tool/codegen failure; known-good fallback query. |
+| R4 | **Framework/version drift.** `deepagents 0.6.8`, LangGraph, Spring AI MCP `2.0.0-M8` (pre-release); event shapes / `SubAgent` schema / backend protocol can shift; real stream path only covered by opt-in live test. | High×Med-High | Hard-pin versions; dependency-bump live-smoke gate (§3); one thin adapter around DeepAgents event shapes. |
+| R5 | **Observability + eval blind spot.** Operator traces (M1/M3) are both differentiator and debugging aid; without an eval harness (M4) prompt/model tweaks degrade routing/tool-choice silently. | Med×High | Pull a thin trace+eval slice forward; structured trace with correlation ids; a small golden-set eval before prompt/model changes. |
+| R6 | **Agent/model quality.** `deepseek-chat` doing multi-step orchestration + codegen + valid chart spec + correct HITL behavior reliably. | Med×High | Exercise the real model on the hero flow early; model is configurable (use a stronger one for demos); constrain each sub-agent's task surface. |
+| R7 | **Live-demo dependency fragility.** ModelScope (unconfirmed), DeepSeek (limits/outages), external Java server, MySQL, Mongo — each a break point; "reliability is impressiveness." | Med×High | A real fallback per critical-path dep (viz seam is the model); health-gate before demos; add Mongo only when HITL/continuity needs it. |
+| R8 | **Approve↔execute limbo + two-turn coherence** *(new from the redesign)*. A window where an approval is `approved` but `execute` then fails → limbo; and the execution result must re-enter the conversation the user is watching. | Med×Med-High | Idempotent executor; explicit `failed`/`invalidated` status + re-execute path; design where the result re-enters the thread before building M2. |
+| R9 | **Agent numbers vs authoritative `get_statistics`.** Self-computed pandas aggregates can mis-join or use the wrong status filter and disagree with canonical stats — confidently wrong. | Med×Med-High | Route headline figures through `get_statistics`; use the sandbox only for derivations stats don't cover; prompt prefers authoritative tools. |
+| R10 | **Sandbox robustness/security.** `docker.sock` ≈ host root; container leaks/zombies, timeout-not-killing, fork pressure, WSL2 quirks. | Med×Med-High | Dedicated sandbox test matrix; reaper + concurrency cap; the `BaseSandbox` seam lets a managed/remote executor remove the `docker.sock` privilege later. |
+| R11 | **Prompt injection via business data.** Review/product/customer text can carry instructions; the agent can call `request_approval`. | Med×Med | Human-approval gate is the backstop; `--network none` blocks sandbox exfil; frame untrusted data as data, treat review/customer text as tainted. |
+| R12 | **Audit/artifact schema lock-in.** Must "survive future approved operations + multi-user permissions"; getting it wrong forces migration. | Med×Med | Design the *minimal* audit/artifact schema deliberately before M2 writes, even if thin. |
+| R13 | **Two-repo coordination / regressing the "done" Java server.** The execute-by-`approval_id` companion change reopens tested approval enforcement; two specs + two test suites to keep in sync. | Med×Med | Treat the Java change as its own reviewed slice; re-run the negative-case matrix; keep the two specs cross-linked. |
+
+**Top to watch:** R1 (throughput) and R3 (demo reliability) for the portfolio goal; R8 (approve↔execute) for the product goal; R5 (no eval/trace) is the silent one that makes the rest harder to catch.

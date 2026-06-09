@@ -67,7 +67,8 @@ Main Agent (primary reasoning model)
   │                         │
   ▼                         ▼
 sales-analyst          order-manager
-(readonly tools)       (write tools + HITL)
+(readonly tools)       (reads + request_approval;
+                        backend executes approved writes)
   │                         │
   │    MCP (SSE)            │    MCP (SSE)
   ▼                         ▼
@@ -128,13 +129,13 @@ Decision rule: Agent only passes parameters → virtual path; Agent writes code 
 
 ### 2.3 Session Isolation
 
-Use Python `ContextVar` for asyncio coroutine-level isolation. Each user session gets a unique UUID and dedicated directory. MongoDB handles checkpoint persistence for HITL interrupt/resume across restarts.
+Use Python `ContextVar` for asyncio coroutine-level isolation. Each user session gets a unique UUID and dedicated directory. MongoDB handles checkpoint persistence for **conversation continuity** across restarts (not write safety — approved actions are durable MySQL `approval_record`s, §5.2).
 
 `ContextVar` only isolates within a single coroutine context — it does **not** automatically protect shared singletons. The session UUID must be propagated explicitly to every boundary that leaves the request coroutine:
 
 - **WebSocket tasks** and **background jobs** — set the ContextVar at task entry; spawned tasks don't inherit it for free.
-- **MCP clients** — propagate session/user identity as trusted request metadata (service-authenticated headers/JWT/session binding), not as Agent-controlled tool parameters. `request_approval` and write tools bind to this trusted identity — see §5.2.
-- **Checkpoint `thread_id`** — derive from the session UUID so HITL resume targets the correct conversation.
+- **MCP clients** — propagate session/user identity as trusted request metadata (service-authenticated headers/JWT/session binding), not as Agent-controlled tool parameters. `request_approval` and the backend execution path bind to this trusted identity — see §5.2.
+- **Checkpoint `thread_id`** — derive from the session UUID so conversation continuity targets the correct thread.
 - **Sandbox directories** — namespace under `{session_id}` (uploads, reports, skills) and never accept client-supplied paths.
 - **Cleanup** — define when a session's sandbox dir / checkpoints are reaped (e.g. TTL or on session close) to avoid unbounded growth and stale-state leakage.
 
@@ -146,8 +147,8 @@ Database: `ecommerce_db` (MySQL)
 
 Two distinct order documents, as in real ops systems: **customer sales orders** (`orders`,
 **read-mostly** — queried for analytics, with fulfillment-status updates allowed only via the
-approved `order_update` tool) and **supplier purchase orders** (`purchase_order`, the write path
-for restocking). They have different lifecycles and must not be conflated.
+approved `order_update` operation) and **supplier purchase orders** (`purchase_order`, the approved
+action path for restocking). They have different lifecycles and must not be conflated.
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
@@ -186,14 +187,15 @@ customers pay).
 - 30+ users with different levels
 - 10+ suppliers with varying ratings
 - A few historical purchase orders (received) so analytics has procurement history; new POs
-  are created live through the order-manager write flow
+  are created live through the order-manager approved action flow
 
 ## 4. Agent Architecture
 
 Product rule: use sub-agents for **permission, tool, context, or workflow boundaries**. A
 sub-agent earns its existence when it narrows what the model can see or do, or when it owns a
 distinct phase of work. The first mature boundary is read-only analysis (`sales-analyst`). The
-write-capable `order-manager` should not be enabled until HITL/checkpoint enforcement exists.
+action-proposing `order-manager` (reads + `request_approval`, never write tools) should not be
+enabled until the approval workflow + deterministic backend executor exist (§5.2).
 
 ### 4.1 Main Agent
 
@@ -249,25 +251,26 @@ Typical tasks:
 ### 4.3 Sub-Agent: order-manager
 
 Role: Order management specialist. Handles **procurement** (supplier purchase orders) and
-**customer order fulfillment**. Write access with mandatory HITL. All tools are SpringBoot
-business tools (see §8.3).
+**customer order fulfillment**. It can **propose** writes, but it holds **no write tools** — it
+analyzes, then calls `request_approval`. Execution happens in a deterministic backend executor
+after human approval (§5), never from the LLM.
 
-Reads:
+Tools (reads + propose only — all SpringBoot business tools, see §8.3):
 - `purchase_order_query` — query supplier purchase orders (read)
 - `order_query` — query customer sales orders (read)
 - `inventory_query` — check stock before ordering (read)
 - `supplier_query` — look up a supplier for a PO (read)
+- `request_approval` — propose a write; SpringBoot builds the canonical payload + server-rendered
+  card and returns an `approval_id` (§5)
 
-Writes (each requires HITL):
-- `purchase_order_create` — create a supplier purchase order (restock)
-- `purchase_order_receive` — mark a PO received → increment inventory
-- `order_update` — update a customer order's fulfillment status (e.g. shipped, cancelled)
-- `request_approval` — trigger HITL approval workflow
+> **The LLM never receives `purchase_order_create`, `purchase_order_receive`, or `order_update`
+> as tools.** Those are write operations executed deterministically by the backend from the stored
+> approval payload (§5.2), keyed by `approval_id`. The model proposes; the backend executes.
 
-Typical tasks:
-- "Restock 500 phone cases from supplier A" → `purchase_order_create`
-- "Mark PO #88 as received" → `purchase_order_receive` (inventory +500)
-- "Change order #12345 status to shipped" → `order_update`
+Typical tasks (each ends in a *proposal*, then human approval, then backend execution):
+- "Restock 500 phone cases from supplier A" → proposes `purchase_order_create`
+- "Mark PO #88 as received" → proposes `purchase_order_receive` (inventory +500 on execute)
+- "Change order #12345 status to shipped" → proposes `order_update`
 
 > Bulk cancellation ("cancel all pending orders older than 30 days") is a High-risk batch
 > operation — post-MVP (see §5.1). Not in the initial tool set.
@@ -300,38 +303,65 @@ All agent prompts stored in `prompt/prompts.yml` (not hardcoded in Python). Load
 | Delete | High | Show impact scope + double confirm | "Delete all expired orders" | ⬜ post-MVP |
 | Batch | High | Show impact scope + double confirm | "Cancel all pending orders >30 days" | ⬜ post-MVP |
 
-The MVP write tools (§8.3) cover Create + Modify only. Delete and Batch are documented here so
-the approval framework anticipates them, but no MVP tool performs them — add `order_cancel`
-(batch) and any delete tool with the double-confirm flow when needed.
+The MVP approved operations (§8.3) cover Create + Modify only. Delete and Batch are documented here
+so the approval framework anticipates them, but no MVP operation performs them — add
+`order_cancel` (batch) and any delete operation with the double-confirm flow when needed.
 
-### 5.2 Implementation Flow (Server-Enforced Approval)
+### 5.2 Implementation Flow (Propose → Approve → Backend Execute)
 
-Write operations are **server-enforced**, not prompt-based. SpringBoot rejects any write request without a valid `approval_id`.
+Write operations are **server-enforced**, not prompt-based — and the enforcement is a **durable
+approval record**, not a suspended agent run. The flow separates *authority* (a human must approve
+risky writes) from *mechanism* (how the system waits between proposal and execution). The LLM can
+**propose**; it cannot approve, cannot execute, and never re-issues write params. Each agent turn
+completes normally — there is **no LangGraph `interrupt()`/resume and no checkpoint of a paused
+graph** on the write path.
 
 ```
-Agent wants to create a PO / receive a PO / update a customer order
-→ Agent calls request_approval(tool_name, operation_params)   ← structured params only, no prose/identity
+Turn 1 — PROPOSE (agent):
+→ Agent (order-manager) calls request_approval(tool_name, operation_params)   ← structured params only, no prose/identity
 → SpringBoot resolves trusted user_id/session_id from request metadata
 → SpringBoot reads live DB rows and builds canonical operation_payload =
   operation_params + server-derived preconditions/snapshot
   (e.g. current order/PO status, inventory quantity, supplier/product/unit cost)
 → SpringBoot computes operation_hash AND renders the human-facing card (summary/diff/impact)
   from the canonical payload + live DB state — the Agent never authors what the human sees
-→ creates pending approval_record (bound to user_id + session_id + tool_name)
-→ Agent execution interrupted with {approval_id} → MongoDB checkpoint persists interrupt state
-→ Frontend fetches the server-rendered card via GET /approvals/{id} and displays it
-→ Human approves via POST /approvals/{id}/approve  (authenticated, NOT an MCP tool)
-  → Server marks approval_id as approved
-  → Resume from checkpoint → Agent receives approval_id
-→ Agent calls write tool with approval_id + same operation params
-→ SpringBoot re-derives trusted identity + current DB preconditions, then validates the Java spec §4 contract (exists+approved, hash, tool/actor/session,
-  not expired, one-time use)
-  → Valid → execute operation, mark consumed
-  → Invalid → reject with error
-→ Human rejects via POST /approvals/{id}/reject → Agent receives rejection reason → responds
+→ creates PENDING approval_record (bound to user_id + session_id + tool_name)
+→ returns {approval_id} to the agent → the agent's turn ENDS NORMALLY
+  ("Proposed PO #123 — pending your approval.")
+
+HUMAN — APPROVE (REST, not MCP, not the agent):
+→ Frontend/FastAPI fetches the server-rendered card via GET /approvals/{id} and displays it
+→ Human approves via POST /approvals/{id}/approve   (authenticated; NEVER an MCP tool)
+  → Server marks approval_id as approved   (approve only flips status; it does NOT execute)
+→ or rejects via POST /approvals/{id}/reject  (reason persisted)
+
+BACKEND EXECUTE — deterministic, keyed by approval_id (no LLM, no write params from the agent):
+→ After approval, Frontend/FastAPI calls POST /approvals/{id}/execute against SpringBoot
+→ SpringBoot LOADS the canonical operation_payload from approval_record (it is the source of truth)
+→ re-derives trusted identity + current DB preconditions, then validates the Java spec §4 contract
+  (exists + approved, hash integrity, tool/actor/session binding, not expired, one-time use,
+   live preconditions unchanged)
+  → Valid → execute the operation from the stored payload in a DB transaction, mark consumed
+  → Invalid (e.g. preconditions drifted) → mark invalidated; a fresh approval is required
+  → Execution error after validation → mark failed with execution_result for audit/retry policy
 ```
 
-**Why operation_hash:** Prevents the Agent from modifying the operation payload after approval. The hash is computed from the exact, canonically-serialized authorization payload before the approval card is shown: Agent operation params plus server-derived DB preconditions/snapshot. If the Agent sends different parameters, or if relevant DB state changes before execution, SpringBoot rejects it and requires a fresh approval.
+The pending action lives as a **first-class `approval_record` in MySQL** with its own lifecycle
+(`pending → approved → consumed` / `rejected` / `expired` / `invalidated` / `failed`). Because the
+"wait" is a durable row, not an in-memory suspended coroutine, it survives restarts trivially —
+**no MongoDB checkpoint is required for write safety**.
+
+**Why a deterministic backend executor (the LLM never executes):** the agent's tool set contains
+`request_approval` and reads only — not write operations. Execution is a backend operation keyed by
+`approval_id` that reads the stored canonical payload. The model literally cannot perform a write,
+and cannot tamper with one after approval, because it never supplies the execution params.
+
+**Why operation_hash (role under this model):** the hash binds the stored authorization to exactly
+what the human saw, and provides an integrity check of the `approval_record`. Since the agent never
+re-submits params on execution, the old "agent changes params between two calls" attack vanishes;
+the hash now guards record integrity, and the live-precondition recheck at execution time guards
+against stale writes (DB state drifting between approval and execution → reject, require a fresh
+approval).
 
 **Why the approve/reject endpoints are not MCP tools:** approval is a *human* action. Exposing it as a tool would let the Agent approve its own requests. It lives on an authenticated REST endpoint the frontend/FastAPI calls on the human's behalf — never in the Agent's tool list. The full Java contract is in the Java spec §4.
 
@@ -341,21 +371,40 @@ Agent wants to create a PO / receive a PO / update a customer order
 CREATE TABLE approval_record (
   approval_id      VARCHAR(36) PRIMARY KEY,
   operation_hash   VARCHAR(64) NOT NULL,        -- canonical hash of operation_payload
-  tool_name        VARCHAR(40) NOT NULL,        -- write tool this approval authorizes
+  tool_name        VARCHAR(40) NOT NULL,        -- operation/capability this approval authorizes
   operation_type   VARCHAR(20) NOT NULL,
   operation_payload JSON NOT NULL,              -- canonical params + server preconditions/snapshot (hashed)
   operation_detail JSON NOT NULL,               -- server-rendered card (from canonical payload + DB; not Agent prose)
   user_id          BIGINT NOT NULL,             -- actor binding
   session_id       VARCHAR(64) NOT NULL,        -- session binding
-  status           VARCHAR(10) NOT NULL DEFAULT 'pending',  -- pending|approved|consumed|rejected|expired
+  status           VARCHAR(12) NOT NULL DEFAULT 'pending',  -- pending|approved|consumed|rejected|expired|invalidated|failed
   created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at       DATETIME NOT NULL,
   consumed_at      DATETIME NULL,               -- one-time use
+  executed_at      DATETIME NULL,
+  execution_result JSON NULL,                   -- result/error summary for audit
   KEY idx_status (status)
 );
 ```
 
-Write tools (`purchase_order_create`, `purchase_order_receive`, `order_update`) take `approval_id` as a parameter. The service layer checks validity before executing: approval exists, `status=approved`, `operation_hash` matches the rebuilt canonical payload (incoming params + current DB preconditions), the trusted request `user_id`/session matches, the approval has not expired, and it has not already been consumed (one-time use). See the Java spec §4 for the full enforcement contract.
+Execution is a backend operation keyed by `approval_id` (`purchase_order_create`,
+`purchase_order_receive`, `order_update` are **not** agent tools). The service layer loads the
+canonical `operation_payload` from `approval_record` and checks validity before executing: approval
+exists, `status=approved`, `operation_hash` integrity holds, the trusted request `user_id`/session
+matches the record, the approval has not expired, it has not already been consumed (one-time use),
+and the pinned live preconditions still hold. See the Java spec §4 for the full enforcement contract.
+Execution must claim the approval under a database transaction/row lock and transition away from
+`approved` atomically before or during execution, so two execute requests cannot double-spend the
+same approval.
+
+> **Java companion change (tracked, sibling repo).** The implemented Java server currently exposes
+> the write tools as `@McpTool`s that take `approval_id` **+ params** and rebuild the hash from the
+> *incoming* params (Java spec §4.3). This design moves to **execute-by-`approval_id`**: the backend
+> loads the stored canonical payload and executes from it, dropping incoming params. That requires
+> a companion update to `ecommerce-mcp-server` (a backend
+> `POST /approvals/{approval_id}/execute` path, and removing the write `@McpTool`s from the
+> agent-reachable surface). It is a *simplification* of the Java side (no incoming-param mismatch
+> path), tracked in the roadmap, not yet applied.
 
 ## 6. Memory System
 
@@ -363,7 +412,7 @@ Write tools (`purchase_order_create`, `purchase_order_receive`, `order_update`) 
 
 | Layer | Storage | Purpose | Implementation |
 |-------|---------|---------|---------------|
-| Short-term | MongoDB checkpoint | Conversation state, HITL resume | LangGraph checkpointer |
+| Short-term | MongoDB checkpoint | Conversation state / multi-turn continuity (NOT write safety — approvals are durable MySQL records, §5.2) | LangGraph checkpointer |
 | Preferences | `/memories/{user_id}/preferences.md` | Display prefs, business constraints | Virtual path read/write (Markdown) |
 | Skills | `/persisted-skills/` | Agent experience accumulation | Sandbox storage |
 | Guidance | `/AGENTS.md` | Behavior boundaries, compliance | Read-only at startup |
@@ -448,7 +497,9 @@ Agent (DeepAgents)                  MCP Servers
 ### 8.2 MCP Tool Loading (Framework Native)
 
 MCP tools are loaded via `MultiServerMCPClient` (same as ERP_OPENCLAW). The client connects to multiple MCP Servers:
-1. **SpringBoot MCP Server** — business tools (query/create/update) + `request_approval`, exposed via Spring AI `@Tool` over streamable-HTTP/SSE
+1. **SpringBoot MCP Server** — agent-reachable business **read** tools + `request_approval`,
+   exposed via Spring AI `@Tool` over streamable-HTTP/SSE. Write operations live behind the
+   deterministic backend executor keyed by `approval_id`, not in the agent's tool list.
 2. **ModelScope MCP Server** — 26 chart tools + 1 spreadsheet tool
 3. **Python MCP Server** — sandbox / `run_code` / file-parsing tools (Python's native job)
 
@@ -468,16 +519,24 @@ Java server is implemented and live; its authoritative contract is the [Java spe
   same headers; these are deliberately absent from the agent's tool list so the agent cannot approve
   its own request.
 
-### 8.3 MCP Tool List
+### 8.3 SpringBoot Business Capability List
 
-All tools **in this table** are SpringBoot `@Tool` methods exposed directly over MCP (Spring AI);
-the "Service Method" column is the business method each delegates to. Visualization
-(`generate_visualization`) and sandbox tools (`run_code`, `read_uploaded_file`, `write_report`)
-are **not** here — they are served by the ModelScope and Python MCP servers respectively (§8.2).
+This table describes SpringBoot business capabilities and their target agent/backend surface. In
+the target product model, only **Read** tools and `request_approval` are agent-reachable MCP tools.
+The write rows are backend-executed operations keyed by `approval_id`, not tools exposed to the
+LLM. Visualization (`generate_visualization`) and sandbox tools (`run_code`, `read_uploaded_file`,
+`write_report`) are served by the ModelScope and Python MCP servers respectively (§8.2).
 
-Tool names follow a consistent `{domain}_{action}` convention. These are the exact names the sub-agents in §4 reference.
+Tool names follow a consistent `{domain}_{action}` convention.
 
-| MCP Tool | Type | Service Method | Description |
+> **Target model (vs as-built).** Sub-agents reference the **Read** tools + `request_approval`
+> only. The three **Write** rows below (`purchase_order_create`, `purchase_order_receive`,
+> `order_update`) are **not** agent-reachable in the target model — they run in the deterministic
+> backend executor keyed by `approval_id` (§5.2). The implemented Java server currently exposes them
+> as `@McpTool`s taking `approval_id` + params; aligning it (execute-by-`approval_id`, removed from
+> the agent surface) is the tracked Java companion change (§5.2, roadmap §5).
+
+| Capability | Surface | Service Method | Description |
 |----------|------|----------------|-------------|
 | product_query | Read | ProductService.page | Query product catalog with pagination and category filter |
 | product_search | Read | ProductService.search | Search products by name (fuzzy) |
@@ -489,14 +548,18 @@ Tool names follow a consistent `{domain}_{action}` convention. These are the exa
 | supplier_top | Read | SupplierService.findTopSuppliers | List top suppliers by rating and lead time |
 | purchase_order_query | Read | PurchaseOrderService.query | Query supplier purchase orders |
 | get_statistics | Read | StatsService.get | Aggregated business statistics (top sellers = realized sales: paid/shipped/completed) |
-| purchase_order_create | Write | PurchaseOrderService.create | Create a supplier purchase order — restock (requires approval_id) |
-| purchase_order_receive | Write | PurchaseOrderService.receive | Mark PO received → increment inventory (requires approval_id) |
-| order_update | Write | OrderService.update | Update a customer order's fulfillment status (requires approval_id) |
-| request_approval | Write | ApprovalService.create | Build canonical authorization payload (params + server preconditions), create pending approval + server-rendered card, return approval_id |
+| purchase_order_create | Backend execute | PurchaseOrderService.create | Create a supplier purchase order — executed from stored approval payload |
+| purchase_order_receive | Backend execute | PurchaseOrderService.receive | Mark PO received → increment inventory — executed from stored approval payload |
+| order_update | Backend execute | OrderService.update | Update a customer order's fulfillment status — executed from stored approval payload |
+| request_approval | Propose | ApprovalService.create | Agent-reachable proposal tool: build canonical authorization payload, create pending approval + server-rendered card, return approval_id |
 
-### 8.4 SpringBoot MCP Tools (Spring AI)
+### 8.4 SpringBoot Read Tools And Backend Executor (Spring AI)
 
-Business tools are registered directly in SpringBoot with Spring AI's `@Tool` annotation. Spring AI generates the MCP tool schema from the method signature and Javadoc/`@ToolParam`, and the `spring-ai-starter-mcp-server-webmvc` starter exposes them over streamable-HTTP/SSE for the DeepAgents client to connect.
+Read/propose tools are registered directly in SpringBoot with Spring AI's `@Tool` annotation.
+Spring AI generates the MCP tool schema from the method signature and Javadoc/`@ToolParam`, and the
+`spring-ai-starter-mcp-server-webmvc` starter exposes them over streamable-HTTP/SSE for the
+DeepAgents client to connect. Backend write operations stay in the service layer and execute only
+from stored approval payloads keyed by `approval_id`.
 
 ```java
 // tool/ProductTools.java
@@ -517,11 +580,18 @@ public class ProductTools {
 }
 ```
 
-Write tools (`purchase_order_create`, `purchase_order_receive`, `order_update`) validate `approval_id` + `operation_hash` in the service layer before executing (see §5.2). Approval enforcement therefore lives entirely in Java, alongside the writes it guards.
+Write operations (`purchase_order_create`, `purchase_order_receive`, `order_update`) execute in the
+service layer keyed by `approval_id`, loading the stored canonical payload and validating the §5.2
+contract before executing. Approval enforcement lives entirely in Java, alongside the writes it
+guards. **These are not agent-reachable `@McpTool`s in the target model** — they run in the
+deterministic backend executor (§5.2). Aligning the implemented Java server to this is the tracked
+companion change (§5.2, roadmap §5).
 
 ### 8.5 SpringBoot Project Structure
 
-Standard layered architecture, exposing business capability as **MCP tools** (Spring AI) instead of a hand-written REST API. A thin tool layer wraps the existing services.
+Standard layered architecture, exposing read/propose business capability as **MCP tools** (Spring AI)
+instead of a hand-written REST API. A thin tool layer wraps the existing services; approved writes
+execute through the service layer from durable approval records.
 
 - **Tool (MCP layer):** `@Tool`-annotated `@Component` classes. Spring AI derives MCP schemas and serves them over streamable-HTTP/SSE. Thin — delegates straight to services.
 - **Controller (REST layer):** the authenticated approve/reject/read approval endpoints only (human-driven, not MCP). See Java spec §4.4.
@@ -615,7 +685,8 @@ Do not hide tool calls, approval preconditions, or generated artifacts behind a 
 | Real-time comms | WebSocket full-chain monitoring | Deep Search Pro |
 | Streaming output | SSE | ERP_OPENCLAW |
 | Session isolation | ContextVar (coroutine-level) | Deep Search Pro |
-| Session persistence | MongoDB checkpoint | ERP_OPENCLAW |
+| Session persistence | MongoDB checkpoint (conversation continuity only — not write safety, §5.2) | ERP_OPENCLAW |
+| Approved-action lifecycle | Durable MySQL `approval_record` + deterministic backend executor (§5.2) | Product decision |
 | Code execution | DockerSandbox now; managed sandbox/remote executor swappable | Product decision |
 | File operations | CompositeBackend routing | ERP_OPENCLAW |
 | Tool protocol | MCP (Spring AI MCP server + MultiServerMCPClient) | New (replaces FastMCP proxy) |
@@ -645,13 +716,16 @@ Status: Week 1 foundation complete; Week 2 in design.
 - Declarative chart artifact generation through a visualization seam.
 - Operator-visible traces for tools and artifacts.
 
-### Milestone 2: Approved Operational Actions
+### Milestone 2: Approved Action Workflow
 
-- `order-manager` sub-agent with write tools only after HITL is implemented.
-- MongoDB checkpoint/resume for interrupted approval flows.
+- `order-manager` sub-agent with **reads + `request_approval` only** — no write tools in the LLM's
+  hands.
+- Propose → approve → backend-execute, with a **durable MySQL `approval_record`** as the
+  pending-action lifecycle (no MongoDB checkpoint/resume needed for write safety, §5.2).
 - Server-rendered approval cards, canonical operation hashes, one-time-use approvals, expiry, and
   actor/session binding.
-- Write execution through SpringBoot only; no Python-side business writes.
+- **Deterministic backend executor keyed by `approval_id`**: SpringBoot loads the stored canonical
+  payload and executes; the LLM never issues write params. Requires the Java companion change (§5.2).
 
 ### Milestone 3: Operator Console
 
