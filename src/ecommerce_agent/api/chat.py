@@ -90,6 +90,8 @@ async def _agent_sse_events(
     finally:
         if record.ended_at is None:
             record.finish()
+        # M1 keeps only the most recent trace for dev/eval inspection. Concurrent
+        # requests are last-writer-wins until M2 adds session/turn-indexed storage.
         request.app.state.last_trace = record
 
 

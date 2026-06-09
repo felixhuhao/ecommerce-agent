@@ -32,6 +32,9 @@ def _text_from_chunk(chunk: Any) -> str:
 
 
 def _parent_span(raw: dict) -> str | None:
+    # LangChain v2 events do not always include parent_ids. M1 keeps the trace
+    # useful even when the span tree is shallow; OTel export can rebuild richer
+    # parentage from framework-specific fields later.
     parents = raw.get("parent_ids") or []
     return parents[-1] if parents else None
 
