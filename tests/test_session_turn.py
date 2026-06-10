@@ -63,6 +63,27 @@ class ApprovalAgent:
         }
 
 
+class MultiStepAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "planning",
+            "data": {"chunk": SimpleNamespace(content="I will try different approaches.")},
+        }
+        yield {"event": "on_tool_start", "name": "order_query", "run_id": "tool", "data": {}}
+        yield {"event": "on_tool_end", "name": "order_query", "run_id": "tool", "data": {}}
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Final operator answer.")},
+        }
+
+
 @pytest.mark.asyncio
 async def test_run_turn_publishes_events_and_appends_answer() -> None:
     store = InMemoryThreadStore()
@@ -84,7 +105,7 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
 
     kinds = [event["event"] for event in seen]
     assert "tool" in kinds
-    assert "token" in kinds
+    assert "token" not in kinds
     assert "thread.append" in kinds
     assert kinds[-1] == "done"
 
@@ -93,6 +114,31 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_does_not_expose_intermediate_model_narration() -> None:
+    store = InMemoryThreadStore()
+    bus = SessionBus()
+    seen: list[dict] = []
+
+    async with bus.subscription("s1") as sub:
+        await run_turn(
+            agent=MultiStepAgent(),
+            message="hello",
+            session_id="s1",
+            turn_id="t1",
+            store=store,
+            bus=bus,
+            recursion_limit=80,
+        )
+        while not sub.queue.empty():
+            seen.append(sub.queue.get_nowait())
+
+    assert [event["event"] for event in seen].count("token") == 0
+    messages = await store.list_messages("s1")
+    assert messages[0].content == "Final operator answer."
+    assert "different approaches" not in messages[0].content
 
 
 @pytest.mark.asyncio

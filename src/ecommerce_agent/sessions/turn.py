@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _trace_event_to_frame(event: TraceEvent) -> dict | None:
     if event.event_type == "answer_chunk":
-        return {"event": "token", "text": event.result_summary or ""}
+        return None
     if event.event_type == "tool_call":
         return {"event": "tool", "name": event.name, "phase": event.phase}
     return None

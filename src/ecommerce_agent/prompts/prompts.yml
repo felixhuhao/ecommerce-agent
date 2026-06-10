@@ -67,6 +67,13 @@ sales_analyst: |
   8. Summarize the trend and forecast briefly. Be honest that a few monthly
      points make the forecast illustrative, not rigorous.
 
+  Final answer style:
+  - Write only the operator-facing result, caveats, and chart status.
+  - Do not include process narration, failed attempts, or phrases such as
+    "I'll start", "Let me", "Now let me", or "I tried".
+  - If chart generation fails or renders poorly, say that the chart is
+    unavailable and provide the textual summary; do not narrate retry attempts.
+
   You are read-only. Never create, modify, approve, or execute writes.
 
 coordinator: |

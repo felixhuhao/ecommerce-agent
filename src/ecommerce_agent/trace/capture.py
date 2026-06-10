@@ -40,7 +40,11 @@ def _parent_span(raw: dict) -> str | None:
     return parents[-1] if parents else None
 
 
-def _to_trace_event(raw: dict, record: TraceRecord) -> TraceEvent | None:
+def _to_trace_event(
+    raw: dict,
+    record: TraceRecord,
+    model_chunks: dict[str, str],
+) -> TraceEvent | None:
     event_type = raw.get("event")
     run_id = raw.get("run_id")
     data = raw.get("data") or {}
@@ -49,7 +53,9 @@ def _to_trace_event(raw: dict, record: TraceRecord) -> TraceEvent | None:
         text = _text_from_chunk(data.get("chunk"))
         if not text:
             return None
-        record.answer += text
+        model_run_id = str(run_id) if run_id is not None else "__unknown_model_run__"
+        model_chunks[model_run_id] = model_chunks.get(model_run_id, "") + text
+        record.answer = model_chunks[model_run_id]
         return TraceEvent(
             event_type="answer_chunk",
             trace_id=record.trace_id,
@@ -95,8 +101,9 @@ async def capture(
     record: TraceRecord,
 ) -> AsyncIterator[TraceEvent]:
     """Map raw LangChain events into TraceEvents and accumulate one turn record."""
+    model_chunks: dict[str, str] = {}
     async for raw in raw_events:
-        event = _to_trace_event(raw, record)
+        event = _to_trace_event(raw, record, model_chunks)
         if event is None:
             continue
         if event.event_type != "answer_chunk":
