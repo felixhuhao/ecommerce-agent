@@ -166,6 +166,32 @@ async def test_capture_extracts_approval_id_before_summarizing_output() -> None:
     assert len(record.events[0].result_summary) < 600
 
 
+async def test_capture_extracts_approval_id_from_wrapped_tool_message() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "run_id": "approval-run",
+            "data": {
+                "output": SimpleNamespace(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": '{"approvalId":"approval-wrapped","status":"pending"}',
+                        }
+                    ]
+                )
+            },
+        }
+
+    record = TraceRecord()
+
+    yielded = [event async for event in capture(raw_events(), record)]
+
+    assert yielded[0].approval_id == "approval-wrapped"
+    assert record.events[0].approval_id == "approval-wrapped"
+
+
 async def test_capture_extracts_chart_artifact_from_modelscope_output() -> None:
     image_src = "data:image/svg+xml;base64,PHN2Zy8+"
 

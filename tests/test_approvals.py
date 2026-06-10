@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from ecommerce_agent.approvals import approval_card, execute_with_retry, extract_approval_id
@@ -32,6 +34,19 @@ def test_extract_approval_id_handles_nested_mcp_text_result() -> None:
     }
 
     assert extract_approval_id(result) == "approval-1"
+
+
+def test_extract_approval_id_handles_wrapped_tool_message_content() -> None:
+    result = SimpleNamespace(
+        content=[
+            {
+                "type": "text",
+                "text": '{"approvalId":"approval-2","status":"pending"}',
+            }
+        ]
+    )
+
+    assert extract_approval_id(result) == "approval-2"
 
 
 @pytest.mark.asyncio

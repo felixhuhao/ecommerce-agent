@@ -142,7 +142,7 @@ def extract_approval_id(value: Any) -> str | None:
             if approval_id:
                 return approval_id
         return None
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         for item in value:
             approval_id = extract_approval_id(item)
             if approval_id:
@@ -153,6 +153,13 @@ def extract_approval_id(value: Any) -> str | None:
         approval_id = getattr(value, attr, None)
         if approval_id:
             return str(approval_id)
+
+    for attr in ("content", "text"):
+        nested = getattr(value, attr, None)
+        if nested is not None:
+            approval_id = extract_approval_id(nested)
+            if approval_id:
+                return approval_id
 
     if not isinstance(value, str):
         return None
