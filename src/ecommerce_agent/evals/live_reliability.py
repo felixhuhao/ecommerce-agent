@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import VIZ_TOOLS, WRITE_OR_APPROVAL_SPRING_TOOLS
+from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.jsonl import dump_trace
 from ecommerce_agent.trace.schema import TraceRecord
 
@@ -95,8 +96,8 @@ def assess_attempt(
     failures: list[str] = []
     tools = set(record.tool_names())
 
-    if "order_query" not in tools:
-        failures.append("order_query not called")
+    if "order_query" not in tools and STAGE_SALES_ANALYSIS_TOOL_NAME not in tools:
+        failures.append("neither order_query nor staging tool was called")
     leaked = tools & set(WRITE_OR_APPROVAL_SPRING_TOOLS)
     if leaked:
         failures.append(f"write/approval tools appeared: {sorted(leaked)}")

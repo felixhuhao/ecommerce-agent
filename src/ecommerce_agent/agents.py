@@ -39,9 +39,10 @@ def build_sales_analyst(
     spring_read_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
     backend: Any,
+    staging_tools: Sequence[BaseTool] = (),
 ) -> Any:
     """Build the M1 single-specialist analyst agent on the shared sandbox backend."""
-    tools = list(spring_read_tools) + list(viz_tools)
+    tools = list(staging_tools) + list(spring_read_tools) + list(viz_tools)
     return build_agent(
         model,
         tools,
@@ -57,13 +58,14 @@ def sales_analyst_subagent(
     *,
     spring_read_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    staging_tools: Sequence[BaseTool] = (),
 ) -> dict[str, Any]:
     """Build the sales analyst sub-agent descriptor used by the coordinator."""
     return {
         "name": "sales-analyst",
         "description": _ANALYST_DESCRIPTION,
         "system_prompt": get_prompt("sales_analyst"),
-        "tools": list(spring_read_tools) + list(viz_tools),
+        "tools": list(staging_tools) + list(spring_read_tools) + list(viz_tools),
     }
 
 

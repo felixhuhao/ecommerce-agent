@@ -79,6 +79,7 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
     result = build_sales_analyst(
         "MODEL",  # type: ignore[arg-type]
         spring_read_tools=[_Tool("order_query"), _Tool("get_statistics")],  # type: ignore[list-item]
+        staging_tools=[_Tool("stage_sales_analysis_inputs")],  # type: ignore[list-item]
         viz_tools=[_Tool("generate_line_chart")],  # type: ignore[list-item]
         backend=backend,
     )
@@ -86,6 +87,7 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
     assert result == "ANALYST"
     assert captured["backend"] is backend
     assert [tool.name for tool in captured["tools"]] == [
+        "stage_sales_analysis_inputs",
         "order_query",
         "get_statistics",
         "generate_line_chart",
@@ -100,6 +102,7 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
 def test_sales_analyst_subagent_seam_shape() -> None:
     subagent = sales_analyst_subagent(
         spring_read_tools=[_Tool("order_query")],  # type: ignore[list-item]
+        staging_tools=[_Tool("stage_sales_analysis_inputs")],  # type: ignore[list-item]
         viz_tools=[_Tool("generate_line_chart")],  # type: ignore[list-item]
     )
 
@@ -107,6 +110,7 @@ def test_sales_analyst_subagent_seam_shape() -> None:
     assert "description" in subagent
     assert "system_prompt" in subagent
     assert {tool.name for tool in subagent["tools"]} == {
+        "stage_sales_analysis_inputs",
         "order_query",
         "generate_line_chart",
     }

@@ -22,6 +22,7 @@ from ecommerce_agent.models import get_primary_model
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sessions.registry import SessionRuntime
+from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +103,22 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
 
     sandbox = build_session_sandbox(settings, session_id=session_id)
     model = get_primary_model(settings)
+    staging_tools = [
+        build_sales_analysis_staging_tool(
+            spring_read_tools=spring_tools,
+            backend=sandbox,
+        )
+    ]
     analyst_agent = build_sales_analyst(
         model,
         spring_read_tools=spring_tools,
+        staging_tools=staging_tools,
         viz_tools=viz_tools,
         backend=sandbox,
     )
     analyst = sales_analyst_subagent(
         spring_read_tools=spring_tools,
+        staging_tools=staging_tools,
         viz_tools=viz_tools,
     )
     order_manager = order_manager_subagent(order_manager_tools=order_manager_tools)

@@ -47,14 +47,21 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         captured["sandbox_session_id"] = session_id
         return object()
 
-    def fake_build_sales_analyst(model, *, spring_read_tools, viz_tools, backend):
+    def fake_build_stage_tool(*, spring_read_tools, backend):
+        captured["stage_tool_inputs"] = [tool.name for tool in spring_read_tools]
+        captured["stage_tool_backend"] = backend
+        return FakeTool("stage_sales_analysis_inputs")
+
+    def fake_build_sales_analyst(model, *, spring_read_tools, staging_tools, viz_tools, backend):
         captured["direct_analyst_tools"] = [tool.name for tool in spring_read_tools]
+        captured["direct_staging_tools"] = [tool.name for tool in staging_tools]
         captured["direct_viz_tools"] = [tool.name for tool in viz_tools]
         captured["direct_analyst_backend"] = backend
         return FakeAgent("ANALYST")
 
-    def fake_sales_analyst_subagent(*, spring_read_tools, viz_tools):
+    def fake_sales_analyst_subagent(*, spring_read_tools, staging_tools, viz_tools):
         captured["analyst_tools"] = [tool.name for tool in spring_read_tools]
+        captured["analyst_staging_tools"] = [tool.name for tool in staging_tools]
         captured["viz_tools"] = [tool.name for tool in viz_tools]
         return {"name": "sales-analyst"}
 
@@ -68,6 +75,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
 
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
+    monkeypatch.setattr(factory_module, "build_sales_analysis_staging_tool", fake_build_stage_tool)
     monkeypatch.setattr(factory_module, "get_primary_model", lambda settings: object())
     monkeypatch.setattr(factory_module, "build_sales_analyst", fake_build_sales_analyst)
     monkeypatch.setattr(factory_module, "sales_analyst_subagent", fake_sales_analyst_subagent)
@@ -83,8 +91,12 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["session_id"] == "sess-1"
     assert captured["user_id"] == "9"
     assert captured["sandbox_session_id"] == "sess-1"
+    assert captured["stage_tool_inputs"] == ["order_query"]
+    assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]
     assert captured["direct_analyst_tools"] == ["order_query"]
+    assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
     assert captured["analyst_tools"] == ["order_query"]
+    assert captured["analyst_staging_tools"] == ["stage_sales_analysis_inputs"]
     assert captured["order_manager_tools"] == ["order_query", "request_approval"]
     assert captured["subagents"] == ["sales-analyst", "order-manager"]
     assert mcp_client.calls == ["spring"]
