@@ -43,6 +43,11 @@ class TraceEvent:
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TraceEvent:
+        names = {field.name for field in dataclasses.fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in names})
+
 
 @dataclass
 class TraceRecord:
@@ -77,3 +82,10 @@ class TraceRecord:
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TraceRecord:
+        names = {field.name for field in dataclasses.fields(cls)}
+        kwargs = {key: value for key, value in data.items() if key in names and key != "events"}
+        events = [TraceEvent.from_dict(event) for event in data.get("events", [])]
+        return cls(events=events, **kwargs)
