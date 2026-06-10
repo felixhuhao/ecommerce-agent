@@ -242,7 +242,7 @@ A thin typed client over the REST endpoints. `postMessage` reports the `409 turn
 
 ```ts
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { approveApproval, createSession, listSessions, postMessage } from "./client";
+import { approveApproval, createSession, getMcpHealth, listSessions, postMessage } from "./client";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -277,6 +277,15 @@ describe("api client", () => {
   it("approveApproval reports a conflict on 409 instead of throwing", async () => {
     mockFetch(409, { detail: "already decided" });
     expect(await approveApproval("s1", "a1")).toEqual({ conflict: true, body: { detail: "already decided" } });
+  });
+
+  it("getMcpHealth fetches /health/mcp", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok", servers: { spring: { status: "ok" } } }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await getMcpHealth()).toEqual({ status: "ok", servers: { spring: { status: "ok" } } });
+    expect(fetchMock).toHaveBeenCalledWith("/health/mcp");
   });
 });
 ```
@@ -451,6 +460,20 @@ describe("sessionReducer", () => {
     expect(s.inFlightTurnId).toBeNull();
     expect(s.tokenBuffer).toBe("");
   });
+
+  it("thread_loaded rebuilds state from the authoritative thread (409 reconcile)", () => {
+    let s = initialSessionState();
+    s = sessionReducer(s, { kind: "turn_started", turnId: "t1" });
+    s = sessionReducer(s, {
+      kind: "thread_loaded",
+      messages: [
+        msg({ seq: 1, type: "user", content: "a" }),
+        msg({ seq: 2, type: "approval_status", approval_id: "x", status: "rejected" }),
+      ],
+    });
+    expect(s.messages.map((m) => m.seq)).toEqual([1, 2]);
+    expect(s.inFlightTurnId).toBeNull();
+  });
 });
 ```
 
@@ -469,7 +492,8 @@ import type { StreamEvent, ThreadMessage } from "../types";
 export type SessionAction =
   | StreamEvent
   | { kind: "turn_started"; turnId: string }
-  | { kind: "reset" };
+  | { kind: "reset" }
+  | { kind: "thread_loaded"; messages: ThreadMessage[] };
 
 export interface SessionState {
   bySeq: Record<number, ThreadMessage>;
@@ -494,6 +518,15 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
   switch (action.kind) {
     case "reset":
       return initialSessionState();
+    case "thread_loaded": {
+      const bySeq: Record<number, ThreadMessage> = {};
+      for (const m of action.messages) bySeq[m.seq] = m;
+      return {
+        ...initialSessionState(),
+        bySeq,
+        messages: Object.values(bySeq).sort((a, b) => a.seq - b.seq),
+      };
+    }
     case "turn_started":
       return { ...state, inFlightTurnId: action.turnId, tokenBuffer: "", activeTool: null, error: null };
     case "thread.append": {
@@ -703,6 +736,7 @@ Expected: FAIL — hook missing.
 ```ts
 import { useEffect, useReducer, useRef } from "react";
 import { initialSessionState, sessionReducer } from "../state/sessionReducer";
+import type { ThreadMessage } from "../types";
 import { parseStreamEvent } from "./streamEvents";
 
 type ESFactory = (url: string) => EventSource;
@@ -732,9 +766,16 @@ export function useSessionStream(sessionId: string | null, factory: ESFactory = 
     };
   }, [sessionId, factory]);
 
-  return { state, markTurnStarted: (turnId: string) => dispatch({ kind: "turn_started", turnId }) };
+  return {
+    state,
+    markTurnStarted: (turnId: string) => dispatch({ kind: "turn_started", turnId }),
+    // Reconcile from an authoritative thread (e.g. after an approval 409); rebuilds the reducer.
+    applyThread: (messages: ThreadMessage[]) => dispatch({ kind: "thread_loaded", messages }),
+  };
 }
 ```
+
+(`applyThread` is a thin dispatch wrapper; the `thread_loaded` reducer behavior is covered by the Task 4 test.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -907,21 +948,21 @@ git commit -m "feat(m3-fe): approval actions with 409 thread-refetch reconciliat
 
 ---
 
-### Task 8: Components + layout — delegate to `frontend-design`
+### Task 8: Components + layout (frontend-design optional)
 
 **Files:**
 - Create: `frontend/src/components/*`, update `frontend/src/App.tsx`
 
 This task builds the visual layer. **If the `frontend-design` skill is available, invoke it** to produce the dashboard; otherwise build the components directly from the contracts below (they are fully specified — the skill improves the look but is not required for correctness). Either way, components consume the tested logic from Tasks 2–7, contain **no business logic**, and honor these **contracts** (data in / callbacks out).
 
-- [ ] **Step 1: Invoke frontend-design with these component contracts**
+- [ ] **Step 1: Build the components from these contracts (use `frontend-design` if available)**
 
 - **AppShell** — three panes: `SessionSidebar` (left), `ConversationView` (center), right rail (`ApprovalWorkspace` + `HealthPanel`).
 - **SessionSidebar** — props: `sessions: SessionSummary[]`, `activeId`, `onSelect(id)`, `onNew()`. Uses `listSessions`/`createSession`.
 - **ConversationView** — props: `messages: ThreadMessage[]`, `provisionalAnswer: string | null` (from `tokenBuffer` when `inFlightTurnId`), `activeTool: string | null`, `composerDisabled: boolean` (= `inFlightTurnId !== null`), `onSend(text)`. Renders each `type` distinctly; shows the provisional bubble while streaming; the composer is disabled during a turn; a `busy` send (409) surfaces a transient "a turn is already running" note and adds **no** message.
 - **ApprovalWorkspace** — props: `approvals: ApprovalView[]`, `onApprove(id)`, `onReject(id, reason)`. Card per approval: header from `{toolName, status}` + `card` fields rendered generically (labeled key/value) + a "raw details" expander showing `card` JSON (resilient to varying `operationDetail`). Buttons disabled while in flight or once `status !== "pending"`; show the execution `result` on `consumed`, the `reason` on `rejected`, the fresh-approval note on `invalidated`, the error on `failed`.
 - **HealthPanel** — props: `health` (`GET /health` body) + `mcp` (`GET /health/mcp` body). Status dots for `components.{mongo,sandbox,model}` + `servers.{spring,modelscope}`. Polls (React Query `refetchInterval`); never blocks.
-- **App** — wires `useSessionStream(activeId)` (auto-resets state on session switch), `performSend` (composer), and `performApprove`/`performReject` (on `conflict`, invalidate the thread query so the card reconciles to server state). React Query for `listSessions`, `getHealth`, and `getMcpHealth` (both polled via `refetchInterval`); `foldApprovals(state.messages)` feeds `ApprovalWorkspace`; `getHealth`+`getMcpHealth` feed `HealthPanel`. Durable messages from turns and approvals arrive via the stream; the thread query is the reload/reconcile fallback.
+- **App** — wires `useSessionStream(activeId)` (exposes `state`, `markTurnStarted`, `applyThread`; auto-resets on session switch), `performSend` (composer), and `performApprove`/`performReject` with a concrete **`onConflict`**: `async () => applyThread(await getThread(activeId))` — refetch the authoritative thread and rebuild the reducer via the `thread_loaded` action, so the card reconciles to server state (**the rendered list is reducer-backed, not query-backed**). React Query for `listSessions`, `getHealth`, and `getMcpHealth` (polled via `refetchInterval`); `foldApprovals(state.messages)` feeds `ApprovalWorkspace`; `getHealth` + `getMcpHealth` feed `HealthPanel`. Durable messages from turns/approvals arrive via the stream; `getThread` + `applyThread` is the reload/reconcile fallback.
 
 - [ ] **Step 2: Smoke test the rendered shell**
 
@@ -971,11 +1012,11 @@ Start the Java MCP server + MySQL + Mongo (external), then `uv run uvicorn ecomm
 - §4 composer disabled during a turn; 409 adds no duplicate → Tasks 7, 8.
 - §4/§3 health: `getHealth` + `getMcpHealth` → Task 3; `HealthPanel` consumes both (mcp + components) → Task 8.
 - §5 approval workspace: folding → Task 5; card generic render + raw-JSON fallback + one-click approve/reject + lifecycle states → Task 8.
-- §6 error handling: send 409 busy (Task 7), **approval 409 → thread refetch** (Tasks 3, 7), reconnect re-sync via backlog replay (Task 6 + reducer dedupe), health degraded dots (Task 8), loading/empty states (Task 8).
+- §6 error handling: send 409 busy (Task 7); **approval 409 → `getThread` + `applyThread`/`thread_loaded` rebuild of the reducer-backed list** (Tasks 3, 4, 6, 7, 8) — a concrete state path, not just a query invalidation; reconnect re-sync via backlog replay (Task 6 + reducer dedupe); health degraded dots (Task 8); loading/empty states (Task 8).
 - §9 acceptance → Task 9 walk-through.
 
 **Placeholder scan:** Tasks 1–7 contain complete code + exact commands. Task 8 delegates *visual* markup to `frontend-design` **if available** (else builds from the pinned contracts) — the contracts are fully specified either way; Task 9 is a manual checklist. No "TODO"/vague-logic placeholders.
 
-**Type consistency:** `StreamEvent`/`ThreadMessage`/`SessionSummary` (Task 2) used identically in Tasks 3–8; `SessionState`/`SessionAction` incl. `turn_started`/`reset` (Task 4) used by Tasks 6/8; `ApprovalView`/`foldApprovals` (Task 5) used by Task 8; `SendResult`/`postMessage` (Task 3) used by Task 7; `ApprovalActionResult`/`approveApproval`/`rejectApproval` (Task 3) used by `performApprove`/`performReject` (Task 7); `getMcpHealth` (Task 3) used by Task 8; `parseStreamEvent` (Task 2) used by Task 6.
+**Type consistency:** `StreamEvent`/`ThreadMessage`/`SessionSummary` (Task 2) used identically in Tasks 3–8; `SessionState`/`SessionAction` incl. `turn_started`/`reset`/`thread_loaded` (Task 4); the hook's `markTurnStarted`/`applyThread` (Task 6) used by Task 8; `ApprovalView`/`foldApprovals` (Task 5) used by Task 8; `SendResult`/`postMessage` (Task 3) used by Task 7; `ApprovalActionResult`/`approveApproval`/`rejectApproval` (Task 3) used by `performApprove`/`performReject` (Task 7); `getThread`/`getMcpHealth` (Task 3) used by Task 8; `parseStreamEvent` (Task 2) used by Task 6.
 
 **Logic vs UI boundary:** all branching/state logic is in Tasks 2–7 with Vitest tests; Task 8 components are render-only against those contracts — keeping the token-worthy correctness under test while `frontend-design` owns the look.
