@@ -1,7 +1,22 @@
-import type { HealthStatus, McpHealth, SessionDetail, SessionSummary, ThreadMessage } from "../types";
+import type {
+  ArtifactSummary,
+  HealthStatus,
+  McpHealth,
+  SessionDetail,
+  SessionSummary,
+  ThreadMessage,
+  TraceTimeline,
+} from "../types";
+
+export class ApiError extends Error {
+  constructor(readonly status: number) {
+    super(String(status));
+    this.name = "ApiError";
+  }
+}
 
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!res.ok) throw new ApiError(res.status);
   return (await res.json()) as T;
 }
 
@@ -76,4 +91,24 @@ export async function getHealth(): Promise<HealthStatus> {
 
 export async function getMcpHealth(): Promise<McpHealth> {
   return json(await fetch("/health/mcp"));
+}
+
+export async function getTrace(sessionId: string, turnId: string): Promise<TraceTimeline> {
+  return json(await fetch(`/api/sessions/${sessionId}/turns/${turnId}/trace`));
+}
+
+export async function getArtifacts(sessionId: string): Promise<ArtifactSummary[]> {
+  const body = await json<{ artifacts: ArtifactSummary[] }>(
+    await fetch(`/api/sessions/${sessionId}/artifacts`),
+  );
+  return body.artifacts;
+}
+
+export function traceExportUrl(sessionId: string, turnId: string): string {
+  return `/api/sessions/${sessionId}/turns/${turnId}/trace/export`;
+}
+
+// Absorb the brief post-answer window before the trace store/cache is readable.
+export function shouldRetryTrace(failureCount: number, error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404 && failureCount < 3;
 }

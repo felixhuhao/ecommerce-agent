@@ -81,3 +81,44 @@ export interface McpHealth {
   status: string;
   servers: Record<string, McpServerHealth>;
 }
+
+export interface TraceSpan {
+  kind: "model_call" | "tool_call";
+  name: string | null;
+  status: string;
+  ts: number;
+  duration_ms: number | null;
+  args_summary: string | null;
+  result_summary: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  span_id: string;
+  artifact_id: string | null;
+  approval_id: string | null;
+  error_message: string | null;
+}
+
+export interface TraceTimeline {
+  trace_id: string;
+  session_id: string;
+  turn_id: string;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number | null;
+  tokens_in_total: number | null;
+  tokens_out_total: number | null;
+  span_count: number;
+  spans: TraceSpan[];
+}
+
+export interface ArtifactSummary {
+  id: string;
+  kind: string;
+  mime_type: string;
+  src: string;
+  tool_name: string | null;
+  turn_id: string | null;
+  trace_id: string | null;
+  created_at: string;
+  message_id: string;
+}
