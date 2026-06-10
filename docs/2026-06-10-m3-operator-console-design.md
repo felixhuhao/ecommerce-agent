@@ -85,19 +85,25 @@ exists in [api/sessions.py](src/ecommerce_agent/api/sessions.py)):
    validate the `session_id` against the `sessions` collection first and **`404` if unknown** (reads
    serve from Mongo; `POST …/messages` uses `get_or_create_runtime`). A created-but-empty session is
    valid (its `sessions` doc exists even with no messages).
-6. **Single in-flight turn per session.** `POST …/messages` currently spawns a background turn
-   unconditionally; two tabs or a double-click interleave **untagged** `token`/`tool` frames and break
-   the frontend's one-turn assumption. Fix: track an active turn per session; a second concurrent
-   `POST …/messages` for the same session returns **`409 {"error": "turn_in_progress"}`**; the marker
-   clears when the turn task finishes (success or failure).
+6. **Single in-flight turn per session (guard before any side effect).** `POST …/messages` currently
+   appends the user message and then spawns a background turn unconditionally; two tabs or a
+   double-click interleave **untagged** `token`/`tool` frames and break the frontend's one-turn
+   assumption. Fix: **acquire the per-session turn marker first — before appending the user message,
+   setting the title/preview, or spawning the turn.** A second concurrent `POST …/messages` for the same
+   session returns **`409 {"error": "turn_in_progress"}`** and is **fully side-effect-free** (no user
+   message appended, no title/preview/session mutation). The marker clears when the turn task finishes
+   (success or failure).
 7. **Health extension (lightweight, no paid calls).** Extend `GET /health` with a `components` object:
    `mongo` (motor admin `ping`), `sandbox` (Docker daemon `ping`/availability), and `model`
    (**config-only** — api key + base URL present; **never a token-spending completion**). The health
    panel reads this plus the existing `/health/mcp` (Spring/ModelScope). A deeper, opt-in model probe is
    out of Phase 1 and must be explicit if ever added.
-8. **Static serving.** Mount `frontend/dist`; a catch-all returns `index.html` for non-`/api`,
-   non-`/health*` paths. Route order must guarantee `/api/*` and `/health*` resolve to their handlers
-   before the catch-all (tested — §7).
+8. **Static serving (dev/test-safe).** Mount `frontend/dist` **only if it exists** — when the frontend
+   isn't built (API-only pytest, backend-first development), skip the mount and the catch-all with a
+   logged warning, so app startup and the API never depend on a built SPA. When mounted, a catch-all
+   returns `index.html` for non-`/api`, non-`/health*` paths. Route order must guarantee `/api/*` and
+   `/health*` resolve to their handlers before the catch-all (tested — §7, using a minimal `dist`
+   fixture).
 
 ## 4. Frontend Surfaces & State
 
@@ -155,6 +161,13 @@ stable keys `{approvalId, toolName, operationType, status}`. The card renders:
 approve→execute server-side — one click, two auditable transitions). **Reject** takes an optional reason
 and calls `POST …/approvals/{id}/reject`.
 
+**Approval↔session binding is enforced by Java, not re-implemented in FastAPI.** The `ApprovalClient`
+sends `X-Session-Id` = the URL's `session_id` ([approvals.py](src/ecommerce_agent/approvals.py)); Java's
+actor/session check (Java spec §4.3) rejects any `approval_id` not bound to that session, so a
+cross-session approve/reject fails at the trust boundary and FastAPI surfaces the rejection. FastAPI's
+own approval-endpoint check is session *existence* only (§3.5); the cross-session rejection path is
+tested (§7).
+
 **Live lifecycle off the same stream.** The endpoints append `approval_status` and `execution_result`
 messages, which arrive as `thread.append`s. The workspace folds an approval's messages on `approval_id`:
 `pending → approved → consumed` (show the execution result from `result`, e.g. "PO #123 placed,
@@ -193,15 +206,21 @@ conversation as proposal bubbles.
     `GET /api/sessions/{id}`.
   - **Session validation:** unknown `session_id` returns `404` from `GET …/thread`, `GET …/stream`,
     `POST …/messages`, and the approval endpoints (not an empty thread/stream).
+  - **Approval scoping:** approving/rejecting an `approval_id` bound to a different session is rejected
+    (Java actor/session binding via `X-Session-Id`) and the rejection is surfaced; FastAPI's own check is
+    session existence only.
   - **Rehydration:** a session present in `sessions` but absent from the registry is messageable (runtime
     rebuilt); an id unknown to Mongo `404`s. Concurrent rebuilds resolve to one runtime without holding
     the global lock across `build_runtime`.
-  - **Single-turn guard:** a second `POST …/messages` while a turn is active returns
-    `409 {"error": "turn_in_progress"}`; the marker clears after completion.
+  - **Single-turn guard (side-effect-free):** a second `POST …/messages` while a turn is active returns
+    `409 {"error": "turn_in_progress"}` **and leaves the thread unchanged** (no stray user message, no
+    title/preview write); the marker clears after completion.
   - **Health extension:** `components` reports mongo/sandbox/model; the model check makes **no** outbound
     completion call (assert via a no-network/monkeypatched model).
-  - **Static route order:** `/api/sessions`, `/health`, `/health/mcp` resolve to their handlers; an
-    unknown SPA path returns `index.html`; an unknown `/api/...` path returns `404` (not `index.html`).
+  - **Static serving:** with a minimal `dist` fixture, `/api/sessions`, `/health`, `/health/mcp` resolve
+    to their handlers, an unknown SPA path returns `index.html`, and an unknown `/api/...` path returns
+    `404` (not `index.html`); **without `frontend/dist`, the app still starts and the API tests pass**
+    (no static mount).
 - Playwright E2E is deferred; Phase 1 relies on component + backend tests plus a manual demo.
 
 ## 8. Project Structure
@@ -231,8 +250,8 @@ logic and is unit-tested in isolation. The Vite build (`frontend/dist`) is mount
   **restored/reaped session is still messageable** (rehydration). An **unknown session id `404`s** on
   every session-scoped endpoint.
 - Sending a message streams the answer token-by-token with a live tool-activity indicator; a **second
-  concurrent send is rejected** (`409 turn_in_progress`) with no duplicate message; the turn finalizes
-  on `done` **or** on its terminal durable message after a reconnect.
+  concurrent send is rejected** (`409 turn_in_progress`) with no duplicate message **and no stray thread
+  entry**; the turn finalizes on `done` **or** on its terminal durable message after a reconnect.
 - A proposal renders with the server-rendered impact (generic fields + raw-JSON fallback); **Approve**
   runs approve→execute and the execution result appears **live and survives reload**; **Reject** with a
   reason shows `rejected`; `invalidated`/`failed` render correctly; an approval cannot be double-acted.
@@ -262,8 +281,13 @@ logic and is unit-tested in isolation. The Vite build (`frontend/dist`) is mount
   earlier "loses no state" overstatement.
 - **Session existence is validated on every session-scoped endpoint** (404 on unknown) rather than
   silently serving empty thread/stream (§3.5).
-- **One in-flight turn per session** enforced by a backend `409 {"error": "turn_in_progress"}` guard;
-  the frontend adds no duplicate optimistic message (§3.6, §6).
+- **One in-flight turn per session** enforced by a backend `409 {"error": "turn_in_progress"}` guard,
+  acquired **before any side effect** so a rejected send leaves the thread unchanged; the frontend adds
+  no duplicate optimistic message (§3.6, §6).
+- **Approval↔session binding** is enforced by Java via `X-Session-Id` (cross-session approve/reject
+  rejected at the trust boundary); FastAPI checks session existence only (§5).
+- **Static serving is dev/test-safe** — mounted only if `frontend/dist` exists, so API tests don't
+  depend on a built SPA (§3.8).
 - **Turn finalization is reconnect-safe**: `done` frame **or** terminal durable message ends the turn
   (§4).
 - **This spec is M3 Phase 1**, the first slice of roadmap M3; Phase 2 (incl. trace persistence) completes
