@@ -25,6 +25,9 @@ from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 logger = logging.getLogger(__name__)
 
 
+# M3 single-operator shortcut: direct keyword routing avoids coordinator latency.
+# Conversation-aware or ambiguous routing should move back to the coordinator seam
+# or a typed intent classifier once multi-turn context is part of the runtime.
 _ORDER_MANAGER_KEYWORDS = (
     "approval",
     "approve",

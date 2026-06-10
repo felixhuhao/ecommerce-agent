@@ -72,13 +72,16 @@ def build_order_manager(
     )
 
 
+# Preserved seam: the M3 hot path routes directly to single-specialist agents.
+# These descriptors and the coordinator factory stay here for the future
+# multi-specialist path, where routing ambiguity can justify the extra model hop.
 def sales_analyst_subagent(
     *,
     spring_read_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
     staging_tools: Sequence[BaseTool] = (),
 ) -> dict[str, Any]:
-    """Build the sales analyst sub-agent descriptor used by the coordinator."""
+    """Build the future coordinator's sales analyst sub-agent descriptor."""
     return {
         "name": "sales-analyst",
         "description": _ANALYST_DESCRIPTION,
@@ -88,7 +91,7 @@ def sales_analyst_subagent(
 
 
 def order_manager_subagent(*, order_manager_tools: Sequence[BaseTool]) -> dict[str, Any]:
-    """Build the approval-only order manager sub-agent descriptor."""
+    """Build the future coordinator's approval-only order manager descriptor."""
     return {
         "name": "order-manager",
         "description": _ORDER_MANAGER_DESCRIPTION,
@@ -104,7 +107,7 @@ def build_coordinator(
     order_manager_subagent: dict[str, Any],
     backend: Any,
 ) -> Any:
-    """Build the M2 coordinator that routes to specialists without business tools."""
+    """Build the dormant coordinator seam for future multi-specialist routing."""
     return build_agent(
         model,
         [],

@@ -88,6 +88,9 @@ sales_analyst: |
 
   You are read-only. Never create, modify, approve, or execute writes.
 
+# Preserved seam: currently unused by the M3 hot path, which routes directly to
+# analyst/order-manager agents. Keep this prompt with the coordinator factory for
+# future multi-specialist routing.
 coordinator: |
   You are the coordinator for an e-commerce operations workspace. Route the
   operator's request to the right specialist, then return a concise final answer.
