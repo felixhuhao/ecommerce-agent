@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, X } from "lucide-react";
 import type { ApprovalView } from "../state/approvals";
 
@@ -53,6 +53,83 @@ function singleScalarEntry(
     }
   }
   return null;
+}
+
+// How deep to expand nested objects/arrays into rows before falling back to JSON.
+const MAX_DEPTH = 4;
+
+// Normalize an object/array into [label, key, value] triples for row rendering.
+function entriesOf(value: object): [label: string, key: string, value: unknown][] {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => [`#${index + 1}`, String(index), item]);
+  }
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !key.startsWith("_"))
+    .map(([key, val]) => [humanizeKey(key), key, val]);
+}
+
+// Render any value as labeled rows (no braces/quotes): scalars inline (money
+// emphasized), nested objects/arrays recursively, single-scalar objects flattened.
+// Pathologically deep values fall back to a contained JSON block.
+function renderValue(label: string, rawKey: string, value: unknown, depth: number): ReactNode {
+  if (value == null) {
+    return (
+      <div key={rawKey}>
+        <dt>{label}</dt>
+        <dd>—</dd>
+      </div>
+    );
+  }
+  if (isScalar(value)) {
+    return (
+      <div key={rawKey}>
+        <dt>{label}</dt>
+        <dd className={isMoney(rawKey, value) ? "kv-money" : undefined}>
+          {formatScalar(rawKey, value)}
+        </dd>
+      </div>
+    );
+  }
+  const flat = singleScalarEntry(value);
+  if (flat) {
+    return (
+      <div key={rawKey}>
+        <dt>{label}</dt>
+        <dd className={isMoney(flat.key, flat.value) ? "kv-money" : undefined}>
+          {formatScalar(flat.key, flat.value)}
+        </dd>
+      </div>
+    );
+  }
+  if (depth < MAX_DEPTH && typeof value === "object") {
+    const children = entriesOf(value);
+    if (children.length === 0) {
+      return (
+        <div key={rawKey}>
+          <dt>{label}</dt>
+          <dd>—</dd>
+        </div>
+      );
+    }
+    return (
+      <div key={rawKey} className="kv-block">
+        <dt>{label}</dt>
+        <dl className="kv-list kv-nested">
+          {children.map(([childLabel, childKey, childValue]) =>
+            renderValue(childLabel, childKey, childValue, depth + 1),
+          )}
+        </dl>
+      </div>
+    );
+  }
+  return (
+    <div key={rawKey} className="kv-block">
+      <dt>{label}</dt>
+      <dd>
+        <pre className="kv-json">{JSON.stringify(value, null, 2)}</pre>
+      </dd>
+    </div>
+  );
 }
 
 function cardEntries(card: Record<string, unknown> | null) {
@@ -118,27 +195,9 @@ export function ApprovalWorkspace({
 
               {cardEntries(approval.card).length > 0 ? (
                 <dl className="kv-list">
-                  {cardEntries(approval.card).map(([key, value]) => {
-                    const flat = isScalar(value) ? { key, value } : singleScalarEntry(value);
-                    if (flat) {
-                      return (
-                        <div key={key}>
-                          <dt>{humanizeKey(key)}</dt>
-                          <dd className={isMoney(flat.key, flat.value) ? "kv-money" : undefined}>
-                            {formatScalar(flat.key, flat.value)}
-                          </dd>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={key} className="kv-block">
-                        <dt>{humanizeKey(key)}</dt>
-                        <dd>
-                          <pre className="kv-json">{JSON.stringify(value, null, 2)}</pre>
-                        </dd>
-                      </div>
-                    );
-                  })}
+                  {cardEntries(approval.card).map(([key, value]) =>
+                    renderValue(humanizeKey(key), key, value, 0),
+                  )}
                 </dl>
               ) : (
                 <p className="empty-note">No card details</p>
