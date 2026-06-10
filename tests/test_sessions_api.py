@@ -604,6 +604,71 @@ def test_trace_export_404s_for_unknown_session_and_turn() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_list_artifacts_projects_from_messages_newest_first() -> None:
+    from ecommerce_agent.api.sessions import list_artifacts
+
+    app = build_test_app()
+    session_id = await app.state.session_registry.create()
+    await app.state.session_store.create(session_id)
+
+    empty = await list_artifacts(session_id, SimpleNamespace(app=app))
+    assert empty["artifacts"] == []
+
+    await app.state.thread_store.append(
+        ThreadMessage(
+            session_id=session_id,
+            type="agent_answer",
+            content="a",
+            turn_id="t1",
+            result={
+                "artifacts": [
+                    {
+                        "id": "c0",
+                        "kind": "image",
+                        "mime_type": "image/svg+xml",
+                        "src": "data:image/svg+xml,<svg/>",
+                        "tool_name": "generate_line_chart",
+                    }
+                ]
+            },
+        )
+    )
+    await app.state.thread_store.append(
+        ThreadMessage(
+            session_id=session_id,
+            type="agent_answer",
+            content="b",
+            turn_id="t2",
+            result={
+                "artifacts": [
+                    {
+                        "id": "c1",
+                        "kind": "image",
+                        "mime_type": "image/png",
+                        "src": "data:image/png;base64,AAAA",
+                        "tool_name": "generate_bar_chart",
+                    }
+                ]
+            },
+        )
+    )
+
+    body = await list_artifacts(session_id, SimpleNamespace(app=app))
+    artifacts = body["artifacts"]
+    assert [artifact["id"] for artifact in artifacts] == ["c1", "c0"]
+    assert artifacts[0]["turn_id"] == "t2"
+    assert artifacts[0]["mime_type"] == "image/png"
+    assert artifacts[0]["message_id"]
+    assert artifacts[0]["created_at"]
+    assert artifacts[1]["tool_name"] == "generate_line_chart"
+
+
+def test_list_artifacts_404_for_unknown_session() -> None:
+    with TestClient(build_test_app()) as client:
+        assert client.get("/api/sessions/ghost/artifacts").status_code == 404
+
+
 def _decode_sse(body: str) -> list[dict]:
     return [
         json.loads(line[len("data:") :].strip())

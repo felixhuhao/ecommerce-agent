@@ -184,6 +184,31 @@ async def _load_trace_record(
     return request.app.state.trace_records.get(session_id, {}).get(turn_id)
 
 
+def _session_artifacts(messages: list[ThreadMessage]) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    for message in reversed(messages):
+        items = (message.result or {}).get("artifacts")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            artifacts.append(
+                {
+                    "id": item.get("id"),
+                    "kind": item.get("kind"),
+                    "mime_type": item.get("mime_type"),
+                    "src": item.get("src"),
+                    "tool_name": item.get("tool_name"),
+                    "turn_id": message.turn_id,
+                    "trace_id": message.trace_id,
+                    "created_at": message.created_at,
+                    "message_id": message.message_id,
+                }
+            )
+    return artifacts
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_session(request: Request) -> dict[str, str]:
     session_id = await request.app.state.session_registry.create()
@@ -225,6 +250,13 @@ async def get_thread(session_id: str, request: Request) -> dict[str, Any]:
     await _require_session(request, session_id)
     messages = await request.app.state.thread_store.list_messages(session_id)
     return {"session_id": session_id, "messages": [message.model_dump() for message in messages]}
+
+
+@router.get("/{session_id}/artifacts")
+async def list_artifacts(session_id: str, request: Request) -> dict[str, Any]:
+    await _require_session(request, session_id)
+    messages = await request.app.state.thread_store.list_messages(session_id)
+    return {"session_id": session_id, "artifacts": _session_artifacts(messages)}
 
 
 @router.get("/{session_id}/turns/{turn_id}/trace")
