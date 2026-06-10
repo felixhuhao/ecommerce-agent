@@ -1,11 +1,13 @@
 import { FormEvent, useState } from "react";
-import { Send, Wrench } from "lucide-react";
+import { RefreshCw, Send, Wrench } from "lucide-react";
+import type { StreamStatus } from "../api/useSessionStream";
 import type { ThreadMessage } from "../types";
 
 interface ConversationViewProps {
   messages: ThreadMessage[];
   provisionalAnswer: string | null;
   activeTool: string | null;
+  streamStatus: StreamStatus;
   composerDisabled: boolean;
   busyNote: string | null;
   error: string | null;
@@ -31,6 +33,7 @@ export function ConversationView({
   messages,
   provisionalAnswer,
   activeTool,
+  streamStatus,
   composerDisabled,
   busyNote,
   error,
@@ -53,12 +56,20 @@ export function ConversationView({
           <p className="eyebrow">Operator Console</p>
           <h2>Conversation</h2>
         </div>
-        {activeTool ? (
-          <div className="tool-chip" title="Active tool">
-            <Wrench size={15} aria-hidden="true" />
-            <span>{activeTool}</span>
-          </div>
-        ) : null}
+        <div className="header-chips">
+          {streamStatus === "reconnecting" ? (
+            <div className="tool-chip stream-chip" title="Stream reconnecting">
+              <RefreshCw size={15} aria-hidden="true" />
+              <span>Reconnecting</span>
+            </div>
+          ) : null}
+          {activeTool ? (
+            <div className="tool-chip" title="Active tool">
+              <Wrench size={15} aria-hidden="true" />
+              <span>{activeTool}</span>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="message-list">

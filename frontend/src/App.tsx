@@ -51,7 +51,7 @@ export function App() {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].session_id);
   }, [activeId, sessions]);
 
-  const { state, markTurnStarted, applyThread } = useSessionStream(activeId);
+  const { state, streamStatus, markTurnStarted, applyThread } = useSessionStream(activeId);
   const approvals = useMemo(() => foldApprovals(state.messages), [state.messages]);
 
   const createMutation = useMutation({
@@ -136,6 +136,7 @@ export function App() {
           messages={state.messages}
           provisionalAnswer={state.inFlightTurnId ? state.tokenBuffer : null}
           activeTool={state.activeTool}
+          streamStatus={streamStatus}
           composerDisabled={!activeId || state.inFlightTurnId !== null}
           busyNote={busyNote}
           error={state.error}

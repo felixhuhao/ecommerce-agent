@@ -52,7 +52,8 @@ button:disabled {
 .console-main,
 .console-rail {
   min-width: 0;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
 }
 
 .console-sidebar,
@@ -63,6 +64,7 @@ button:disabled {
 
 .console-sidebar {
   border-right: 1px solid #d8dedb;
+  overflow: hidden;
 }
 
 .console-rail {
@@ -71,6 +73,7 @@ button:disabled {
   gap: 16px;
   padding: 16px;
   border-left: 1px solid #d8dedb;
+  overflow: auto;
 }
 
 .sidebar-panel,
@@ -80,6 +83,10 @@ button:disabled {
 }
 
 .sidebar-panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
   padding: 16px;
 }
 
@@ -91,6 +98,7 @@ button:disabled {
 }
 
 .rail-panel {
+  flex: 0 0 auto;
   padding: 14px;
   border: 1px solid #d8dedb;
   border-radius: 8px;
@@ -183,8 +191,14 @@ button:disabled {
 .session-list,
 .approval-list {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: 10px;
+}
+
+.session-list {
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .session-row {
@@ -310,6 +324,20 @@ button:disabled {
   background: #ffffff;
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.header-chips {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.stream-chip {
+  color: #5d4712;
+  border-color: #dfc47b;
+  background: #fff8e5;
 }
 
 .status-approved,
@@ -559,6 +587,9 @@ button:disabled {
 
   .console-rail {
     grid-column: 1 / -1;
+    height: auto;
+    max-height: none;
+    overflow: visible;
     min-height: auto;
     border-left: 0;
     border-top: 1px solid #d8dedb;
@@ -576,6 +607,7 @@ button:disabled {
   .console-main,
   .console-rail,
   .conversation-panel {
+    height: auto;
     min-height: auto;
   }
 

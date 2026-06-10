@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { useSessionStream } from "./useSessionStream";
 
 class FakeEventSource {
-  listeners: Record<string, (event: MessageEvent) => void> = {};
+  listeners: Record<string, (event: Event) => void> = {};
 
   constructor(public url: string) {}
 
-  addEventListener(name: string, fn: (event: MessageEvent) => void) {
+  addEventListener(name: string, fn: (event: Event) => void) {
     this.listeners[name] = fn;
   }
 
@@ -17,6 +17,14 @@ class FakeEventSource {
 
   emit(name: string, data: unknown) {
     this.listeners[name]?.({ data: JSON.stringify(data) } as MessageEvent);
+  }
+
+  emitOpen() {
+    this.listeners.open?.(new Event("open"));
+  }
+
+  emitTransportError() {
+    this.listeners.error?.(new Event("error"));
   }
 
   close() {}
@@ -41,6 +49,38 @@ describe("useSessionStream", () => {
 
     expect(result.current.state.messages.map((message) => message.seq)).toEqual([1]);
     expect(result.current.state.inFlightTurnId).toBeNull();
+  });
+
+  it("tracks reconnecting state for transport errors and recovers on open", () => {
+    let eventSource!: FakeEventSource;
+    const factory = (url: string) => {
+      eventSource = new FakeEventSource(url);
+      return eventSource as unknown as EventSource;
+    };
+    const { result } = renderHook(() => useSessionStream("s1", factory));
+
+    expect(result.current.streamStatus).toBe("connecting");
+    act(() => eventSource.emitOpen());
+    expect(result.current.streamStatus).toBe("open");
+    act(() => eventSource.emitTransportError());
+    expect(result.current.streamStatus).toBe("reconnecting");
+    act(() => eventSource.emitOpen());
+    expect(result.current.streamStatus).toBe("open");
+  });
+
+  it("keeps backend error events separate from transport errors", () => {
+    let eventSource!: FakeEventSource;
+    const factory = (url: string) => {
+      eventSource = new FakeEventSource(url);
+      return eventSource as unknown as EventSource;
+    };
+    const { result } = renderHook(() => useSessionStream("s1", factory));
+
+    act(() => eventSource.emitOpen());
+    act(() => eventSource.emit("error", { message: "turn failed" }));
+
+    expect(result.current.streamStatus).toBe("open");
+    expect(result.current.state.error).toBe("turn failed");
   });
 
   it("resets state when the session id changes", () => {
