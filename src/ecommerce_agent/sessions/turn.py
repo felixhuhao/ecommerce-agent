@@ -31,6 +31,20 @@ def _request_approval_events(record: TraceRecord) -> list[TraceEvent]:
     ]
 
 
+def _chart_artifacts(record: TraceRecord) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    for event in record.events:
+        if event.event_type != "tool_call" or event.phase != "end" or not event.artifact:
+            continue
+        artifacts.append(
+            {
+                **event.artifact,
+                "tool_name": event.name,
+            }
+        )
+    return artifacts
+
+
 def _proposal_failure_message(
     *,
     session_id: str,
@@ -84,6 +98,7 @@ async def _append_turn_result(
 ) -> None:
     approval_events = _request_approval_events(record)
     if not approval_events:
+        artifacts = _chart_artifacts(record)
         await append_and_publish(
             store,
             bus,
@@ -94,6 +109,7 @@ async def _append_turn_result(
                 turn_id=turn_id,
                 trace_id=record.trace_id,
                 actor_id="agent",
+                result={"artifacts": artifacts} if artifacts else None,
             ),
         )
         return

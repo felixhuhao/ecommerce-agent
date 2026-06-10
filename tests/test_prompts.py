@@ -15,6 +15,8 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "generate_bar_chart" in prompt
     assert "generate_column_chart" in prompt
     assert "Never embed raw order or product payloads inside Python source" in prompt
+    assert "you must call exactly one chart tool" in prompt
+    assert "time, value, and optional group" in prompt
     assert "Do not include process narration" in prompt
     assert "chart" in prompt and "unavailable" in prompt
 

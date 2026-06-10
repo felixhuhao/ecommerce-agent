@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { RefreshCw, Send, Wrench } from "lucide-react";
 import type { StreamStatus } from "../api/useSessionStream";
 import type { ThreadMessage } from "../types";
@@ -29,6 +29,36 @@ function messageClass(type: ThreadMessage["type"]) {
   return "message message-agent";
 }
 
+interface ImageArtifact {
+  id: string;
+  src: string;
+  title: string;
+  toolName: string | null;
+}
+
+function imageArtifacts(result: Record<string, unknown> | null): ImageArtifact[] {
+  const artifacts = result?.artifacts;
+  if (!Array.isArray(artifacts)) return [];
+
+  return artifacts.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const artifact = item as Record<string, unknown>;
+    const src = artifact.src;
+    if (typeof src !== "string" || !src.startsWith("data:image/")) return [];
+    const id = artifact.id;
+    const title = artifact.title;
+    const toolName = artifact.tool_name;
+    return [
+      {
+        id: typeof id === "string" && id.length > 0 ? id : `chart-${index}`,
+        src,
+        title: typeof title === "string" && title.length > 0 ? title : "Generated chart",
+        toolName: typeof toolName === "string" ? toolName : null,
+      },
+    ];
+  });
+}
+
 export function ConversationView({
   messages,
   provisionalAnswer,
@@ -40,6 +70,11 @@ export function ConversationView({
   onSend,
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView?.({ block: "end" });
+  }, [messages.length, provisionalAnswer, activeTool, busyNote, error]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -76,15 +111,31 @@ export function ConversationView({
         {messages.length === 0 && !provisionalAnswer ? (
           <p className="empty-note">No messages</p>
         ) : null}
-        {messages.map((message) => (
-          <article className={messageClass(message.type)} key={`${message.seq}-${message.message_id}`}>
-            <header>
-              <span>{LABELS[message.type]}</span>
-              {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
-            </header>
-            <p>{message.content}</p>
-          </article>
-        ))}
+        {messages.map((message) => {
+          const artifacts = imageArtifacts(message.result);
+          return (
+            <article className={messageClass(message.type)} key={`${message.seq}-${message.message_id}`}>
+              <header>
+                <span>{LABELS[message.type]}</span>
+                {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
+              </header>
+              <p>{message.content}</p>
+              {artifacts.length > 0 ? (
+                <div className="message-artifacts">
+                  {artifacts.map((artifact) => (
+                    <figure className="chart-artifact" key={artifact.id}>
+                      <img src={artifact.src} alt={artifact.title} />
+                      <figcaption>
+                        <span>{artifact.title}</span>
+                        {artifact.toolName ? <span>{artifact.toolName}</span> : null}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
         {provisionalAnswer ? (
           <article className="message message-agent message-provisional">
             <header>
@@ -94,6 +145,7 @@ export function ConversationView({
             <p>{provisionalAnswer}</p>
           </article>
         ) : null}
+        <div ref={endRef} />
       </div>
 
       <div className="notice-stack">

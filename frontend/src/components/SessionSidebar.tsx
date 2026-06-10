@@ -52,6 +52,7 @@ export function SessionSidebar({
                 key={session.session_id}
                 type="button"
                 onClick={() => onSelect(session.session_id)}
+                aria-current={session.session_id === activeId ? "page" : undefined}
               >
                 <span className="session-row-title">{title}</span>
                 <span className="session-row-meta">

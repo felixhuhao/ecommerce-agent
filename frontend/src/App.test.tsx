@@ -1,11 +1,77 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import type { SessionSummary, ThreadMessage } from "./types";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  FakeEventSource.sources = [];
 });
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+class FakeEventSource {
+  static sources: FakeEventSource[] = [];
+
+  close = vi.fn();
+  private listeners = new Map<string, Set<EventListener>>();
+
+  constructor(readonly url: string) {
+    FakeEventSource.sources.push(this);
+  }
+
+  addEventListener(name: string, listener: EventListener) {
+    const listeners = this.listeners.get(name) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(name, listeners);
+  }
+
+  removeEventListener(name: string, listener: EventListener) {
+    this.listeners.get(name)?.delete(listener);
+  }
+
+  emit(name: string, data: unknown) {
+    const event = new MessageEvent(name, { data: JSON.stringify(data) });
+    this.listeners.get(name)?.forEach((listener) => listener(event));
+  }
+}
+
+function threadMessage(overrides: Partial<ThreadMessage> = {}): ThreadMessage {
+  return {
+    message_id: "m1",
+    session_id: "s1",
+    seq: 1,
+    type: "agent_answer",
+    content: "Done",
+    created_at: "2026-06-10T00:00:00Z",
+    turn_id: null,
+    trace_id: null,
+    actor_id: null,
+    execution_id: null,
+    approval_id: null,
+    card: null,
+    tool_name: null,
+    status: null,
+    result: null,
+    reason: null,
+    ...overrides,
+  };
+}
 
 function renderApp() {
   const client = new QueryClient({
@@ -63,5 +129,163 @@ describe("App", () => {
     expect(screen.getByText("Conversation")).toBeInTheDocument();
     expect(screen.getByText("Approvals")).toBeInTheDocument();
     expect(await screen.findByText("System")).toBeInTheDocument();
+  });
+
+  it("ignores stale send completion after switching sessions", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const sessions: SessionSummary[] = [
+      {
+        session_id: "s1",
+        title: "Session One",
+        created_at: "2026-06-10T00:00:00Z",
+        last_message_preview: null,
+        message_count: 0,
+      },
+      {
+        session_id: "s2",
+        title: "Session Two",
+        created_at: "2026-06-10T00:01:00Z",
+        last_message_preview: null,
+        message_count: 0,
+      },
+    ];
+    const threads: Record<string, ThreadMessage[]> = { s1: [], s2: [] };
+    const sendResponse = deferred<Response>();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/sessions") return jsonResponse({ sessions });
+      if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: threads.s1 });
+      if (url === "/api/sessions/s2/thread") return jsonResponse({ messages: threads.s2 });
+      if (url === "/api/sessions/s1/messages" && init?.method === "POST") {
+        return sendResponse.promise;
+      }
+      if (url === "/health") {
+        return jsonResponse({
+          status: "ok",
+          app: "ecommerce-agent",
+          environment: "test",
+          configured_mcp_servers: ["spring"],
+          agent_ready: true,
+          components: {
+            mongo: { status: "ok" },
+            sandbox: { status: "ok" },
+            model: { status: "ok" },
+          },
+        });
+      }
+      if (url === "/health/mcp") {
+        return jsonResponse({ status: "ok", servers: { spring: { status: "ok", tool_count: 14 } } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+
+    const firstSession = await screen.findByRole("button", { name: /Session One/i });
+    expect(firstSession).toHaveAttribute("aria-current", "page");
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hello from one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/messages", expect.anything()));
+
+    fireEvent.click(screen.getByRole("button", { name: /Session Two/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Session Two/i })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+
+    sendResponse.resolve(jsonResponse({ turn_id: "turn-s1" }, 202));
+    await waitFor(() => expect(screen.getByLabelText("Message")).not.toBeDisabled());
+    expect(screen.queryByText("streaming")).not.toBeInTheDocument();
+  });
+
+  it("ignores stale approval reconciliation after switching sessions", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const sessions: SessionSummary[] = [
+      {
+        session_id: "s1",
+        title: "Session One",
+        created_at: "2026-06-10T00:00:00Z",
+        last_message_preview: null,
+        message_count: 1,
+      },
+      {
+        session_id: "s2",
+        title: "Session Two",
+        created_at: "2026-06-10T00:01:00Z",
+        last_message_preview: null,
+        message_count: 0,
+      },
+    ];
+    const staleProposal = threadMessage({
+      message_id: "proposal-1",
+      type: "agent_proposal",
+      content: "Create a purchase order",
+      approval_id: "approval-1",
+      card: { product: "Coffee" },
+      tool_name: "purchase_order_create",
+      status: "pending",
+    });
+    const getThreadResponse = deferred<Response>();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/sessions") return jsonResponse({ sessions });
+      if (url === "/api/sessions/s1/approvals/approval-1/approve" && init?.method === "POST") {
+        return jsonResponse({ detail: "stale" }, 409);
+      }
+      if (url === "/api/sessions/s1/thread") return getThreadResponse.promise;
+      if (url === "/api/sessions/s2/thread") return jsonResponse({ messages: [] });
+      if (url === "/health") {
+        return jsonResponse({
+          status: "ok",
+          app: "ecommerce-agent",
+          environment: "test",
+          configured_mcp_servers: ["spring"],
+          agent_ready: true,
+          components: {
+            mongo: { status: "ok" },
+            sandbox: { status: "ok" },
+            model: { status: "ok" },
+          },
+        });
+      }
+      if (url === "/health/mcp") {
+        return jsonResponse({ status: "ok", servers: { spring: { status: "ok", tool_count: 14 } } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+
+    await waitFor(() =>
+      expect(FakeEventSource.sources.some((source) => source.url === "/api/sessions/s1/stream")).toBe(
+        true,
+      ),
+    );
+    const firstStream = FakeEventSource.sources.find(
+      (source) => source.url === "/api/sessions/s1/stream",
+    );
+    act(() => firstStream?.emit("thread.append", { message: staleProposal }));
+    expect(await screen.findByText("approval-1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/sessions/s1/approvals/approval-1/approve",
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/thread"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Session Two/i }));
+    getThreadResponse.resolve(jsonResponse({ messages: [staleProposal] }));
+
+    await waitFor(() => expect(screen.queryByText("approval-1")).not.toBeInTheDocument());
   });
 });

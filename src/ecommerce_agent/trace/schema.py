@@ -4,6 +4,7 @@ import dataclasses
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 SCHEMA_VERSION = "1.0"
 
@@ -35,6 +36,7 @@ class TraceEvent:
     tool_call_id: str | None = None
     sandbox_exec_id: str | None = None
     artifact_id: str | None = None
+    artifact: dict[str, Any] | None = None
     approval_id: str | None = None
     execution_id: str | None = None
 

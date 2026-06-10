@@ -4,9 +4,11 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ecommerce_agent.approvals import extract_approval_id
+from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 _SUMMARY_LIMIT = 500
+_IMAGE_DATA_URI_PREFIX = "data:image/"
 
 
 def _summarize(value: Any) -> str | None:
@@ -38,6 +40,61 @@ def _parent_span(raw: dict) -> str | None:
     # parentage from framework-specific fields later.
     parents = raw.get("parent_ids") or []
     return parents[-1] if parents else None
+
+
+def _mime_type_from_data_uri(value: str) -> str | None:
+    if not value.startswith(_IMAGE_DATA_URI_PREFIX):
+        return None
+    header = value.split(",", 1)[0]
+    return header.removeprefix("data:").split(";", 1)[0] or None
+
+
+def _image_artifact_from_output(value: Any, *, fallback_id: str | None = None) -> dict | None:
+    content = getattr(value, "content", None)
+    if content is not None:
+        artifact = _image_artifact_from_output(content, fallback_id=fallback_id)
+        if artifact:
+            return artifact
+
+    text_attr = getattr(value, "text", None)
+    if isinstance(text_attr, str):
+        artifact = _image_artifact_from_output(text_attr, fallback_id=fallback_id)
+        if artifact:
+            return artifact
+
+    if isinstance(value, str):
+        mime_type = _mime_type_from_data_uri(value)
+        if mime_type:
+            return {
+                "id": fallback_id,
+                "kind": "image",
+                "mime_type": mime_type,
+                "src": value,
+            }
+        return None
+
+    if isinstance(value, list):
+        for item in value:
+            artifact = _image_artifact_from_output(item, fallback_id=fallback_id)
+            if artifact:
+                return artifact
+        return None
+
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            artifact = _image_artifact_from_output(text, fallback_id=fallback_id)
+            if artifact:
+                artifact_id = value.get("id") or artifact.get("id")
+                if artifact_id:
+                    artifact["id"] = str(artifact_id)
+                return artifact
+        for nested in value.values():
+            artifact = _image_artifact_from_output(nested, fallback_id=fallback_id)
+            if artifact:
+                return artifact
+
+    return None
 
 
 def _to_trace_event(
@@ -77,6 +134,12 @@ def _to_trace_event(
         )
 
     if event_type == "on_tool_end":
+        output = data.get("output")
+        artifact = (
+            _image_artifact_from_output(output, fallback_id=str(run_id) if run_id else None)
+            if raw.get("name") in VIZ_TOOLS
+            else None
+        )
         return TraceEvent(
             event_type="tool_call",
             name=raw.get("name"),
@@ -84,10 +147,12 @@ def _to_trace_event(
             trace_id=record.trace_id,
             run_id=run_id,
             parent_span_id=_parent_span(raw),
-            result_summary=_summarize(data.get("output")),
+            result_summary=_summarize(output),
             tool_call_id=run_id,
+            artifact_id=artifact.get("id") if artifact else None,
+            artifact=artifact,
             approval_id=(
-                extract_approval_id(data.get("output"))
+                extract_approval_id(output)
                 if raw.get("name") == "request_approval"
                 else None
             ),
