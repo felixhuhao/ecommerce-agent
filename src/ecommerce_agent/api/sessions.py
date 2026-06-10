@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StringConstraints
 from sse_starlette.sse import EventSourceResponse
 
@@ -233,6 +234,18 @@ async def get_trace(session_id: str, turn_id: str, request: Request) -> dict[str
     if record is None:
         raise HTTPException(status_code=404, detail="trace not found")
     return project_timeline(record)
+
+
+@router.get("/{session_id}/turns/{turn_id}/trace/export")
+async def export_trace(session_id: str, turn_id: str, request: Request) -> JSONResponse:
+    await _require_session(request, session_id)
+    record = await _load_trace_record(request, session_id, turn_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="trace not found")
+    return JSONResponse(
+        content=record.to_dict(),
+        headers={"Content-Disposition": f'attachment; filename="trace-{turn_id}.json"'},
+    )
 
 
 @router.post("/{session_id}/messages", status_code=status.HTTP_202_ACCEPTED)

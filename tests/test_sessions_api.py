@@ -579,6 +579,31 @@ def test_trace_endpoint_serves_cache_when_store_get_raises() -> None:
         assert body.json()["turn_id"] == "t1"
 
 
+def test_trace_export_returns_full_record_as_attachment() -> None:
+    app = build_test_app()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        record = TraceRecord(session_id=session_id, turn_id="t1", answer="hello")
+        record.events.append(TraceEvent(event_type="tool_call", name="order_query", phase="end"))
+        app.state.trace_records[session_id] = {"t1": record}
+
+        resp = client.get(f"/api/sessions/{session_id}/turns/t1/trace/export")
+        assert resp.status_code == 200
+        assert resp.headers["content-disposition"] == 'attachment; filename="trace-t1.json"'
+        body = resp.json()
+        assert body["answer"] == "hello"
+        assert body["events"][0]["name"] == "order_query"
+
+
+def test_trace_export_404s_for_unknown_session_and_turn() -> None:
+    with TestClient(build_test_app()) as client:
+        assert client.get("/api/sessions/ghost/turns/t1/trace/export").status_code == 404
+        session_id = client.post("/api/sessions").json()["session_id"]
+        assert (
+            client.get(f"/api/sessions/{session_id}/turns/missing/trace/export").status_code == 404
+        )
+
+
 def _decode_sse(body: str) -> list[dict]:
     return [
         json.loads(line[len("data:") :].strip())
