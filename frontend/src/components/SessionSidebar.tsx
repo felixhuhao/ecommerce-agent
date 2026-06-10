@@ -20,6 +20,16 @@ function compactDate(value: string) {
   }).format(date);
 }
 
+// One-line previews should read as prose, not raw markdown syntax.
+function plainPreview(text: string) {
+  return text
+    .replace(/`{1,3}/g, "")
+    .replace(/[*_#>~]/g, "")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function SessionSidebar({
   sessions,
   activeId,
@@ -59,7 +69,9 @@ export function SessionSidebar({
                   {session.message_count} msg · {compactDate(session.created_at)}
                 </span>
                 {session.last_message_preview ? (
-                  <span className="session-row-preview">{session.last_message_preview}</span>
+                  <span className="session-row-preview">
+                    {plainPreview(session.last_message_preview)}
+                  </span>
                 ) : null}
               </button>
             );

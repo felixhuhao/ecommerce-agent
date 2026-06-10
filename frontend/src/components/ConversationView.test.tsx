@@ -1,7 +1,19 @@
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationView } from "./ConversationView";
 import type { ThreadMessage } from "../types";
+
+function baseProps() {
+  return {
+    provisionalAnswer: null,
+    activeTool: null,
+    streamStatus: "open" as const,
+    composerDisabled: false,
+    busyNote: null,
+    error: null,
+    onSend: vi.fn(),
+  };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -85,5 +97,29 @@ describe("ConversationView", () => {
 
     const image = document.querySelector(".chart-artifact img");
     expect(image).toHaveAttribute("src", src);
+  });
+
+  it("renders agent markdown (bold + GFM table) as HTML", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        messages={[
+          message({ content: "**Bold** line\n\n| Category | Sales |\n|---|---|\n| Phones | 42 |" }),
+        ]}
+      />,
+    );
+
+    expect(document.querySelector(".message-md strong")).not.toBeNull();
+    expect(document.querySelector(".message-md table")).not.toBeNull();
+    expect(document.querySelector(".message-md th")?.textContent).toContain("Category");
+  });
+
+  it("renders operator messages as plain text, not markdown", () => {
+    render(
+      <ConversationView {...baseProps()} messages={[message({ type: "user", content: "**not bold**" })]} />,
+    );
+
+    expect(document.querySelector(".message-md")).toBeNull();
+    expect(screen.getByText("**not bold**")).toBeInTheDocument();
   });
 });

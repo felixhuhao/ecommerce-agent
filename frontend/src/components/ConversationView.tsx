@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { RefreshCw, Send, Wrench } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
 import type { ThreadMessage } from "../types";
 
@@ -27,6 +29,18 @@ function messageClass(type: ThreadMessage["type"]) {
   if (type === "agent_proposal") return "message message-proposal";
   if (type === "approval_status" || type === "execution_result") return "message message-system";
   return "message message-agent";
+}
+
+// Operators type plain text; everything the agent/backend writes is GitHub-flavored markdown.
+function MessageBody({ type, content }: { type: ThreadMessage["type"]; content: string }) {
+  if (type === "user") {
+    return <p className="message-text">{content}</p>;
+  }
+  return (
+    <div className="message-md">
+      <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+    </div>
+  );
 }
 
 interface ImageArtifact {
@@ -119,7 +133,7 @@ export function ConversationView({
                 <span>{LABELS[message.type]}</span>
                 {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
               </header>
-              <p>{message.content}</p>
+              <MessageBody type={message.type} content={message.content} />
               {artifacts.length > 0 ? (
                 <div className="message-artifacts">
                   {artifacts.map((artifact) => (
@@ -142,7 +156,7 @@ export function ConversationView({
               <span>Agent</span>
               <span className="status-pill">streaming</span>
             </header>
-            <p>{provisionalAnswer}</p>
+            <p className="message-text">{provisionalAnswer}</p>
           </article>
         ) : null}
         <div ref={endRef} />
