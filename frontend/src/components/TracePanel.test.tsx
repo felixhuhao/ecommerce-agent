@@ -56,6 +56,37 @@ describe("TracePanel", () => {
     );
   });
 
+  it("renders model-call spans", () => {
+    render(
+      <TracePanel
+        {...base}
+        timeline={timeline({
+          spans: [
+            {
+              kind: "model_call",
+              name: "deepseek-chat",
+              status: "ok",
+              ts: 1,
+              duration_ms: 80,
+              args_summary: null,
+              result_summary: "answer chunk",
+              tokens_in: 12,
+              tokens_out: 8,
+              span_id: "model-1",
+              artifact_id: null,
+              approval_id: null,
+              error_message: null,
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("deepseek-chat")).toBeInTheDocument();
+    expect(screen.getByText("80 ms")).toBeInTheDocument();
+    expect(screen.getByText("tokens 12 in / 8 out")).toBeInTheDocument();
+  });
+
   it("links an artifact span to the Artifacts tab", () => {
     const onViewArtifacts = vi.fn();
     render(<TracePanel {...base} onViewArtifacts={onViewArtifacts} timeline={timeline()} />);

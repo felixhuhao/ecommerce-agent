@@ -11,6 +11,12 @@ interface TracePanelProps {
   onViewApproval: (approvalId: string) => void;
 }
 
+function statusClass(status: string) {
+  if (status === "ok") return "ok";
+  if (status === "pending") return "warn";
+  return "bad";
+}
+
 function SpanRow({
   span,
   onViewArtifacts,
@@ -26,7 +32,7 @@ function SpanRow({
       <summary>
         <Icon size={14} aria-hidden="true" />
         <span className="trace-span-name">{span.name ?? span.kind}</span>
-        <span className={`status-dot status-${span.status}`} aria-hidden="true" />
+        <span className={`status-dot ${statusClass(span.status)}`} aria-hidden="true" />
         {span.duration_ms != null ? (
           <span className="trace-span-dur">{Math.round(span.duration_ms)} ms</span>
         ) : null}

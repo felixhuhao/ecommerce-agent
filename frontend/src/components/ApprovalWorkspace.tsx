@@ -9,6 +9,7 @@ interface ApprovalWorkspaceProps {
   onApprove: (approvalId: string) => Promise<void> | void;
   onReject: (approvalId: string, reason: string | undefined) => Promise<void> | void;
   focusApprovalId?: string | null;
+  onFocusApprovalHandled?: () => void;
 }
 
 function formatValue(value: unknown) {
@@ -31,6 +32,7 @@ export function ApprovalWorkspace({
   onApprove,
   onReject,
   focusApprovalId,
+  onFocusApprovalHandled,
 }: ApprovalWorkspaceProps) {
   const [reasons, setReasons] = useState<Record<string, string>>({});
 
@@ -39,7 +41,8 @@ export function ApprovalWorkspace({
     document
       .querySelector(`[data-approval-id="${focusApprovalId}"]`)
       ?.scrollIntoView({ block: "center" });
-  }, [focusApprovalId]);
+    onFocusApprovalHandled?.();
+  }, [focusApprovalId, onFocusApprovalHandled]);
 
   return (
     <section className="rail-panel approvals-panel">

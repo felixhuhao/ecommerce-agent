@@ -14,4 +14,8 @@ describe("formatRelativeTime", () => {
   it("falls back to the raw value for invalid input", () => {
     expect(formatRelativeTime("not-a-date", now)).toBe("not-a-date");
   });
+
+  it("treats future timestamps as just now", () => {
+    expect(formatRelativeTime("2026-06-10T12:01:00Z", now)).toBe("just now");
+  });
 });

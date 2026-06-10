@@ -64,6 +64,11 @@ describe("api client", () => {
     });
   });
 
+  it("approveApproval throws ApiError on non-conflict failures", async () => {
+    mockFetch(500, { detail: "boom" });
+    await expect(approveApproval("s1", "a1")).rejects.toMatchObject({ status: 500 });
+  });
+
   it("getMcpHealth fetches /health/mcp", async () => {
     const fetchMock = vi.fn(
       async () =>

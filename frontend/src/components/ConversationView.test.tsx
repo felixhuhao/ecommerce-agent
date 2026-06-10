@@ -133,6 +133,20 @@ describe("ConversationView", () => {
     expect(onInspect).toHaveBeenCalledWith("turn-9");
   });
 
+  it("shows an Inspect control on agent proposals", () => {
+    const onInspect = vi.fn();
+    render(
+      <ConversationView
+        {...baseProps()}
+        onInspect={onInspect}
+        messages={[message({ type: "agent_proposal", turn_id: "proposal-turn" })]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Inspect/i }));
+    expect(onInspect).toHaveBeenCalledWith("proposal-turn");
+  });
+
   it("shows no Inspect control on operator messages", () => {
     render(
       <ConversationView
@@ -143,5 +157,26 @@ describe("ConversationView", () => {
     );
 
     expect(screen.queryByRole("button", { name: /Inspect/i })).toBeNull();
+  });
+
+  it("clears handled message focus after scrolling", async () => {
+    const scrollIntoView = vi.fn();
+    const onFocusMessageHandled = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    render(
+      <ConversationView
+        {...baseProps()}
+        messages={[message({ message_id: "m-focus" })]}
+        focusMessageId="m-focus"
+        onFocusMessageHandled={onFocusMessageHandled}
+      />,
+    );
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" }));
+    expect(onFocusMessageHandled).toHaveBeenCalled();
   });
 });

@@ -16,6 +16,7 @@ interface ConversationViewProps {
   onSend: (message: string) => Promise<void> | void;
   onInspect?: (turnId: string) => void;
   focusMessageId?: string | null;
+  onFocusMessageHandled?: () => void;
 }
 
 const LABELS: Record<ThreadMessage["type"], string> = {
@@ -86,6 +87,7 @@ export function ConversationView({
   onSend,
   onInspect,
   focusMessageId,
+  onFocusMessageHandled,
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -97,7 +99,8 @@ export function ConversationView({
   useEffect(() => {
     if (!focusMessageId) return;
     document.querySelector(`[data-message-id="${focusMessageId}"]`)?.scrollIntoView({ block: "center" });
-  }, [focusMessageId]);
+    onFocusMessageHandled?.();
+  }, [focusMessageId, onFocusMessageHandled]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

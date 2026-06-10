@@ -240,8 +240,20 @@ export function App() {
     setFocusApprovalId(approvalId);
   }, []);
 
+  const handleViewArtifacts = useCallback(() => {
+    setActiveTab("artifacts");
+  }, []);
+
   const handleJumpToMessage = useCallback((messageId: string) => {
     setFocusMessageId(messageId);
+  }, []);
+
+  const handleFocusMessageHandled = useCallback(() => {
+    setFocusMessageId(null);
+  }, []);
+
+  const handleFocusApprovalHandled = useCallback(() => {
+    setFocusApprovalId(null);
   }, []);
 
   const createNewSession = createMutation.mutate;
@@ -276,6 +288,7 @@ export function App() {
           onSend={handleSend}
           onInspect={handleInspect}
           focusMessageId={focusMessageId}
+          onFocusMessageHandled={handleFocusMessageHandled}
         />
       }
       rail={
@@ -291,6 +304,7 @@ export function App() {
               onApprove={handleApprove}
               onReject={handleReject}
               focusApprovalId={focusApprovalId}
+              onFocusApprovalHandled={handleFocusApprovalHandled}
             />
           }
           artifacts={
@@ -308,7 +322,7 @@ export function App() {
               isLoading={traceQuery.isLoading}
               isError={traceQuery.isError}
               exportHref={activeId && inspectedTurnId ? traceExportUrl(activeId, inspectedTurnId) : null}
-              onViewArtifacts={() => setActiveTab("artifacts")}
+              onViewArtifacts={handleViewArtifacts}
               onViewApproval={handleViewApproval}
             />
           }

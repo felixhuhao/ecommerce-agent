@@ -60,7 +60,7 @@ async function approvalAction(url: string, init: RequestInit): Promise<ApprovalA
   const res = await fetch(url, init);
   const body = await res.json().catch(() => null);
   if (res.status === 409) return { conflict: true, body };
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!res.ok) throw new ApiError(res.status);
   return { conflict: false, body };
 }
 
