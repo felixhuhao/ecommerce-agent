@@ -71,8 +71,10 @@ A `TraceStore` Protocol with two implementations, mirroring `ThreadStore`:
 - `trace/mongo.py` — `MongoTraceStore` (source of truth), `from_settings`, `close`, `ping`.
 
 Methods:
-- `save(record: TraceRecord) -> None` — persist the **full** record; idempotent **upsert keyed by
-  `trace_id`** (a re-save replaces, never duplicates).
+- `save(record: TraceRecord) -> None` — persist the **full** record; idempotent **upsert keyed by the
+  natural read key `(session_id, turn_id)`** (a re-save for the same turn replaces, never duplicates).
+  `trace_id` stays a stored/returned field, but it is **not** the lookup key — the read contract is "one
+  trace per turn," so the turn is the key.
 - `get(session_id: str, turn_id: str) -> TraceRecord | None` — fetch one turn's record; `None` if absent.
 - `ping() -> bool` — store reachability (for `/health`, additive; not required by acceptance).
 
@@ -85,9 +87,12 @@ unknown keys (forward-compat). `MongoTraceStore.get` strips Mongo's `_id` and re
 `TraceRecord.from_dict(doc)` — a real `TraceRecord` with `TraceEvent` objects, identical in shape to the
 in-memory cache so both read paths feed `project_timeline` the same type (§3.4).
 
-`MongoTraceStore` uses a new **`traces`** collection: `_id = trace_id`, document = `record.to_dict()`,
-with an index on `(session_id, turn_id)`. We persist the **full** record (including each event's
-data-URI `artifact.src`) for export fidelity. The resulting small duplication of chart bytes (also in
+`MongoTraceStore` uses a new **`traces`** collection. `save` upserts with
+`update_one({"session_id", "turn_id"}, {"$set": record.to_dict()}, upsert=True)`, and a **unique
+compound index on `(session_id, turn_id)`** enforces exactly one record per turn (so a stray second
+record with a different `trace_id` can never make `get` ambiguous). Mongo assigns `_id`; lookup is by
+the turn key, not `_id`/`trace_id`. We persist the **full** record (including each event's data-URI
+`artifact.src`) for export fidelity. The resulting small duplication of chart bytes (also in
 `thread_messages`) is **accepted** — charts are a few KB and sessions are few; the UI-facing timeline
 projection drops `src` (§3.3) so the read payload stays light.
 
@@ -149,9 +154,12 @@ the background task has populated the cache but before `save` lands.
 *inside* `run_turn`, i.e. **before** `run_and_record_trace` populates the cache or calls `save`. So for a
 brief moment after the answer becomes visible, **neither** the store nor the cache holds the record and
 these endpoints return `404`. This residual window is closed on the client: **TracePanel treats a `404`
-as transient and retries within a short grace period** (§5.3) — the record always lands sub-second.
-Inspect only appears on finalized durable messages (§5.2), so the retry is bounded and rare. The
-endpoint stays simple (plain `404`); no "pending" sentinel is introduced.
+as transient and retries within a short grace period** (§5.3) — the record **normally** lands
+sub-second, so the retry almost always succeeds. Inspect only appears on finalized durable messages
+(§5.2), so the retry is bounded and rare. Under heavy event-loop pressure a record could still miss the
+grace window; that's acceptable for single-operator M3 — the user simply re-opens Inspect (a fresh
+fetch) and the now-persisted trace loads. The endpoint stays simple (plain `404`); no "pending"
+sentinel is introduced.
 
 1. `GET /api/sessions/{session_id}/turns/{turn_id}/trace` → `project_timeline(record)` (§3.3). `404` if
    no record for that turn (store miss **and** cache miss).
@@ -247,7 +255,12 @@ session-unique, §4):
 
 - `types.ts` — add `TraceSpan`, `TraceTimeline`, `ArtifactSummary` (mirror §3.3/§4 shapes).
 - `api/client.ts` — add `getTrace(sessionId, turnId)`, `getArtifacts(sessionId)`, and a pure
-  `traceExportUrl(sessionId, turnId)` builder.
+  `traceExportUrl(sessionId, turnId)` builder. **Throw a status-bearing error.** The current `json`
+  helper throws `new Error(\`${res.status}\`)` (a plain `Error` whose message is the status string),
+  which forces brittle string matching. Introduce `class ApiError extends Error { status: number }` and
+  throw it from `json` so TracePanel's retry predicate is clean — e.g.
+  `retry: (count, err) => err instanceof ApiError && err.status === 404 && count < 3`. Existing callers
+  that compare `err.message` keep working (the message is still the status); this is an additive field.
 - `lib/mime.ts` — `extFromMime(mime)` (`image/svg+xml`→`svg`, `image/png`→`png`, fallback `bin`).
 - **No reducer changes.** Both panels are React-Query-backed reads, independent of the SSE message
   reducer — consistent with how Phase 1 separates query-backed fetches from the live reducer.
@@ -288,8 +301,8 @@ record exists so the deferral is a documented choice, not an oversight.
 
 **Backend (pytest; extend the fake-Mongo doubles; existing conventions):**
 - **TraceStore:** `InMemoryTraceStore` and the Mongo double — `save` then `get(session_id, turn_id)`
-  round-trips; `get` returns `None` for an unknown turn; re-`save` of the same `trace_id` upserts (no
-  duplicate document).
+  round-trips; `get` returns `None` for an unknown turn; re-`save` for the same `(session_id, turn_id)`
+  (even with a different `trace_id`) upserts to **one** record (no duplicate); `get` stays unambiguous.
 - **Deserialization round-trip:** `TraceRecord.from_dict(record.to_dict())` reconstructs a record whose
   `events` are real `TraceEvent` instances (not dicts) with fields intact, and `project_timeline` runs
   on it identically to the in-memory record; `from_dict` ignores unknown keys (forward-compat) and the
