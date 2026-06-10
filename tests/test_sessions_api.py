@@ -17,6 +17,7 @@ from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
+from ecommerce_agent.trace.store import InMemoryTraceStore
 
 
 class FakeAgent:
@@ -103,6 +104,7 @@ def build_test_app() -> FastAPI:
     app.state.session_bus = SessionBus()
     app.state.background_tasks = set()
     app.state.trace_records = {}
+    app.state.trace_store = InMemoryTraceStore()
     app.state.approval_clients = {}
 
     async def build_runtime(session_id: str) -> SessionRuntime:
@@ -475,6 +477,50 @@ def test_reject_endpoint_does_not_append_when_decision_does_not_change() -> None
     assert response.status_code == 409
     assert approval_client.calls == ["get:a1", "reject:a1:too expensive"]
     assert thread["messages"] == []
+
+
+def test_turn_persists_trace_to_store() -> None:
+    app = build_test_app()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        turn_id = client.post(
+            f"/api/sessions/{session_id}/messages", json={"message": "hello"}
+        ).json()["turn_id"]
+        _wait_for_trace(app, session_id, turn_id)
+
+        deadline = time.monotonic() + 2.0
+        record = None
+        while time.monotonic() < deadline:
+            record = asyncio.run(app.state.trace_store.get(session_id, turn_id))
+            if record is not None:
+                break
+            time.sleep(0.01)
+        assert record is not None and record.turn_id == turn_id
+
+
+@pytest.mark.asyncio
+async def test_trace_save_failure_is_contained() -> None:
+    from ecommerce_agent.api.sessions import MessageRequest, post_message
+
+    app = build_test_app()
+
+    class FailingTraceStore(InMemoryTraceStore):
+        async def save(self, record) -> None:  # noqa: ANN001
+            raise RuntimeError("mongo down")
+
+    app.state.trace_store = FailingTraceStore()
+    session_id = await app.state.session_registry.create()
+    await app.state.session_store.create(session_id)
+
+    result = await post_message(
+        session_id, MessageRequest(message="hi"), SimpleNamespace(app=app)
+    )
+    turn_id = result["turn_id"]
+    await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
+
+    types = [m.type for m in await app.state.thread_store.list_messages(session_id)]
+    assert types == ["user", "agent_answer"]
+    assert app.state.trace_records[session_id][turn_id].turn_id == turn_id
 
 
 def _decode_sse(body: str) -> list[dict]:

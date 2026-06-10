@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
@@ -16,6 +17,7 @@ from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import append_and_publish
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+logger = logging.getLogger(__name__)
 
 
 class MessageRequest(BaseModel):
@@ -274,6 +276,12 @@ async def post_message(
             trace_records.setdefault(session_id, {})[turn_id] = record
             # Compatibility shortcut for the sequential live reliability harness.
             app_state.last_trace = record
+            trace_store = getattr(app_state, "trace_store", None)
+            if trace_store is not None:
+                try:
+                    await trace_store.save(record)
+                except Exception:
+                    logger.exception("failed to persist trace for %s/%s", session_id, turn_id)
         finally:
             await registry.end_turn(session_id)
 

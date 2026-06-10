@@ -9,6 +9,7 @@ from ecommerce_agent.api.app import create_app
 from ecommerce_agent.config import Settings
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.store import InMemoryThreadStore
+from ecommerce_agent.trace.store import InMemoryTraceStore
 
 
 class FakeAgent:
@@ -84,6 +85,7 @@ def make_settings(**overrides: object) -> Settings:
 def use_in_memory_stores(app) -> None:  # noqa: ANN001
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = InMemorySessionStore()
+    app.state.trace_store = InMemoryTraceStore()
 
 
 def wait_for_thread_types(client: TestClient, session_id: str, expected_types: list[str]) -> dict:

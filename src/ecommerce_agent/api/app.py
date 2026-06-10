@@ -30,6 +30,7 @@ from ecommerce_agent.sessions.factory import build_session_runtime
 from ecommerce_agent.sessions.registry import SessionRegistry
 from ecommerce_agent.sessions.store import MongoSessionStore
 from ecommerce_agent.threads.mongo import MongoThreadStore
+from ecommerce_agent.trace.mongo import MongoTraceStore
 
 
 def make_runtime_builder(settings: Settings):
@@ -49,6 +50,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_store = getattr(
         app.state, "session_store", None
     ) or MongoSessionStore.from_settings(settings)
+    app.state.trace_store = getattr(app.state, "trace_store", None) or MongoTraceStore.from_settings(
+        settings
+    )
     app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
     app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
     app.state.approval_clients = getattr(app.state, "approval_clients", None) or {}
@@ -79,6 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         session_store_close = getattr(app.state.session_store, "close", None)
         if callable(session_store_close):
             session_store_close()
+        trace_store_close = getattr(app.state.trace_store, "close", None)
+        if callable(trace_store_close):
+            trace_store_close()
         await _close_approval_clients(getattr(app.state, "approval_clients", {}))
 
 
@@ -168,6 +175,7 @@ def create_app(
     app.state.trace_records = {}
     app.state.thread_store = None
     app.state.session_store = None
+    app.state.trace_store = None
     app.state.session_bus = None
     app.state.session_registry = None
     app.state.background_tasks = None
