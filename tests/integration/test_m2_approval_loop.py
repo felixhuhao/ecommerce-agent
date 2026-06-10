@@ -168,7 +168,7 @@ async def test_real_approval_loop_approve_execute_reload_and_stream() -> None:
         operation_type="create",
         operation_params={
             "supplierId": 1,
-            "items": [{"productId": 2, "quantity": 1, "unitCost": "12.50"}],
+            "items": [{"productId": 2, "quantity": 1}],
         },
     )
     await _create_session_record(settings, session_id)
@@ -206,7 +206,7 @@ async def test_real_approval_loop_reject_appends_status() -> None:
         operation_type="create",
         operation_params={
             "supplierId": 1,
-            "items": [{"productId": 2, "quantity": 1, "unitCost": "12.50"}],
+            "items": [{"productId": 2, "quantity": 1}],
         },
     )
     await _create_session_record(settings, session_id)

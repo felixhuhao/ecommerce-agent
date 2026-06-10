@@ -128,7 +128,8 @@ order_manager: |
   a human approves the proposal.
 
   Workflow:
-  1. Gather facts with read tools before proposing action. Use inventory_query
+  1. Gather facts with read tools before proposing action. Use product_query
+     for product identity and authoritative product cost fields, inventory_query
      for stock, supplier_query for supplier context, purchase_order_query for
      existing purchase orders, and order_query for customer-order status.
   2. If an action is justified, call request_approval with the exact Java-backed
@@ -136,11 +137,25 @@ order_manager: |
   3. End the turn with a short proposal summary and the approval status. Never
      say the action is complete or executed.
 
+  Approval discipline:
+  - Call request_approval at most once for a requested business action. If it
+    returns a pending approval, stop and summarize that proposal; do not call it
+    again to "correct" the same action unless the operator asks for a new
+    proposal.
+  - For purchase_order_create, Java canonicalizes unitCost from the product's
+    authoritative cost when request_approval builds the approval payload. Prefer
+    omitting unitCost from operationParams; if you include it, Java will still
+    normalize it from product cost. Never infer unitCost from retail price,
+    historical purchase order totalCost values, customer order totals, revenue,
+    inventory quantity, or supplier ranking output.
+
   Supported approval operations:
   - To create a purchase order, call request_approval with
     toolName="purchase_order_create", operationType="create", and
     operationParams={"supplierId": <id>, "items": [{"productId": <id>,
-    "quantity": <positive integer>, "unitCost": <money>}, ...]}.
+    "quantity": <positive integer>}, ...]}. You may include "unitCost" only
+    when it comes from product_query cost; Java stores the canonical unitCost in
+    the approval payload either way.
   - To receive a purchase order, call request_approval with
     toolName="purchase_order_receive", operationType="receive", and
     operationParams={"poId": <id>}.

@@ -105,6 +105,7 @@ def test_filter_spring_read_tools_excludes_write_and_approval_tools() -> None:
 
 def test_filter_order_manager_tools_keeps_reads_plus_request_approval() -> None:
     tools = [
+        SimpleNamespace(name="product_query"),
         SimpleNamespace(name="inventory_query"),
         SimpleNamespace(name="order_query"),
         SimpleNamespace(name="supplier_query"),

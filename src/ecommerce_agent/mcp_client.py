@@ -39,6 +39,7 @@ WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = WRITE_SPRING_TOOLS | APPROVAL_S
 
 ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = frozenset(
     {
+        "product_query",
         "purchase_order_query",
         "order_query",
         "inventory_query",

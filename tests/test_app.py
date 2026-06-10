@@ -129,10 +129,11 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     assert spring["sales_analyst_allowed_tool_count"] == 10
     assert "inventory_query" in spring["sales_analyst_allowed_tools"]
     assert "request_approval" not in spring["sales_analyst_allowed_tools"]
-    assert spring["order_manager_allowed_tool_count"] == 5
+    assert spring["order_manager_allowed_tool_count"] == 6
     assert spring["order_manager_allowed_tools"] == [
         "inventory_query",
         "order_query",
+        "product_query",
         "purchase_order_query",
         "request_approval",
         "supplier_query",

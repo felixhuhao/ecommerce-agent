@@ -54,6 +54,24 @@ def build_sales_analyst(
     )
 
 
+def build_order_manager(
+    model: BaseChatModel,
+    *,
+    order_manager_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the approval-only order manager for direct approval-intent routing."""
+    return build_agent(
+        model,
+        list(order_manager_tools),
+        system_prompt=get_prompt("order_manager"),
+        subagents=[],
+        middleware=_reliability_middleware(),
+        skills=[],
+        backend=backend,
+    )
+
+
 def sales_analyst_subagent(
     *,
     spring_read_tools: Sequence[BaseTool],

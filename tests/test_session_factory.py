@@ -32,6 +32,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         async def get_tools(self, *, server_name: str):
             self.calls.append(server_name)
             return [
+                FakeTool("product_query"),
                 FakeTool("order_query"),
                 FakeTool("request_approval"),
             ]
@@ -59,28 +60,17 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         captured["direct_analyst_backend"] = backend
         return FakeAgent("ANALYST")
 
-    def fake_sales_analyst_subagent(*, spring_read_tools, staging_tools, viz_tools):
-        captured["analyst_tools"] = [tool.name for tool in spring_read_tools]
-        captured["analyst_staging_tools"] = [tool.name for tool in staging_tools]
-        captured["viz_tools"] = [tool.name for tool in viz_tools]
-        return {"name": "sales-analyst"}
-
-    def fake_order_manager_subagent(*, order_manager_tools):
-        captured["order_manager_tools"] = [tool.name for tool in order_manager_tools]
-        return {"name": "order-manager"}
-
-    def fake_build_coordinator(model, *, sales_analyst_subagent, order_manager_subagent, backend):
-        captured["subagents"] = [sales_analyst_subagent["name"], order_manager_subagent["name"]]
-        return FakeAgent("COORDINATOR")
+    def fake_build_order_manager(model, *, order_manager_tools, backend):
+        captured["direct_order_manager_tools"] = [tool.name for tool in order_manager_tools]
+        captured["direct_order_manager_backend"] = backend
+        return FakeAgent("ORDER_MANAGER")
 
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
     monkeypatch.setattr(factory_module, "build_sales_analysis_staging_tool", fake_build_stage_tool)
     monkeypatch.setattr(factory_module, "get_primary_model", lambda settings: object())
     monkeypatch.setattr(factory_module, "build_sales_analyst", fake_build_sales_analyst)
-    monkeypatch.setattr(factory_module, "sales_analyst_subagent", fake_sales_analyst_subagent)
-    monkeypatch.setattr(factory_module, "order_manager_subagent", fake_order_manager_subagent)
-    monkeypatch.setattr(factory_module, "build_coordinator", fake_build_coordinator)
+    monkeypatch.setattr(factory_module, "build_order_manager", fake_build_order_manager)
 
     settings = Settings(_env_file=None, llm_api_key="k", spring_mcp_user_id="9")
 
@@ -91,22 +81,24 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["session_id"] == "sess-1"
     assert captured["user_id"] == "9"
     assert captured["sandbox_session_id"] == "sess-1"
-    assert captured["stage_tool_inputs"] == ["order_query"]
+    assert captured["stage_tool_inputs"] == ["product_query", "order_query"]
     assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]
-    assert captured["direct_analyst_tools"] == ["order_query"]
+    assert captured["direct_analyst_tools"] == ["product_query", "order_query"]
     assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
-    assert captured["analyst_tools"] == ["order_query"]
-    assert captured["analyst_staging_tools"] == ["stage_sales_analysis_inputs"]
-    assert captured["order_manager_tools"] == ["order_query", "request_approval"]
-    assert captured["subagents"] == ["sales-analyst", "order-manager"]
+    assert captured["direct_order_manager_tools"] == [
+        "product_query",
+        "order_query",
+        "request_approval",
+    ]
+    assert captured["direct_order_manager_backend"] is captured["direct_analyst_backend"]
     assert mcp_client.calls == ["spring"]
 
 
 @pytest.mark.asyncio
 async def test_routed_session_agent_sends_analysis_directly_to_analyst() -> None:
     analyst = FakeAgent("analyst")
-    coordinator = FakeAgent("coordinator")
-    routed = RoutedSessionAgent(analyst_agent=analyst, coordinator_agent=coordinator)
+    order_manager = FakeAgent("order-manager")
+    routed = RoutedSessionAgent(analyst_agent=analyst, order_manager_agent=order_manager)
 
     events = [
         event
@@ -126,14 +118,14 @@ async def test_routed_session_agent_sends_analysis_directly_to_analyst() -> None
 
     assert events == [{"event": "selected", "name": "analyst"}]
     assert analyst.calls == ["Forecast next month sales by category"]
-    assert coordinator.calls == []
+    assert order_manager.calls == []
 
 
 @pytest.mark.asyncio
-async def test_routed_session_agent_sends_restock_actions_to_coordinator() -> None:
+async def test_routed_session_agent_sends_restock_actions_directly_to_order_manager() -> None:
     analyst = FakeAgent("analyst")
-    coordinator = FakeAgent("coordinator")
-    routed = RoutedSessionAgent(analyst_agent=analyst, coordinator_agent=coordinator)
+    order_manager = FakeAgent("order-manager")
+    routed = RoutedSessionAgent(analyst_agent=analyst, order_manager_agent=order_manager)
 
     events = [
         event
@@ -151,6 +143,6 @@ async def test_routed_session_agent_sends_restock_actions_to_coordinator() -> No
         )
     ]
 
-    assert events == [{"event": "selected", "name": "coordinator"}]
+    assert events == [{"event": "selected", "name": "order-manager"}]
     assert analyst.calls == []
-    assert coordinator.calls == ["Create a purchase order to restock product 1"]
+    assert order_manager.calls == ["Create a purchase order to restock product 1"]

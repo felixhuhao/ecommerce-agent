@@ -33,6 +33,12 @@ def test_get_order_manager_prompt_is_nonempty_and_approval_only() -> None:
     assert "purchase_order_receive" in prompt
     assert "order_update" in prompt
     assert "Never" in prompt and "executed" in prompt
+    assert "product_query" in prompt
+    assert "at most once" in prompt
+    assert "Prefer" in prompt and "omitting unitCost" in prompt
+    assert "Java canonicalizes unitCost" in prompt
+    assert "purchase order totalCost" in prompt
+    assert "retail price" in prompt
 
 
 def test_get_coordinator_prompt_is_active_router() -> None:

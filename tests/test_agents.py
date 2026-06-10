@@ -3,6 +3,7 @@ import ecommerce_agent.agents as agents_module
 from ecommerce_agent.agent import build_agent
 from ecommerce_agent.agents import (
     build_coordinator,
+    build_order_manager,
     build_sales_analyst,
     order_manager_subagent,
     sales_analyst_subagent,
@@ -97,6 +98,45 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
     assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= middleware_types
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
+
+
+def test_build_order_manager_uses_approval_tools_directly(monkeypatch) -> None:
+    captured = {}
+
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            middleware=list(middleware),
+            kwargs=kwargs,
+        )
+        return "ORDER_MANAGER"
+
+    monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
+
+    backend = object()
+    result = build_order_manager(
+        "MODEL",  # type: ignore[arg-type]
+        order_manager_tools=[
+            _Tool("product_query"),  # type: ignore[list-item]
+            _Tool("request_approval"),  # type: ignore[list-item]
+        ],
+        backend=backend,
+    )
+
+    assert result == "ORDER_MANAGER"
+    assert captured["backend"] is backend
+    assert [tool.name for tool in captured["tools"]] == [
+        "product_query",
+        "request_approval",
+    ]
+    assert "request_approval" in captured["system_prompt"]
+    assert captured["kwargs"]["subagents"] == []
+    assert captured["kwargs"]["skills"] == []
+    middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
+    assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= middleware_types
 
 
 def test_sales_analyst_subagent_seam_shape() -> None:

@@ -5,10 +5,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ecommerce_agent.agents import (
-    build_coordinator,
+    build_order_manager,
     build_sales_analyst,
-    order_manager_subagent,
-    sales_analyst_subagent,
 )
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
@@ -42,11 +40,11 @@ _ORDER_MANAGER_KEYWORDS = (
 
 
 class RoutedSessionAgent:
-    """Route read-only analysis directly while keeping approvals on the coordinator path."""
+    """Route single-specialist turns directly, leaving the coordinator as a future seam."""
 
-    def __init__(self, *, analyst_agent: Any, coordinator_agent: Any) -> None:
+    def __init__(self, *, analyst_agent: Any, order_manager_agent: Any) -> None:
         self.analyst_agent = analyst_agent
-        self.coordinator_agent = coordinator_agent
+        self.order_manager_agent = order_manager_agent
 
     async def astream_events(
         self,
@@ -56,7 +54,7 @@ class RoutedSessionAgent:
         version: str,
     ) -> AsyncIterator[dict]:
         text = _latest_user_text(inputs)
-        selected = self.coordinator_agent if _needs_order_manager(text) else self.analyst_agent
+        selected = self.order_manager_agent if _needs_order_manager(text) else self.analyst_agent
         async for event in selected.astream_events(inputs, config=config, version=version):
             yield event
 
@@ -116,21 +114,14 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         viz_tools=viz_tools,
         backend=sandbox,
     )
-    analyst = sales_analyst_subagent(
-        spring_read_tools=spring_tools,
-        staging_tools=staging_tools,
-        viz_tools=viz_tools,
-    )
-    order_manager = order_manager_subagent(order_manager_tools=order_manager_tools)
-    agent = build_coordinator(
+    order_manager_agent = build_order_manager(
         model,
-        sales_analyst_subagent=analyst,
-        order_manager_subagent=order_manager,
+        order_manager_tools=order_manager_tools,
         backend=sandbox,
     )
     routed_agent = RoutedSessionAgent(
         analyst_agent=analyst_agent,
-        coordinator_agent=agent,
+        order_manager_agent=order_manager_agent,
     )
     return SessionRuntime(
         session_id=session_id,
