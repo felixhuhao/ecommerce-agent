@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -7,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ecommerce_agent.api.sessions import _session_events
+from ecommerce_agent.api.sessions import _session_events, approve_approval
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.approvals import ApprovalApiError
 from ecommerce_agent.config import Settings
@@ -195,6 +196,29 @@ def test_approve_endpoint_orchestrates_execute_and_appends_messages() -> None:
     assert thread["messages"][0]["status"] == "approved"
     assert thread["messages"][1]["approval_id"] == "a1"
     assert thread["messages"][1]["result"] == {"purchaseOrderId": 88}
+
+
+@pytest.mark.asyncio
+async def test_approve_endpoint_publishes_execution_result_to_session_bus() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient()
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    async with app.state.session_bus.subscription("s1") as sub:
+        result = await approve_approval(
+            "s1",
+            "a1",
+            SimpleNamespace(app=app),  # type: ignore[arg-type]
+        )
+        approval_event = await asyncio.wait_for(sub.queue.get(), timeout=1)
+        execution_event = await asyncio.wait_for(sub.queue.get(), timeout=1)
+
+    assert result["execution"]["status"] == "consumed"
+    assert approval_event["event"] == "thread.append"
+    assert approval_event["message"]["type"] == "approval_status"
+    assert execution_event["event"] == "thread.append"
+    assert execution_event["message"]["type"] == "execution_result"
+    assert execution_event["message"]["approval_id"] == "a1"
 
 
 def test_approve_endpoint_appends_invalidated_status_without_execution_result() -> None:

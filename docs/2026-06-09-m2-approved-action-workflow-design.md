@@ -2,7 +2,7 @@
 
 > Design spec for the M2 milestone of the e-commerce agent: propose → approve → backend execute,
 > with a server-owned conversation thread and a unified per-session event stream.
-> Status: Draft | Date: 2026-06-09
+> Status: Implemented / accepted | Date: 2026-06-09 | Closed: 2026-06-10
 > Roadmap: [2026-06-09-product-roadmap.md](2026-06-09-product-roadmap.md) M2
 > Parent design: [2026-05-25-ecommerce-agent-design.md](2026-05-25-ecommerce-agent-design.md) §2.3, §4.3, §5.2
 > Java companion: [../../ecommerce-mcp-server/docs/2026-06-09-m2-execute-companion-design.md](../../ecommerce-mcp-server/docs/2026-06-09-m2-execute-companion-design.md)
@@ -49,8 +49,9 @@ flips the coordinator on.
 
 ## 3. Session & Conversation Thread
 
-M1's chat is stateless (`POST /api/chat/stream` with `{message}`, no persistence,
-`last_trace` last-writer-wins). M2 makes the **session** first-class.
+M1's request-scoped chat API was stateless (`POST /api/chat/stream` with `{message}`, no
+persistence, `last_trace` last-writer-wins). M2 makes the **session** first-class and retires that
+API.
 
 ### 3.1 Session lifecycle & endpoints
 
@@ -109,7 +110,8 @@ assigning the next per-session monotonic `seq`, then **best-effort** publish a `
 The approval must bind to the **live** session, not the static `spring_mcp_session_id` from settings.
 So the agent is built **per session** and cached:
 
-- `app.state.sessions[session_id] = SessionRuntime{ coordinator, mcp_client, created_at, ... }`.
+- `SessionRegistry` caches `SessionRuntime{ coordinator, mcp_client, sandbox, created_at, ... }`
+  per session.
 - The session's Spring MCP connection carries trusted headers `X-Session-Id = session_id`,
   `X-User-Id = <operator>` so `request_approval` binds the approval to this session (Java spec §4.2).
 - **Per-session `DockerSandbox`** (not a shared one). The backend already supports this —
@@ -125,9 +127,10 @@ So the agent is built **per session** and cached:
 
 ### 3.4 Trace capture per session
 
-M1's app-singleton `last_trace` (last-writer-wins, see [api/chat.py](src/ecommerce_agent/api/chat.py))
-becomes per-session: each turn's `TraceRecord` is keyed by `session_id` (+ turn id). Reuses the
-existing `trace.capture` / `TraceRecord` machinery unchanged.
+M1's app-singleton `last_trace` compatibility shortcut remains only for the sequential reliability
+harness; the authoritative trace storage is per-session. Each turn's `TraceRecord` is keyed by
+`session_id` (+ turn id) in `app.state.trace_records`. Reuses the existing `trace.capture` /
+`TraceRecord` machinery unchanged.
 
 ## 4. Unified Session Event Stream (Approach A)
 
@@ -135,8 +138,8 @@ A single long-lived SSE per session is the client's one subscription point (M3 c
 once). It multiplexes two layers:
 
 - **Ephemeral turn events** — `token` (incremental answer text), `tool` (tool-call phase). Live UX
-  during a turn; not persisted as individual messages. Reuses M1's
-  `_trace_event_to_sse` mapping ([api/chat.py](src/ecommerce_agent/api/chat.py)).
+  during a turn; not persisted as individual messages. The mapping now lives in
+  `sessions.turn._trace_event_to_frame`.
 - **Durable `thread.append` events** — the full message doc (§3.2). These are what reload returns;
   the stream merely mirrors the persisted append. Anchoring the event payload to the message schema
   means there is no second contract to revise in M3.
@@ -265,6 +268,10 @@ M2.
 Mongo — propose → approve → execute → result re-enters via stream **and** reload; plus negative
 cases (precondition drift forces fresh approval; double-spend rejected; reject path). Gate behind an
 env flag and skip clearly when services are absent.
+
+Implementation note: the gated live loop asserts the durable reload contract against real
+Java/MySQL/Mongo. The live stream publish path is covered with direct `SessionBus` assertions in the
+default suite to avoid brittle long-lived SSE timing in the external-service test.
 
 ## 9. Acceptance (mirrors roadmap M2)
 
