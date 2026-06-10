@@ -127,7 +127,9 @@ describe("App", () => {
 
     expect(await screen.findByText("Sessions")).toBeInTheDocument();
     expect(screen.getByText("Conversation")).toBeInTheDocument();
-    expect(screen.getByText("Approvals")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Approvals" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Trace" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     expect(await screen.findByText("System")).toBeInTheDocument();
   });
 
@@ -287,5 +289,93 @@ describe("App", () => {
     getThreadResponse.resolve(jsonResponse({ messages: [staleProposal] }));
 
     await waitFor(() => expect(screen.queryByText("approval-1")).not.toBeInTheDocument());
+  });
+
+  it("inspecting an answer opens its trace in the rail", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const sessions: SessionSummary[] = [
+      {
+        session_id: "s1",
+        title: "S1",
+        created_at: "2026-06-10T00:00:00Z",
+        last_message_preview: null,
+        message_count: 1,
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/sessions") return jsonResponse({ sessions });
+      if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
+      if (url === "/api/sessions/s1/artifacts") {
+        return jsonResponse({ session_id: "s1", artifacts: [] });
+      }
+      if (url === "/api/sessions/s1/turns/turn-1/trace") {
+        return jsonResponse({
+          trace_id: "tr",
+          session_id: "s1",
+          turn_id: "turn-1",
+          started_at: 1,
+          ended_at: 2,
+          duration_ms: 5,
+          tokens_in_total: null,
+          tokens_out_total: null,
+          span_count: 1,
+          spans: [
+            {
+              kind: "tool_call",
+              name: "order_query",
+              status: "ok",
+              ts: 1,
+              duration_ms: 3,
+              args_summary: null,
+              result_summary: null,
+              tokens_in: null,
+              tokens_out: null,
+              span_id: "x",
+              artifact_id: null,
+              approval_id: null,
+              error_message: null,
+            },
+          ],
+        });
+      }
+      if (url === "/health") {
+        return jsonResponse({
+          status: "ok",
+          app: "a",
+          environment: "t",
+          configured_mcp_servers: ["spring"],
+          agent_ready: true,
+          components: { mongo: { status: "ok" }, sandbox: { status: "ok" }, model: { status: "ok" } },
+        });
+      }
+      if (url === "/health/mcp") {
+        return jsonResponse({ status: "ok", servers: { spring: { status: "ok", tool_count: 1 } } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+
+    await waitFor(() =>
+      expect(FakeEventSource.sources.some((source) => source.url === "/api/sessions/s1/stream")).toBe(
+        true,
+      ),
+    );
+    const stream = FakeEventSource.sources.find((source) => source.url === "/api/sessions/s1/stream");
+    act(() =>
+      stream?.emit("thread.append", {
+        message: threadMessage({
+          message_id: "m1",
+          type: "agent_answer",
+          content: "done",
+          turn_id: "turn-1",
+        }),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Inspect/i }));
+    expect(await screen.findByText("order_query")).toBeInTheDocument();
   });
 });
