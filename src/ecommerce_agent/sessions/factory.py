@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from typing import Any
 
-from ecommerce_agent.agents import build_coordinator, order_manager_subagent, sales_analyst_subagent
+from ecommerce_agent.agents import (
+    build_coordinator,
+    build_sales_analyst,
+    order_manager_subagent,
+    sales_analyst_subagent,
+)
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     SPRING_SERVER_NAME,
@@ -17,6 +24,54 @@ from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sessions.registry import SessionRuntime
 
 logger = logging.getLogger(__name__)
+
+
+_ORDER_MANAGER_KEYWORDS = (
+    "approval",
+    "approve",
+    "create purchase order",
+    "purchase order",
+    "receive purchase",
+    "receive po",
+    "replenish",
+    "restock",
+    "update order",
+    "order status",
+)
+
+
+class RoutedSessionAgent:
+    """Route read-only analysis directly while keeping approvals on the coordinator path."""
+
+    def __init__(self, *, analyst_agent: Any, coordinator_agent: Any) -> None:
+        self.analyst_agent = analyst_agent
+        self.coordinator_agent = coordinator_agent
+
+    async def astream_events(
+        self,
+        inputs: dict,
+        *,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        text = _latest_user_text(inputs)
+        selected = self.coordinator_agent if _needs_order_manager(text) else self.analyst_agent
+        async for event in selected.astream_events(inputs, config=config, version=version):
+            yield event
+
+
+def _latest_user_text(inputs: dict) -> str:
+    messages = inputs.get("messages") or []
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            content = message.get("content")
+            return content if isinstance(content, str) else ""
+    return ""
+
+
+def _needs_order_manager(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in _ORDER_MANAGER_KEYWORDS)
 
 
 def build_session_sandbox(settings: Settings, *, session_id: str) -> DockerSandbox:
@@ -47,6 +102,12 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
 
     sandbox = build_session_sandbox(settings, session_id=session_id)
     model = get_primary_model(settings)
+    analyst_agent = build_sales_analyst(
+        model,
+        spring_read_tools=spring_tools,
+        viz_tools=viz_tools,
+        backend=sandbox,
+    )
     analyst = sales_analyst_subagent(
         spring_read_tools=spring_tools,
         viz_tools=viz_tools,
@@ -58,9 +119,13 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         order_manager_subagent=order_manager,
         backend=sandbox,
     )
+    routed_agent = RoutedSessionAgent(
+        analyst_agent=analyst_agent,
+        coordinator_agent=agent,
+    )
     return SessionRuntime(
         session_id=session_id,
-        agent=agent,
+        agent=routed_agent,
         mcp_client=mcp_client,
         sandbox=sandbox,
     )

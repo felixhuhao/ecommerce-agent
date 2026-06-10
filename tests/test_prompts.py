@@ -35,6 +35,9 @@ def test_get_coordinator_prompt_is_active_router() -> None:
     assert "sales-analyst" in prompt
     assert "order-manager" in prompt
     assert "no business tools" in prompt
+    assert "first tool call must be the task tool" in prompt
+    assert "Do not use the general-purpose subagent" in prompt
+    assert "Never call" in prompt and "execute" in prompt
     assert "sales analysis" in prompt
     assert "forecasts" in prompt
     assert "charts" in prompt
