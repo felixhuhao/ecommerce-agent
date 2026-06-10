@@ -311,13 +311,20 @@ class InMemorySessionStore:
 class MongoSessionStore:
     """Source-of-truth SessionStore backed by MongoDB via motor."""
 
-    def __init__(self, *, sessions: Any) -> None:
+    def __init__(self, *, sessions: Any, client: Any | None = None) -> None:
         self._sessions = sessions
+        self._client = client
 
     @classmethod
     def from_settings(cls, settings: Settings) -> MongoSessionStore:
-        db = AsyncIOMotorClient(settings.mongo_url)[settings.mongo_db]
-        return cls(sessions=db["sessions"])
+        client = AsyncIOMotorClient(settings.mongo_url)
+        db = client[settings.mongo_db]
+        return cls(sessions=db["sessions"], client=client)
+
+    def close(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            close()
 
     async def create(self, session_id: str) -> None:
         await self._sessions.update_one(
@@ -610,6 +617,15 @@ In `src/ecommerce_agent/api/app.py`: import `from ecommerce_agent.sessions.store
 `app.state.session_store = getattr(app.state, "session_store", None) or MongoSessionStore.from_settings(settings)`;
 and in `create_app`, add `app.state.session_store = None`.
 
+In the `lifespan` `finally` block, **close the session store's Mongo client** alongside the existing
+thread-store close (otherwise the Motor connection pool leaks, the bug just fixed for `MongoThreadStore`):
+
+```python
+        session_store_close = getattr(app.state.session_store, "close", None)
+        if callable(session_store_close):
+            session_store_close()
+```
+
 - [ ] **Step 4: Add endpoints + record-on-create in `sessions.py`**
 
 In `src/ecommerce_agent/api/sessions.py`, update `create_session` and add the list/get endpoints:
@@ -699,7 +715,30 @@ def test_thread_ok_for_created_empty_session() -> None:
         session_id = client.post("/api/sessions").json()["session_id"]
         response = client.get(f"/api/sessions/{session_id}/thread")
         assert response.status_code == 200 and response.json()["messages"] == []
+
+
+def test_approve_surfaces_java_session_binding_rejection() -> None:
+    # Java enforces approval<->session binding (§4.3). The approval is visible (get_approval ok),
+    # but approve fails the session-binding check; FastAPI surfaces it and appends nothing.
+    app = build_test_app()
+
+    class BindingRejectingClient(FakeApprovalClient):
+        async def approve(self, approval_id: str) -> dict:
+            self.calls.append(f"approve:{approval_id}")
+            raise ApprovalApiError(403, {"message": "approval bound to a different session"})
+
+    app.state.approval_client_factory = lambda session_id: BindingRejectingClient()
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 403
+    assert thread["messages"] == []
 ```
+
+(`FakeApprovalClient` and `ApprovalApiError` are already imported in this test file.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -806,7 +845,10 @@ Expected: FAIL — current `post_message` appends the user message before any gu
 
 - [ ] **Step 3: Rewrite `post_message`**
 
-Replace the body of `post_message` in `src/ecommerce_agent/api/sessions.py`:
+Replace the body of `post_message` in `src/ecommerce_agent/api/sessions.py`. Two contracts to
+preserve: the user message stays **untagged** (`turn_id` defaults to `None` — matches the existing
+`test_message_runs_turn_and_thread_reload_shows_it` assertion; the frontend gets `turn_id` from the
+POST response), and the approval client is extracted **before** the background closure.
 
 ```python
 @router.post("/{session_id}/messages", status_code=status.HTTP_202_ACCEPTED)
@@ -842,7 +884,6 @@ async def post_message(
                 session_id=session_id,
                 type="user",
                 content=payload.message,
-                turn_id=turn_id,
                 actor_id="operator",
             ),
         )
@@ -852,6 +893,10 @@ async def post_message(
         raise
 
     app_state = request.app.state
+    # Extract the approval client WHILE in the request scope. The background task runs after
+    # the response is sent, when `request` (and its scope) may no longer be valid — do not call
+    # `_approval_client(request, ...)` inside the closure.
+    approval_client = _approval_client(request, session_id)
 
     async def run_and_record_trace() -> None:
         try:
@@ -863,7 +908,7 @@ async def post_message(
                 store=store,
                 bus=bus,
                 recursion_limit=settings.agent_recursion_limit,
-                approval_client=_approval_client(request, session_id),
+                approval_client=approval_client,
             )
             trace_records = app_state.trace_records
             trace_records.setdefault(session_id, {})[turn_id] = record
@@ -1164,7 +1209,7 @@ git commit -m "feat(m3): dev/test-safe SPA static serving with route order"
 - §3.6 single in-flight turn, `409 {"error": "turn_in_progress"}`, side-effect-free → Tasks 4, 7.
 - §3.7 `/health` components (mongo/sandbox/model config-only, no token spend) → Task 8.
 - §3.8 dev/test-safe static serving + route order → Task 9.
-- §5 approval↔session binding is enforced by Java (no FastAPI re-implementation); covered by the existing approval flow + the new `_require_session` 404 (Task 6). A cross-session-rejection test belongs in the live/integration suite against the real Java server (out of this unit-test plan; noted for the integration pass).
+- §5 approval↔session binding is enforced by Java (no FastAPI re-implementation). Covered two ways: a fake-client **unit test** asserts FastAPI surfaces Java's session-binding rejection without appending any thread message (Task 6), and the *real* Java enforcement is a **live/integration acceptance item** against the running Java server.
 
 **Out of scope (frontend plan):** the React/Vite SPA (sidebar, conversation+stream, approval workspace, health panel), the SSE consumption + turn-finalization logic, and the card render contract — all consume this API.
 
@@ -1172,4 +1217,4 @@ git commit -m "feat(m3): dev/test-safe SPA static serving with route order"
 
 **Type consistency:** `SessionStore` methods (`create/exists/get/set_title_if_absent/list_records`) are used identically in Tasks 3/5/7; `get_or_create_runtime(session_id, session_known)` and `try_begin_turn/end_turn` consistent in Tasks 4/7; `latest_message`/`count_messages`/`ping` on the thread store consistent in Tasks 2/5/8; `health.probe_sandbox`/`probe_model`/`probe_mongo`/`health_components` consistent in Task 8.
 
-**Known follow-up:** the cross-session approval-rejection assertion (§5) and the real-Mongo paths run only in the integration/live suite; add them when wiring the end-to-end M3 demo.
+**Known follow-up:** the *real* Java cross-session enforcement (beyond the fake-client passthrough unit test in Task 6) and the real-Mongo paths run only in the integration/live suite; add them when wiring the end-to-end M3 demo.
