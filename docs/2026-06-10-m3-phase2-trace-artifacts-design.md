@@ -39,16 +39,16 @@ for reads, native `EventSource` for the live stream (untouched here). Single-ope
 
 ## 2. Background — what exists today
 
-- **Trace capture.** `run_turn` ([sessions/turn.py](src/ecommerce_agent/sessions/turn.py)) builds a
-  per-turn `TraceRecord` ([trace/schema.py](src/ecommerce_agent/trace/schema.py)) via
-  [trace/capture.py](src/ecommerce_agent/trace/capture.py): `model_call` and `tool_call` events carry
+- **Trace capture.** `run_turn` ([sessions/turn.py](../src/ecommerce_agent/sessions/turn.py)) builds a
+  per-turn `TraceRecord` ([trace/schema.py](../src/ecommerce_agent/trace/schema.py)) via
+  [trace/capture.py](../src/ecommerce_agent/trace/capture.py): `model_call` and `tool_call` events carry
   `phase` (`start`/`end`), `name`, `status`, `ts`, `duration_ms` (computed on `end`), truncated
   `args_summary`/`result_summary` (≤500 chars), `tokens_in`/`tokens_out`, `tool_call_id`/`model_call_id`,
   `artifact`/`artifact_id`, `approval_id`. `answer_chunk` events are **not** appended to `record.events`
   (they only accumulate `record.answer`).
 - **Trace lifetime.** After a turn, `post_message`'s background task stores the record at
   `app.state.trace_records[session_id][turn_id]` and `app.state.last_trace`
-  ([api/sessions.py](src/ecommerce_agent/api/sessions.py)). **In-memory only — lost on restart, exposed
+  ([api/sessions.py](../src/ecommerce_agent/api/sessions.py)). **In-memory only — lost on restart, exposed
   by no endpoint.** This is roadmap risk **R5**, explicitly deferred to this phase by the Phase 1 spec.
 - **Artifacts.** Chart images from viz tools are extracted during capture
   (`_image_artifact_from_output`) and, in `_append_turn_result`, attached to the `agent_answer`
@@ -57,9 +57,9 @@ for reads, native `EventSource` for the live stream (untouched here). Single-ope
   already renders them inline. What's missing is a **session-scoped panel** and **downloads**.
 - **Persistence patterns.** `ThreadStore`/`SessionStore` are Protocols with `InMemory*` (tests) +
   `Mongo*` (prod) twins over a shared motor client
-  ([threads/store.py](src/ecommerce_agent/threads/store.py),
-  [threads/mongo.py](src/ecommerce_agent/threads/mongo.py),
-  [sessions/store.py](src/ecommerce_agent/sessions/store.py)). The new `TraceStore` mirrors this exactly.
+  ([threads/store.py](../src/ecommerce_agent/threads/store.py),
+  [threads/mongo.py](../src/ecommerce_agent/threads/mongo.py),
+  [sessions/store.py](../src/ecommerce_agent/sessions/store.py)). The new `TraceStore` mirrors this exactly.
 
 ## 3. Backend — Trace Persistence
 
@@ -76,6 +76,15 @@ Methods:
 - `get(session_id: str, turn_id: str) -> TraceRecord | None` — fetch one turn's record; `None` if absent.
 - `ping() -> bool` — store reachability (for `/health`, additive; not required by acceptance).
 
+**Round-trip (de)serialization (explicit — `asdict` is one-way).** `record.to_dict()` is
+`dataclasses.asdict`, which recursively converts nested `TraceEvent` dataclasses to **plain dicts**.
+A naive `TraceRecord(**doc)` would leave `events` as `list[dict]`, and `project_timeline`'s attribute
+access (`event.event_type`, …) would break. So `trace/schema.py` gains `TraceEvent.from_dict(d)` and
+`TraceRecord.from_dict(d)` (the latter rebuilds `events` via `TraceEvent.from_dict`), both ignoring
+unknown keys (forward-compat). `MongoTraceStore.get` strips Mongo's `_id` and returns
+`TraceRecord.from_dict(doc)` — a real `TraceRecord` with `TraceEvent` objects, identical in shape to the
+in-memory cache so both read paths feed `project_timeline` the same type (§3.4).
+
 `MongoTraceStore` uses a new **`traces`** collection: `_id = trace_id`, document = `record.to_dict()`,
 with an index on `(session_id, turn_id)`. We persist the **full** record (including each event's
 data-URI `artifact.src`) for export fidelity. The resulting small duplication of chart bytes (also in
@@ -86,10 +95,13 @@ projection drops `src` (§3.3) so the read payload stays light.
 
 `run_turn` stays Mongo-free so the eval/CLI harness keeps using it unchanged. Persistence happens in
 `post_message`'s existing `run_and_record_trace` background task
-([api/sessions.py](src/ecommerce_agent/api/sessions.py)): after `run_turn` returns, the task continues to
-set the in-memory cache (`trace_records[session_id][turn_id]` and `last_trace`, for harness compat) and
-**additionally** calls `await trace_store.save(record)`. `app.state.trace_store` is wired in `lifespan`
-([api/app.py](src/ecommerce_agent/api/app.py)) like `thread_store`/`session_store` (default Mongo,
+([api/sessions.py](../src/ecommerce_agent/api/sessions.py)): after `run_turn` returns, the task **first**
+sets the in-memory cache (`trace_records[session_id][turn_id]` and `last_trace`, for harness compat),
+**then** calls `trace_store.save(record)`. The `save` is wrapped in `try/except` that **logs and does
+not re-raise**: a store failure must never fail the turn (the answer already streamed and persisted to
+the thread) nor leave the background task with an unhandled exception, and the populated cache still
+serves the read endpoint (§3.4). `app.state.trace_store` is wired in `lifespan`
+([api/app.py](../src/ecommerce_agent/api/app.py)) like `thread_store`/`session_store` (default Mongo,
 overridable for tests) and `close()`d on shutdown.
 
 ### 3.3 Timeline projection (pure function)
@@ -130,9 +142,16 @@ Projected span shape:
 ### 3.4 Read & export endpoints
 
 All reuse the existing `_require_session` helper (`404` on unknown session). Both read the trace
-**store first, then fall back to the in-memory `trace_records` cache** — because `done` fires inside
-`run_turn` before the background task's `save` lands, this fallback makes a just-finished turn
-inspectable in the sub-second window before persistence completes.
+**store first, then fall back to the in-memory `trace_records` cache**, which covers the window after
+the background task has populated the cache but before `save` lands.
+
+**Residual race (closed on the client).** The `agent_answer` append **and** the `done` frame both fire
+*inside* `run_turn`, i.e. **before** `run_and_record_trace` populates the cache or calls `save`. So for a
+brief moment after the answer becomes visible, **neither** the store nor the cache holds the record and
+these endpoints return `404`. This residual window is closed on the client: **TracePanel treats a `404`
+as transient and retries within a short grace period** (§5.3) — the record always lands sub-second.
+Inspect only appears on finalized durable messages (§5.2), so the retry is bounded and rare. The
+endpoint stays simple (plain `404`); no "pending" sentinel is introduced.
 
 1. `GET /api/sessions/{session_id}/turns/{turn_id}/trace` → `project_timeline(record)` (§3.3). `404` if
    no record for that turn (store miss **and** cache miss).
@@ -171,6 +190,13 @@ A session with no charts returns `{"artifacts": []}` (**not** `404`). `src` is i
 renders thumbnails and downloads client-side; charts are small data URIs so the list payload stays
 reasonable at Phase-2 scale.
 
+**Artifact `id` is not guaranteed session-unique.** The id is the tool output's own id (often a
+run-id) but falls back to `chart-{index}` keyed *per message*, so two messages can each carry
+`chart-0`. The endpoint does **not** rewrite ids (it would break the trace span's `artifact_id`
+cross-link, §3.3); instead the frontend composes a stable React key from the owning message —
+`${message_id}:${id}` (§5.4). The download filename uses the bare `id` and tolerates collisions across
+turns (the browser de-dupes with " (1)").
+
 ## 5. Frontend — Surfaces & State
 
 ### 5.1 Tabbed right rail
@@ -190,7 +216,10 @@ only new piece of cross-component state beyond the active-tab value; `Conversati
 
 ### 5.3 TracePanel (Trace tab)
 
-Given `activeSession` + `inspectedTurnId`, fetch `GET …/turns/{turn_id}/trace` via React Query. Renders:
+Given `activeSession` + `inspectedTurnId`, fetch `GET …/turns/{turn_id}/trace` via React Query. **The
+query treats a `404` as transient and retries it briefly** (≈3 attempts at ~400 ms ≈ a ~1.2 s grace
+window) to absorb the residual save race (§3.4); after the grace period a persistent `404` surfaces as
+the inline error state below. (Non-`404` errors are not grace-retried.) Renders:
 - a **turn header** — total duration, total tokens in/out, span count, a status dot;
 - a **vertical span timeline**, one row per span in `ts` order: a kind icon (model vs tool — reuse
   `Wrench` for tools), the `name`, a duration chip, a status dot (`ok`/`failed`), and a click-to-expand
@@ -205,7 +234,8 @@ Given `activeSession` + `inspectedTurnId`, fetch `GET …/turns/{turn_id}/trace`
 ### 5.4 ArtifactPanel (Artifacts tab)
 
 Fetch `GET …/artifacts` via React Query (refetch on the session's `done` so new charts appear). A
-responsive grid of cards, newest-first:
+responsive grid of cards, newest-first, each keyed by **`${message_id}:${id}`** (the bare `id` is not
+session-unique, §4):
 - a **thumbnail** rendered from `src` (reuse the existing chart-frame style);
 - `tool_name` + a relative `created_at`;
 - a **"Jump to message"** link (scrolls the conversation to `message_id`);
@@ -242,10 +272,12 @@ record exists so the deferral is a documented choice, not an oversight.
 
 - GETs (`/trace`, `/artifacts`) use React Query retry; the panels show explicit loading, empty, `404`,
   and error states (§5.3/§5.4).
-- A `404` from the trace endpoint (turn has no record) renders inline in the TracePanel; it does **not**
-  clear the session or the conversation.
-- The trace read endpoint's **store→cache fallback** (§3.4) prevents a spurious `404` for a turn that
-  just finished but whose async `save` hasn't landed.
+- A `404` from the trace endpoint is **grace-retried** by TracePanel (~1.2 s, §5.3) to absorb the
+  residual save race (§3.4); a `404` that persists past the grace window renders inline in the
+  TracePanel and does **not** clear the session or the conversation.
+- The trace read endpoint's **store→cache fallback** (§3.4) covers the window after the cache is
+  populated but before the async `save` lands; the brief window before *either* is populated is the
+  residual race closed by the client grace-retry above.
 - `trace_store.save` runs in the background task; a save failure is logged and does **not** fail the
   turn or the user-visible answer (the answer already streamed/persisted via the thread). The in-memory
   cache still serves the read endpoint in that window.
@@ -258,6 +290,10 @@ record exists so the deferral is a documented choice, not an oversight.
 - **TraceStore:** `InMemoryTraceStore` and the Mongo double — `save` then `get(session_id, turn_id)`
   round-trips; `get` returns `None` for an unknown turn; re-`save` of the same `trace_id` upserts (no
   duplicate document).
+- **Deserialization round-trip:** `TraceRecord.from_dict(record.to_dict())` reconstructs a record whose
+  `events` are real `TraceEvent` instances (not dicts) with fields intact, and `project_timeline` runs
+  on it identically to the in-memory record; `from_dict` ignores unknown keys (forward-compat) and the
+  Mongo `get` path strips `_id`.
 - **Projection** (pure fn): `start`+`end` merge per span id (end's `duration_ms`/`status`/
   `result_summary` + start's `args_summary`); spans ordered by `ts`; `tokens_in_total`/
   `tokens_out_total` summed; `artifact_id` surfaced while data-URI `src` is **dropped**; `approval_id`
@@ -272,11 +308,17 @@ record exists so the deferral is a documented choice, not an oversight.
   charts; `404` on unknown session.
 - **Persistence wiring:** after a turn the background task calls `trace_store.save` **and** still
   populates `trace_records`/`last_trace` (harness compat unbroken).
+- **Save failure is contained:** with a `trace_store.save` that raises, the turn still completes, the
+  user-visible answer is unaffected, `trace_records`/`last_trace` remain populated (so the read endpoint
+  still serves via the cache fallback), the failure is logged, and the background task raises **no**
+  unhandled exception.
 
 **Frontend (Vitest + React Testing Library; mocked client):**
 - **TracePanel:** renders span rows with durations/tokens; expanding a span shows args/result summary;
   the "View in Artifacts" link fires the tab switch; "Download trace JSON" targets the export URL;
-  no-`inspectedTurnId`, loading, `404`/error, and empty-spans states.
+  no-`inspectedTurnId`, loading, `404`/error, and empty-spans states. **Grace-retry:** a `404` that
+  succeeds on a retry within the grace window renders the timeline (not the error state); a `404` that
+  persists past the grace window renders the inline error.
 - **ArtifactPanel:** renders cards from the list; thumbnail uses `src`; the Download link has
   `download={id.ext}` from mime; "Jump to message" fires; empty + error states.
 - **Shell:** Inspect on an answer sets the inspected turn and switches to the Trace tab; tab switching
@@ -318,8 +360,14 @@ record exists so the deferral is a documented choice, not an oversight.
   the background task; `run_turn` stays Mongo-free for harness reuse (§3.1–3.2).
 - **Full record persisted, light timeline projected, full record exported** — one storage shape serves
   both the lean UI timeline (drops data-URI `src`) and the full-fidelity export (§3.1, §3.3, §3.4).
-- **Read freshness** handled by a store→in-memory-cache fallback so a just-finished turn is inspectable
-  (§3.4, §7).
+- **Read freshness** handled in two layers: a server store→in-memory-cache fallback for the
+  post-cache/pre-save window, plus a client `404` **grace-retry** in TracePanel for the residual window
+  before either is populated (the answer/`done` fire inside `run_turn`, ahead of the background task)
+  (§3.4, §5.3, §7).
+- **Explicit round-trip (de)serialization** — `TraceRecord.from_dict`/`TraceEvent.from_dict` reconstruct
+  typed records from stored dicts (`asdict` is one-way), so both read paths feed `project_timeline` the
+  same type (§3.1).
+- **Trace `save` failures are contained** — logged, non-raising, cache still serves reads (§3.2, §7).
 - **Artifacts (Option C):** an authoritative session-scoped list endpoint projected from messages (no new
   store method), with **client-side downloads** from the data URI; byte-streaming endpoint ("A")
   deferred with a documented non-breaking upgrade path (§4, §6).
