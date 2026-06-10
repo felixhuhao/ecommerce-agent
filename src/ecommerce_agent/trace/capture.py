@@ -97,6 +97,66 @@ def _image_artifact_from_output(value: Any, *, fallback_id: str | None = None) -
     return None
 
 
+def _as_token_count(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _token_usage_from_mapping(value: Any) -> tuple[int | None, int | None]:
+    if not isinstance(value, dict):
+        return None, None
+
+    tokens_in = next(
+        (
+            count
+            for key in ("input_tokens", "prompt_tokens", "input_token_count")
+            if (count := _as_token_count(value.get(key))) is not None
+        ),
+        None,
+    )
+    tokens_out = next(
+        (
+            count
+            for key in ("output_tokens", "completion_tokens", "output_token_count")
+            if (count := _as_token_count(value.get(key))) is not None
+        ),
+        None,
+    )
+    return tokens_in, tokens_out
+
+
+def _token_usage_from_output(value: Any) -> tuple[int | None, int | None]:
+    candidates: list[Any] = [
+        getattr(value, "usage_metadata", None),
+        getattr(value, "response_metadata", None),
+    ]
+    if isinstance(value, dict):
+        candidates.extend(
+            [
+                value.get("usage_metadata"),
+                value.get("response_metadata"),
+                value.get("llm_output"),
+            ]
+        )
+
+    for candidate in candidates:
+        tokens_in, tokens_out = _token_usage_from_mapping(candidate)
+        if tokens_in is not None or tokens_out is not None:
+            return tokens_in, tokens_out
+        if isinstance(candidate, dict):
+            for nested_key in ("token_usage", "usage"):
+                tokens_in, tokens_out = _token_usage_from_mapping(candidate.get(nested_key))
+                if tokens_in is not None or tokens_out is not None:
+                    return tokens_in, tokens_out
+
+    return None, None
+
+
 def _to_trace_event(
     raw: dict,
     record: TraceRecord,
@@ -105,6 +165,18 @@ def _to_trace_event(
     event_type = raw.get("event")
     run_id = raw.get("run_id")
     data = raw.get("data") or {}
+
+    if event_type == "on_chat_model_start":
+        return TraceEvent(
+            event_type="model_call",
+            name=raw.get("name"),
+            phase="start",
+            trace_id=record.trace_id,
+            run_id=run_id,
+            parent_span_id=_parent_span(raw),
+            args_summary=_summarize(data.get("input") or data.get("messages")),
+            model_call_id=run_id,
+        )
 
     if event_type == "on_chat_model_stream":
         text = _text_from_chunk(data.get("chunk"))
@@ -119,6 +191,22 @@ def _to_trace_event(
             run_id=run_id,
             parent_span_id=_parent_span(raw),
             result_summary=text,
+        )
+
+    if event_type == "on_chat_model_end":
+        output = data.get("output")
+        tokens_in, tokens_out = _token_usage_from_output(output)
+        return TraceEvent(
+            event_type="model_call",
+            name=raw.get("name"),
+            phase="end",
+            trace_id=record.trace_id,
+            run_id=run_id,
+            parent_span_id=_parent_span(raw),
+            result_summary=_summarize(output),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            model_call_id=run_id,
         )
 
     if event_type == "on_tool_start":
@@ -167,10 +255,21 @@ async def capture(
 ) -> AsyncIterator[TraceEvent]:
     """Map raw LangChain events into TraceEvents and accumulate one turn record."""
     model_chunks: dict[str, str] = {}
+    span_starts: dict[tuple[str, str], TraceEvent] = {}
     async for raw in raw_events:
         event = _to_trace_event(raw, record, model_chunks)
         if event is None:
             continue
+        span_key = None
+        span_id = event.model_call_id or event.tool_call_id or event.run_id
+        if span_id:
+            span_key = (event.event_type, str(span_id))
+        if event.phase == "start" and span_key:
+            span_starts[span_key] = event
+        elif event.phase == "end" and span_key:
+            start = span_starts.get(span_key)
+            if start is not None:
+                event.duration_ms = (event.ts - start.ts) * 1000.0
         if event.event_type != "answer_chunk":
             record.events.append(event)
         yield event

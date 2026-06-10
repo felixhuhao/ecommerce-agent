@@ -87,6 +87,61 @@ async def test_capture_keeps_only_latest_model_run_as_final_answer() -> None:
     assert "try a few approaches" not in record.answer
 
 
+async def test_capture_records_model_call_timing_and_tokens() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_chat_model_start",
+            "name": "ChatDeepSeek",
+            "run_id": "model-run",
+            "data": {"input": {"messages": ["hi"]}},
+        }
+        yield {
+            "event": "on_chat_model_end",
+            "name": "ChatDeepSeek",
+            "run_id": "model-run",
+            "data": {
+                "output": SimpleNamespace(
+                    usage_metadata={"input_tokens": 123, "output_tokens": 45}
+                )
+            },
+        }
+
+    record = TraceRecord()
+
+    yielded = [event async for event in capture(raw_events(), record)]
+
+    assert [event.event_type for event in yielded] == ["model_call", "model_call"]
+    assert yielded[0].phase == "start"
+    assert yielded[1].phase == "end"
+    assert yielded[1].duration_ms is not None
+    assert yielded[1].tokens_in == 123
+    assert yielded[1].tokens_out == 45
+    assert record.events == yielded
+
+
+async def test_capture_extracts_model_tokens_from_response_metadata() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_chat_model_end",
+            "name": "ChatDeepSeek",
+            "run_id": "model-run",
+            "data": {
+                "output": SimpleNamespace(
+                    response_metadata={
+                        "token_usage": {"prompt_tokens": 12, "completion_tokens": 7}
+                    }
+                )
+            },
+        }
+
+    record = TraceRecord()
+
+    yielded = [event async for event in capture(raw_events(), record)]
+
+    assert yielded[0].tokens_in == 12
+    assert yielded[0].tokens_out == 7
+
+
 async def test_capture_extracts_approval_id_before_summarizing_output() -> None:
     async def raw_events() -> AsyncIterator[dict]:
         yield {

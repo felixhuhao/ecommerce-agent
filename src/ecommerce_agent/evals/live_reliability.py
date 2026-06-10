@@ -68,6 +68,8 @@ def _event_summary(event: object) -> dict:
         "result_summary": getattr(event, "result_summary", None),
         "error_message": getattr(event, "error_message", None),
         "duration_ms": getattr(event, "duration_ms", None),
+        "tokens_in": getattr(event, "tokens_in", None),
+        "tokens_out": getattr(event, "tokens_out", None),
     }
 
 

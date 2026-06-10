@@ -70,6 +70,9 @@ sales_analyst: |
      functions, and print compact JSON. Do not paste the raw orders into the
      Python script.
   6. Print compact JSON records for the monthly history and forecast.
+     After this point, do not call order_query or product_query again for the
+     same analysis. Use the files already written to /workspace and the compact
+     sandbox output for the chart and final answer.
   7. If the user asked for a chart, call generate_line_chart when available for
      the monthly history and forecast. Use records like
      {"time":"2026-05","value":55493.25,"group":"Electronics actual"} and
