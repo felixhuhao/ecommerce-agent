@@ -35,6 +35,13 @@ def test_get_coordinator_prompt_is_active_router() -> None:
     assert "sales-analyst" in prompt
     assert "order-manager" in prompt
     assert "no business tools" in prompt
+    assert "sales analysis" in prompt
+    assert "forecasts" in prompt
+    assert "charts" in prompt
+    assert "purchase orders" in prompt
+    assert "replenishment" in prompt
+    assert "order-status changes" in prompt
+    assert "approval proposal" in prompt
 
 
 def test_get_prompt_unknown_key_raises() -> None:

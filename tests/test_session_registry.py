@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
@@ -85,6 +87,29 @@ async def test_create_evicts_oldest_when_at_cap() -> None:
     second = await registry.create()
 
     assert closed == [first]
+    with pytest.raises(KeyError):
+        await registry.get(first)
+    assert (await registry.get(second)).session_id == second
+
+
+@pytest.mark.asyncio
+async def test_create_serializes_runtime_builds_to_preserve_cap() -> None:
+    active_builds = 0
+    max_active_builds = 0
+
+    async def build(session_id: str) -> SessionRuntime:
+        nonlocal active_builds, max_active_builds
+        active_builds += 1
+        max_active_builds = max(max_active_builds, active_builds)
+        await asyncio.sleep(0.01)
+        active_builds -= 1
+        return make_runtime(session_id, sandbox=object())
+
+    registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=1)
+
+    first, second = await asyncio.gather(registry.create(), registry.create())
+
+    assert max_active_builds == 1
     with pytest.raises(KeyError):
         await registry.get(first)
     assert (await registry.get(second)).session_id == second

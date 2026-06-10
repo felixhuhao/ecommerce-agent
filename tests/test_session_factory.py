@@ -15,16 +15,23 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         def __init__(self, name: str) -> None:
             self.name = name
 
+    class FakeMcpClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def get_tools(self, *, server_name: str):
+            self.calls.append(server_name)
+            return [
+                FakeTool("order_query"),
+                FakeTool("request_approval"),
+            ]
+
+    mcp_client = FakeMcpClient()
+
     def fake_build_mcp_client(settings, *, user_id, session_id):
         captured["user_id"] = user_id
         captured["session_id"] = session_id
-        return object()
-
-    async def fake_load_spring_read_tools(client):
-        return [FakeTool("order_query")]
-
-    async def fake_load_order_manager_tools(client):
-        return [FakeTool("request_approval")]
+        return mcp_client
 
     def fake_build_sandbox(settings, *, session_id):
         captured["sandbox_session_id"] = session_id
@@ -44,10 +51,6 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         return "COORDINATOR"
 
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
-    monkeypatch.setattr(factory_module, "load_spring_read_tools", fake_load_spring_read_tools)
-    monkeypatch.setattr(
-        factory_module, "load_order_manager_tools", fake_load_order_manager_tools
-    )
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
     monkeypatch.setattr(factory_module, "get_primary_model", lambda settings: object())
     monkeypatch.setattr(factory_module, "sales_analyst_subagent", fake_sales_analyst_subagent)
@@ -64,5 +67,6 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["user_id"] == "9"
     assert captured["sandbox_session_id"] == "sess-1"
     assert captured["analyst_tools"] == ["order_query"]
-    assert captured["order_manager_tools"] == ["request_approval"]
+    assert captured["order_manager_tools"] == ["order_query", "request_approval"]
     assert captured["subagents"] == ["sales-analyst", "order-manager"]
+    assert mcp_client.calls == ["spring"]

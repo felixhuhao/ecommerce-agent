@@ -38,6 +38,11 @@ class ApprovalClient:
             "X-Session-Id": session_id,
         }
         self._timeout_seconds = timeout_seconds
+        self._client = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout_seconds,
+        )
 
     @classmethod
     def from_settings(
@@ -81,6 +86,9 @@ class ApprovalClient:
             allowed_error_statuses={409, 503},
         )
 
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
     async def _request_json(
         self,
         method: str,
@@ -90,13 +98,8 @@ class ApprovalClient:
         allowed_error_statuses: set[int] | None = None,
     ) -> dict[str, Any]:
         allowed_error_statuses = allowed_error_statuses or set()
-        async with httpx.AsyncClient(
-            base_url=self._base_url,
-            headers=self._headers,
-            timeout=self._timeout_seconds,
-        ) as client:
-            request_kwargs = {"json": json_payload} if json_payload is not None else {}
-            response = await client.request(method, path, **request_kwargs)
+        request_kwargs = {"json": json_payload} if json_payload is not None else {}
+        response = await self._client.request(method, path, **request_kwargs)
 
         try:
             payload: Any = response.json()

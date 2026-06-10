@@ -52,14 +52,13 @@ class SessionRegistry:
         session_id = uuid.uuid4().hex
         async with self._lock:
             self._make_room_locked()
-        runtime = await self._build_runtime(session_id)
-        try:
-            async with self._lock:
+            runtime = await self._build_runtime(session_id)
+            try:
                 self._make_room_locked()
                 self._runtimes[session_id] = runtime
-        except Exception:
-            runtime.close()
-            raise
+            except Exception:
+                runtime.close()
+                raise
         return session_id
 
     async def get(self, session_id: str) -> SessionRuntime:

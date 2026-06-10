@@ -192,6 +192,25 @@ def test_lifespan_closes_thread_store() -> None:
     assert store.closed is True
 
 
+def test_lifespan_closes_cached_approval_clients() -> None:
+    class FakeApprovalClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    approval_client = FakeApprovalClient()
+    app = create_app(settings=make_settings())
+    app.state.approval_clients = {"s1": approval_client}
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+    assert approval_client.closed is True
+    assert app.state.approval_clients == {}
+
+
 def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.app as app_module
     from ecommerce_agent.sessions.registry import SessionRuntime

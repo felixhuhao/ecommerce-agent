@@ -5,10 +5,11 @@ import logging
 from ecommerce_agent.agents import build_coordinator, order_manager_subagent, sales_analyst_subagent
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
+    SPRING_SERVER_NAME,
     build_mcp_client,
+    filter_order_manager_tools,
+    filter_spring_read_tools,
     load_modelscope_viz_tools,
-    load_order_manager_tools,
-    load_spring_read_tools,
 )
 from ecommerce_agent.models import get_primary_model
 from ecommerce_agent.sandbox import DockerSandbox
@@ -29,8 +30,9 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         user_id=settings.spring_mcp_user_id,
         session_id=session_id,
     )
-    spring_tools = await load_spring_read_tools(mcp_client)
-    order_manager_tools = await load_order_manager_tools(mcp_client)
+    spring_all_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
+    spring_tools = filter_spring_read_tools(spring_all_tools)
+    order_manager_tools = filter_order_manager_tools(spring_all_tools)
     if settings.modelscope_mcp_url:
         try:
             viz_tools = await load_modelscope_viz_tools(mcp_client)

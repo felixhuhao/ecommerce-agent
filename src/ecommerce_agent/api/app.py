@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Any
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ) or MongoThreadStore.from_settings(settings)
     app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
     app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
+    app.state.approval_clients = getattr(app.state, "approval_clients", None) or {}
     app.state.session_registry = getattr(app.state, "session_registry", None) or SessionRegistry(
         build_runtime=make_runtime_builder(settings),
         idle_ttl_seconds=settings.session_idle_ttl_seconds,
@@ -68,6 +70,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         thread_store_close = getattr(app.state.thread_store, "close", None)
         if callable(thread_store_close):
             thread_store_close()
+        await _close_approval_clients(getattr(app.state, "approval_clients", {}))
 
 
 async def _reap_loop(app: FastAPI) -> None:
@@ -78,6 +81,16 @@ async def _reap_loop(app: FastAPI) -> None:
             await registry.reap_idle()
     except asyncio.CancelledError:
         pass
+
+
+async def _close_approval_clients(clients: dict[str, Any]) -> None:
+    for client in clients.values():
+        close = getattr(client, "aclose", None) or getattr(client, "close", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+    clients.clear()
 
 
 def configured_mcp_servers(settings: Settings) -> list[str]:
@@ -148,6 +161,7 @@ def create_app(
     app.state.session_bus = None
     app.state.session_registry = None
     app.state.background_tasks = None
+    app.state.approval_clients = None
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

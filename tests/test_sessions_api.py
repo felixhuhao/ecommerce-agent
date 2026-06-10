@@ -101,6 +101,7 @@ def build_test_app() -> FastAPI:
     app.state.session_bus = SessionBus()
     app.state.background_tasks = set()
     app.state.trace_records = {}
+    app.state.approval_clients = {}
 
     async def build_runtime(session_id: str) -> SessionRuntime:
         return SessionRuntime(
@@ -115,7 +116,7 @@ def build_test_app() -> FastAPI:
         idle_ttl_seconds=1800,
         max_live_sessions=50,
     )
-    app.state.approval_client_factory = None
+    app.state.approval_client_factory = lambda session_id: FakeApprovalClient()
     app.include_router(sessions_router)
     return app
 
@@ -138,6 +139,7 @@ def test_message_runs_turn_and_thread_reload_shows_it() -> None:
         thread = _wait_for_thread(client, session_id, expected_types=["user", "agent_answer"])
         types = [message["type"] for message in thread["messages"]]
         assert types == ["user", "agent_answer"]
+        assert thread["messages"][0]["turn_id"] is None
         assert thread["messages"][0]["seq"] == 1
         assert thread["messages"][1]["seq"] == 2
         assert _wait_for_trace(client.app, session_id, turn_id).answer == "Hi there."
@@ -165,6 +167,46 @@ async def test_stream_replays_backlog_for_late_subscriber() -> None:
     assert json.loads(first["data"])["message"]["type"] == "user"
     assert second["event"] == "thread.append"
     assert json.loads(second["data"])["message"]["type"] == "agent_answer"
+
+
+@pytest.mark.asyncio
+async def test_stream_subscribe_first_then_replay_skips_publish_during_replay() -> None:
+    class FakeRequest:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    store = InMemoryThreadStore()
+    bus = SessionBus()
+    await store.append(ThreadMessage(session_id="s1", type="user", content="hello"))
+
+    class PublishingStore:
+        def __init__(self) -> None:
+            self.published = False
+
+        async def list_messages(self, session_id: str) -> list[ThreadMessage]:
+            if not self.published:
+                self.published = True
+                stored = await store.append(
+                    ThreadMessage(session_id=session_id, type="agent_answer", content="live")
+                )
+                bus.publish(
+                    session_id,
+                    {"event": "thread.append", "message": stored.model_dump()},
+                )
+            return await store.list_messages(session_id)
+
+    events = _session_events("s1", FakeRequest(), PublishingStore(), bus)  # type: ignore[arg-type]
+    try:
+        first = await anext(events)
+        second = await anext(events)
+        bus.publish("s1", {"event": "done"})
+        third = await asyncio.wait_for(anext(events), timeout=1)
+    finally:
+        await events.aclose()
+
+    assert json.loads(first["data"])["message"]["seq"] == 1
+    assert json.loads(second["data"])["message"]["seq"] == 2
+    assert third["event"] == "done"
 
 
 def test_message_to_unknown_session_returns_404() -> None:
@@ -239,6 +281,26 @@ def test_approve_endpoint_appends_invalidated_status_without_execution_result() 
     ]
     assert thread["messages"][1]["status"] == "invalidated"
     assert "fresh approval" in thread["messages"][1]["reason"]
+
+
+def test_approve_endpoint_appends_failed_execution_status() -> None:
+    app = build_test_app()
+    approval_client = FakeApprovalClient(execution_status="failed")
+    app.state.approval_client_factory = lambda session_id: approval_client
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 200
+    assert response.json()["execution"]["status"] == "failed"
+    assert [message["type"] for message in thread["messages"]] == [
+        "approval_status",
+        "approval_status",
+    ]
+    assert thread["messages"][1]["status"] == "failed"
+    assert thread["messages"][1]["result"] == {"status": "failed"}
 
 
 def test_approve_endpoint_does_not_append_when_approval_is_not_visible() -> None:

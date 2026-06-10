@@ -34,6 +34,13 @@ def _approval_client(request: Request, session_id: str) -> Any:
     factory = getattr(request.app.state, "approval_client_factory", None)
     if callable(factory):
         return factory(session_id)
+    clients = getattr(request.app.state, "approval_clients", None)
+    if isinstance(clients, dict):
+        client = clients.get(session_id)
+        if client is None:
+            client = make_approval_client(request.app.state.settings, session_id=session_id)
+            clients[session_id] = client
+        return client
     return make_approval_client(request.app.state.settings, session_id=session_id)
 
 
@@ -186,12 +193,12 @@ async def post_message(
             session_id=session_id,
             type="user",
             content=payload.message,
-            turn_id=turn_id,
             actor_id="operator",
         ),
     )
 
     app_state = request.app.state
+    approval_client = _approval_client(request, session_id)
 
     async def run_and_record_trace() -> None:
         record = await run_turn(
@@ -202,7 +209,7 @@ async def post_message(
             store=store,
             bus=bus,
             recursion_limit=settings.agent_recursion_limit,
-            approval_client=_approval_client(request, session_id),
+            approval_client=approval_client,
         )
         trace_records = app_state.trace_records
         trace_records.setdefault(session_id, {})[turn_id] = record
