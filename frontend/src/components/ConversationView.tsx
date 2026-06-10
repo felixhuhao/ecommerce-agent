@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { RefreshCw, Send, Wrench } from "lucide-react";
+import { Activity, RefreshCw, Send, Wrench } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
@@ -14,6 +14,8 @@ interface ConversationViewProps {
   busyNote: string | null;
   error: string | null;
   onSend: (message: string) => Promise<void> | void;
+  onInspect?: (turnId: string) => void;
+  focusMessageId?: string | null;
 }
 
 const LABELS: Record<ThreadMessage["type"], string> = {
@@ -82,6 +84,8 @@ export function ConversationView({
   busyNote,
   error,
   onSend,
+  onInspect,
+  focusMessageId,
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +93,11 @@ export function ConversationView({
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
   }, [messages.length, provisionalAnswer, activeTool, busyNote, error]);
+
+  useEffect(() => {
+    if (!focusMessageId) return;
+    document.querySelector(`[data-message-id="${focusMessageId}"]`)?.scrollIntoView({ block: "center" });
+  }, [focusMessageId]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -128,10 +137,23 @@ export function ConversationView({
         {messages.map((message) => {
           const artifacts = imageArtifacts(message.result);
           return (
-            <article className={messageClass(message.type)} key={`${message.seq}-${message.message_id}`}>
+            <article
+              className={messageClass(message.type)}
+              key={`${message.seq}-${message.message_id}`}
+              data-message-id={message.message_id}
+            >
               <header>
                 <span>{LABELS[message.type]}</span>
                 {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
+                {onInspect && message.turn_id && (message.type === "agent_answer" || message.type === "agent_proposal") ? (
+                  <button
+                    type="button"
+                    className="inspect-button"
+                    onClick={() => onInspect(message.turn_id as string)}
+                  >
+                    <Activity size={13} aria-hidden="true" /> Inspect
+                  </button>
+                ) : null}
               </header>
               <MessageBody type={message.type} content={message.content} />
               {artifacts.length > 0 ? (

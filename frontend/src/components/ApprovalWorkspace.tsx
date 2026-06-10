@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 import type { ApprovalView } from "../state/approvals";
 
@@ -8,6 +8,7 @@ interface ApprovalWorkspaceProps {
   actionError: string | null;
   onApprove: (approvalId: string) => Promise<void> | void;
   onReject: (approvalId: string, reason: string | undefined) => Promise<void> | void;
+  focusApprovalId?: string | null;
 }
 
 function formatValue(value: unknown) {
@@ -29,8 +30,16 @@ export function ApprovalWorkspace({
   actionError,
   onApprove,
   onReject,
+  focusApprovalId,
 }: ApprovalWorkspaceProps) {
   const [reasons, setReasons] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!focusApprovalId) return;
+    document
+      .querySelector(`[data-approval-id="${focusApprovalId}"]`)
+      ?.scrollIntoView({ block: "center" });
+  }, [focusApprovalId]);
 
   return (
     <section className="rail-panel approvals-panel">
@@ -51,7 +60,11 @@ export function ApprovalWorkspace({
           const isBusy = pendingApprovalId === approval.approvalId;
           const reason = reasons[approval.approvalId] ?? "";
           return (
-            <article className="approval-card" key={approval.approvalId}>
+            <article
+              className="approval-card"
+              key={approval.approvalId}
+              data-approval-id={approval.approvalId}
+            >
               <header className="approval-card-header">
                 <div>
                   <span className="approval-tool">{approval.toolName || "approval"}</span>

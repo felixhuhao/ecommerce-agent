@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationView } from "./ConversationView";
 import type { ThreadMessage } from "../types";
@@ -121,5 +121,27 @@ describe("ConversationView", () => {
 
     expect(document.querySelector(".message-md")).toBeNull();
     expect(screen.getByText("**not bold**")).toBeInTheDocument();
+  });
+
+  it("shows an Inspect control on agent answers that calls onInspect with the turn id", () => {
+    const onInspect = vi.fn();
+    render(
+      <ConversationView {...baseProps()} onInspect={onInspect} messages={[message({ turn_id: "turn-9" })]} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Inspect/i }));
+    expect(onInspect).toHaveBeenCalledWith("turn-9");
+  });
+
+  it("shows no Inspect control on operator messages", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        onInspect={vi.fn()}
+        messages={[message({ type: "user", content: "hi", turn_id: null })]}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /Inspect/i })).toBeNull();
   });
 });
