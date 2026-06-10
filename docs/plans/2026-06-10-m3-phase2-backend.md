@@ -4,7 +4,7 @@
 
 **Goal:** Make the agent's per-turn trace durable and inspectable, and expose session artifacts — add a `TraceStore` (in-memory + Mongo), a timeline projection, trace read + export endpoints, and a session-scoped artifact list endpoint, over the existing M2/M3-Phase-1 session API.
 
-**Architecture:** A new `TraceStore` (async protocol; `InMemoryTraceStore` for tests, `MongoTraceStore` for prod) persists the per-turn `TraceRecord` keyed by `(session_id, turn_id)` — saved best-effort in the existing `run_and_record_trace` background task, so `run_turn` stays Mongo-free for the eval harness. A pure `project_timeline()` collapses the flat event list into ordered spans for the UI (dropping data-URI bytes); the export endpoint returns the full raw record. The artifact endpoint projects from existing thread messages (no new store method). Reads fall back store→in-memory-cache so a just-finished turn is inspectable.
+**Architecture:** A new `TraceStore` (async protocol; `InMemoryTraceStore` for tests, `MongoTraceStore` for prod) persists the per-turn `TraceRecord` keyed by `(session_id, turn_id)` — saved best-effort in the existing `run_and_record_trace` background task, so `run_turn` stays Mongo-free for the eval harness. A pure `project_timeline()` collapses the flat event list into ordered spans for the UI (dropping data-URI bytes); the export endpoint returns the full raw record. The artifact endpoint projects from existing thread messages (no new store method). Reads fall back store→in-memory-cache — both when `get()` returns `None` and when it raises — so a just-finished turn (or one read during a store outage) stays inspectable.
 
 **Tech Stack:** FastAPI, motor (Mongo), pydantic v2 / dataclasses, pytest + pytest-asyncio (`asyncio_mode = "auto"`), `fastapi.testclient.TestClient`.
 
@@ -303,6 +303,7 @@ Create `src/ecommerce_agent/trace/mongo.py`:
 ```python
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -318,6 +319,7 @@ class MongoTraceStore:
         self._traces = traces
         self._client = client
         self._indexed = False
+        self._index_lock = asyncio.Lock()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "MongoTraceStore":
@@ -331,10 +333,14 @@ class MongoTraceStore:
             close()
 
     async def _ensure_indexes(self) -> None:
+        # Double-checked under a lock so concurrent first-saves create the index once.
         if self._indexed:
             return
-        await self._traces.create_index([("session_id", 1), ("turn_id", 1)], unique=True)
-        self._indexed = True
+        async with self._index_lock:
+            if self._indexed:
+                return
+            await self._traces.create_index([("session_id", 1), ("turn_id", 1)], unique=True)
+            self._indexed = True
 
     async def save(self, record: TraceRecord) -> None:
         await self._ensure_indexes()
@@ -596,9 +602,7 @@ def test_turn_persists_trace_to_store() -> None:
         deadline = time.monotonic() + 2.0
         record = None
         while time.monotonic() < deadline:
-            record = asyncio.get_event_loop().run_until_complete(
-                app.state.trace_store.get(session_id, turn_id)
-            )
+            record = asyncio.run(app.state.trace_store.get(session_id, turn_id))
             if record is not None:
                 break
             time.sleep(0.01)
@@ -799,6 +803,24 @@ def test_trace_endpoint_404s_for_unknown_session_and_turn() -> None:
         assert client.get("/api/sessions/ghost/turns/t1/trace").status_code == 404
         session_id = client.post("/api/sessions").json()["session_id"]
         assert client.get(f"/api/sessions/{session_id}/turns/missing/trace").status_code == 404
+
+
+def test_trace_endpoint_serves_cache_when_store_get_raises() -> None:
+    class RaisingTraceStore(InMemoryTraceStore):
+        async def get(self, session_id, turn_id):  # noqa: ANN001
+            raise RuntimeError("mongo down")
+
+    app = build_test_app()
+    app.state.trace_store = RaisingTraceStore()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        app.state.trace_records[session_id] = {"t1": TraceRecord(
+            session_id=session_id, turn_id="t1"
+        )}
+
+        body = client.get(f"/api/sessions/{session_id}/turns/t1/trace")
+        assert body.status_code == 200
+        assert body.json()["turn_id"] == "t1"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -821,7 +843,13 @@ Add a loader helper next to `_require_session`:
 async def _load_trace_record(
     request: Request, session_id: str, turn_id: str
 ) -> TraceRecord | None:
-    record = await request.app.state.trace_store.get(session_id, turn_id)
+    # The store is the source of truth, but a store outage must not break reads when the
+    # in-memory cache still holds the record (mirrors the contained save path).
+    try:
+        record = await request.app.state.trace_store.get(session_id, turn_id)
+    except Exception:
+        logger.exception("trace_store.get failed for %s/%s", session_id, turn_id)
+        record = None
     if record is not None:
         return record
     return request.app.state.trace_records.get(session_id, {}).get(turn_id)
@@ -1075,7 +1103,7 @@ git commit -m "chore(m3): lint pass for Phase 2 backend"
 - §3.1 TraceStore (InMemory + Mongo twins, save/get/ping, from_dict, unique-by-turn) → Tasks 1–3. ✓
 - §3.2 persistence in the background task (cache then save), `run_turn` Mongo-free, lifespan wiring + close → Task 5. ✓
 - §3.3 `project_timeline` (merge start/end, order by ts, token totals, surface artifact_id/approval_id, drop src, start-only span) → Task 4. ✓
-- §3.4 read endpoint + store→cache fallback + 404s → Task 6; export endpoint (full record + Content-Disposition) + 404s → Task 7. ✓
+- §3.4 read endpoint + store→cache fallback (on `None` **and** on `get()` raising) + 404s → Task 6; export endpoint (full record + Content-Disposition) + 404s → Task 7. ✓
 - §4 artifact list from messages, newest-first, owning fields, empty=[] not 404, 404 unknown session → Task 8. ✓
 - §7 contained save failure (log, no re-raise, cache still serves) → Task 5 (`test_trace_save_failure_is_contained`). ✓
 - §8 tests: store round-trip, deserialization round-trip (Task 1), projection, read/export/artifacts endpoints, persistence wiring, save-failure → covered. ✓
