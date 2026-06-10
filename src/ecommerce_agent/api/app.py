@@ -50,9 +50,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_store = getattr(
         app.state, "session_store", None
     ) or MongoSessionStore.from_settings(settings)
-    app.state.trace_store = getattr(app.state, "trace_store", None) or MongoTraceStore.from_settings(
-        settings
-    )
+    app.state.trace_store = getattr(
+        app.state, "trace_store", None
+    ) or MongoTraceStore.from_settings(settings)
     app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
     app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
     app.state.approval_clients = getattr(app.state, "approval_clients", None) or {}
