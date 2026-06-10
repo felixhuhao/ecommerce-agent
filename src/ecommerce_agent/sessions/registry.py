@@ -120,6 +120,8 @@ class SessionRegistry:
     def _reap_idle_locked(self) -> list[str]:
         reaped: list[str] = []
         for session_id, runtime in list(self._runtimes.items()):
+            if session_id in self._active_turns:
+                continue
             if runtime.idle_seconds() >= self._idle_ttl_seconds:
                 runtime.close()
                 del self._runtimes[session_id]

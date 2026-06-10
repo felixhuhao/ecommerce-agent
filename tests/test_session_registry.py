@@ -69,6 +69,30 @@ async def test_reap_idle_closes_sandbox_and_drops_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reap_idle_skips_session_with_active_turn() -> None:
+    closed: list[str] = []
+
+    class FakeSandbox:
+        def close(self) -> None:
+            closed.append("closed")
+
+    async def build(session_id: str) -> SessionRuntime:
+        return make_runtime(session_id, sandbox=FakeSandbox())
+
+    registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=0, max_live_sessions=50)
+    session_id = await registry.create()
+    assert await registry.try_begin_turn(session_id) is True
+
+    assert await registry.reap_idle() == []
+    assert closed == []
+    assert (await registry.get(session_id)).session_id == session_id
+
+    await registry.end_turn(session_id)
+    assert await registry.reap_idle() == [session_id]
+    assert closed == ["closed"]
+
+
+@pytest.mark.asyncio
 async def test_create_evicts_oldest_when_at_cap() -> None:
     closed: list[str] = []
 
