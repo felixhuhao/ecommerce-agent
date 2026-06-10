@@ -480,23 +480,22 @@ def test_reject_endpoint_does_not_append_when_decision_does_not_change() -> None
     assert thread["messages"] == []
 
 
-def test_turn_persists_trace_to_store() -> None:
-    app = build_test_app()
-    with TestClient(app) as client:
-        session_id = client.post("/api/sessions").json()["session_id"]
-        turn_id = client.post(
-            f"/api/sessions/{session_id}/messages", json={"message": "hello"}
-        ).json()["turn_id"]
-        _wait_for_trace(app, session_id, turn_id)
+@pytest.mark.asyncio
+async def test_turn_persists_trace_to_store() -> None:
+    from ecommerce_agent.api.sessions import MessageRequest, post_message
 
-        deadline = time.monotonic() + 2.0
-        record = None
-        while time.monotonic() < deadline:
-            record = asyncio.run(app.state.trace_store.get(session_id, turn_id))
-            if record is not None:
-                break
-            time.sleep(0.01)
-        assert record is not None and record.turn_id == turn_id
+    app = build_test_app()
+    session_id = await app.state.session_registry.create()
+    await app.state.session_store.create(session_id)
+
+    result = await post_message(
+        session_id, MessageRequest(message="hello"), SimpleNamespace(app=app)
+    )
+    turn_id = result["turn_id"]
+    await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
+
+    record = await app.state.trace_store.get(session_id, turn_id)
+    assert record is not None and record.turn_id == turn_id
 
 
 @pytest.mark.asyncio
