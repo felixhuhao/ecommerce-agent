@@ -77,7 +77,9 @@ exists in [api/sessions.py](src/ecommerce_agent/api/sessions.py)):
    (§10) — a candidate fast-follow.
    *Implementation note:* run the `session_known` Mongo check and the Docker-backed `build_runtime`
    **outside** the global registry lock; hold the lock only to read/insert the cache (double-checking a
-   concurrent rebuild won). One slow rebuild must not block unrelated session operations.
+   concurrent rebuild won). One slow rebuild must not block unrelated session operations. If two requests
+   rebuild the same session concurrently, the **loser must `close()` its discarded runtime** (its Docker
+   sandbox) so a duplicate rebuild never leaks a container.
 5. **Session existence validation on every session-scoped endpoint.** Today `GET …/thread` returns an
    empty thread for an unknown id and `GET …/stream` opens an empty stream
    ([sessions.py](src/ecommerce_agent/api/sessions.py)), silently "succeeding" for garbage ids. Fix:
@@ -114,8 +116,9 @@ Components under the 3-pane shell:
 - **ConversationView** (center) — renders the thread by message `type` (`user`, `agent_answer`,
   `agent_proposal`, `approval_status`, `execution_result`) and a composer (textarea → `POST …/messages`).
   The composer **disables while a turn is in flight** (see turn-finalization below); a `409
-  turn_in_progress` just reaffirms that state and shows **no duplicate optimistic message** — the user's
-  message already streamed back as a `thread.append`.
+  turn_in_progress` just reaffirms that state and shows **no duplicate optimistic message** — the
+  **in-flight turn's** user message already streamed back as a `thread.append`, and the rejected second
+  send is side-effect-free, so there is nothing to append for it.
 - **ApprovalWorkspace** (right rail) — pending proposals as cards (§5).
 - **HealthPanel** (right rail, collapsible) — `/health` (`components`: sandbox / model / Mongo) +
   `/health/mcp` (Spring / ModelScope); status dots, no blocking.
@@ -211,7 +214,8 @@ conversation as proposal bubbles.
     session existence only.
   - **Rehydration:** a session present in `sessions` but absent from the registry is messageable (runtime
     rebuilt); an id unknown to Mongo `404`s. Concurrent rebuilds resolve to one runtime without holding
-    the global lock across `build_runtime`.
+    the global lock across `build_runtime`, and the discarded loser runtime is `close()`d (no leaked
+    sandbox).
   - **Single-turn guard (side-effect-free):** a second `POST …/messages` while a turn is active returns
     `409 {"error": "turn_in_progress"}` **and leaves the thread unchanged** (no stray user message, no
     title/preview write); the marker clears after completion.
