@@ -212,11 +212,13 @@ git commit -m "feat(m3-fe): add trace/artifact types, client calls, retry predic
 
 ---
 
-### Task 2: `extFromMime` helper
+### Task 2: Format helpers (`extFromMime`, `formatRelativeTime`)
 
 **Files:**
 - Create: `frontend/src/lib/mime.ts`
+- Create: `frontend/src/lib/datetime.ts`
 - Test: `frontend/src/lib/mime.test.ts`
+- Test: `frontend/src/lib/datetime.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -269,11 +271,65 @@ export function extFromMime(mime: string | null | undefined): string {
 Run: `cd frontend && npx vitest run src/lib/mime.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Write the failing test for `formatRelativeTime`**
+
+Create `frontend/src/lib/datetime.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { formatRelativeTime } from "./datetime";
+
+describe("formatRelativeTime", () => {
+  const now = Date.parse("2026-06-10T12:00:00Z");
+
+  it("formats recent timestamps relatively", () => {
+    expect(formatRelativeTime("2026-06-10T11:59:50Z", now)).toBe("just now");
+    expect(formatRelativeTime("2026-06-10T11:30:00Z", now)).toBe("30m ago");
+    expect(formatRelativeTime("2026-06-10T09:00:00Z", now)).toBe("3h ago");
+    expect(formatRelativeTime("2026-06-08T12:00:00Z", now)).toBe("2d ago");
+  });
+
+  it("falls back to the raw value for invalid input", () => {
+    expect(formatRelativeTime("not-a-date", now)).toBe("not-a-date");
+  });
+});
+```
+
+- [ ] **Step 6: Run test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/lib/datetime.test.ts`
+Expected: FAIL — module not found.
+
+- [ ] **Step 7: Create the helper**
+
+Create `frontend/src/lib/datetime.ts`:
+
+```ts
+export function formatRelativeTime(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  const seconds = Math.round((now - then) / 1000);
+  if (seconds < 45) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+```
+
+- [ ] **Step 8: Run test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/lib/datetime.test.ts`
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add frontend/src/lib/mime.ts frontend/src/lib/mime.test.ts
-git commit -m "feat(m3-fe): add extFromMime download-extension helper"
+git add frontend/src/lib/mime.ts frontend/src/lib/mime.test.ts frontend/src/lib/datetime.ts frontend/src/lib/datetime.test.ts
+git commit -m "feat(m3-fe): add extFromMime + formatRelativeTime helpers"
 ```
 
 ---
@@ -342,6 +398,7 @@ Create `frontend/src/components/ArtifactPanel.tsx`:
 
 ```tsx
 import { Download } from "lucide-react";
+import { formatRelativeTime } from "../lib/datetime";
 import { extFromMime } from "../lib/mime";
 import type { ArtifactSummary } from "../types";
 
@@ -374,7 +431,7 @@ export function ArtifactPanel({ artifacts, isLoading, isError, onJumpToMessage }
               <img src={artifact.src} alt={artifact.tool_name ?? "chart"} />
               <figcaption>
                 <span className="artifact-tool">{artifact.tool_name ?? "chart"}</span>
-                <span className="artifact-time">{artifact.created_at}</span>
+                <span className="artifact-time">{formatRelativeTime(artifact.created_at)}</span>
               </figcaption>
               <div className="artifact-actions">
                 <a
@@ -467,6 +524,26 @@ describe("TracePanel", () => {
     expect(onViewArtifacts).toHaveBeenCalled();
   });
 
+  it("links an approval span to its specific card by id", () => {
+    const onViewApproval = vi.fn();
+    render(
+      <TracePanel
+        {...base}
+        onViewApproval={onViewApproval}
+        timeline={timeline({
+          span_count: 1,
+          spans: [{
+            kind: "tool_call", name: "request_approval", status: "ok", ts: 1, duration_ms: 5,
+            args_summary: null, result_summary: null, tokens_in: null, tokens_out: null,
+            span_id: "rq", artifact_id: null, approval_id: "appr-7", error_message: null,
+          }],
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /View approval/i }));
+    expect(onViewApproval).toHaveBeenCalledWith("appr-7");
+  });
+
   it("prompts to select a turn when none is inspected", () => {
     render(<TracePanel {...base} inspectedTurnId={null} timeline={undefined} />);
     expect(screen.getByText(/Select an answer's Inspect/i)).toBeInTheDocument();
@@ -503,7 +580,7 @@ interface TracePanelProps {
   isError: boolean;
   exportHref: string | null;
   onViewArtifacts: () => void;
-  onViewApproval: () => void;
+  onViewApproval: (approvalId: string) => void;
 }
 
 function SpanRow({
@@ -513,7 +590,7 @@ function SpanRow({
 }: {
   span: TraceSpan;
   onViewArtifacts: () => void;
-  onViewApproval: () => void;
+  onViewApproval: (approvalId: string) => void;
 }) {
   const Icon = span.kind === "tool_call" ? Wrench : Cpu;
   return (
@@ -543,7 +620,11 @@ function SpanRow({
           </button>
         ) : null}
         {span.approval_id ? (
-          <button type="button" className="trace-link" onClick={onViewApproval}>
+          <button
+            type="button"
+            className="trace-link"
+            onClick={() => onViewApproval(span.approval_id as string)}
+          >
             View approval
           </button>
         ) : null}
@@ -866,7 +947,120 @@ git commit -m "feat(m3-fe): add Inspect control + scroll-to-message to Conversat
 
 ---
 
-### Task 7: Wire the rail, queries, and inspect/jump state into `App`
+### Task 7: `ApprovalWorkspace` — focus a card by id
+
+The "View approval" trace link must land on the *specific* proposal card (with multiple pending approvals), not merely switch to the Approvals tab.
+
+**Files:**
+- Modify: `frontend/src/components/ApprovalWorkspace.tsx`
+- Test: `frontend/src/components/ApprovalWorkspace.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `frontend/src/components/ApprovalWorkspace.test.tsx`:
+
+```tsx
+import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { ApprovalWorkspace } from "./ApprovalWorkspace";
+import type { ApprovalView } from "../state/approvals";
+
+function approval(overrides: Partial<ApprovalView> = {}): ApprovalView {
+  return {
+    approvalId: "a1", card: null, toolName: "purchase_order_create",
+    status: "pending", result: null, reason: null, ...overrides,
+  };
+}
+
+const base = { pendingApprovalId: null, actionError: null, onApprove: vi.fn(), onReject: vi.fn() };
+
+describe("ApprovalWorkspace focus", () => {
+  it("scrolls the matching card into view when focusApprovalId is set", () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    render(
+      <ApprovalWorkspace
+        {...base}
+        approvals={[approval({ approvalId: "a2" }), approval({ approvalId: "a1" })]}
+        focusApprovalId="a1"
+      />,
+    );
+
+    expect(document.querySelector('[data-approval-id="a1"]')).not.toBeNull();
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/ApprovalWorkspace.test.tsx`
+Expected: FAIL — `focusApprovalId` is not a prop, there is no `data-approval-id`, and nothing scrolls.
+
+- [ ] **Step 3: Add the prop, the data attribute, and the scroll effect**
+
+In `frontend/src/components/ApprovalWorkspace.tsx`:
+
+Change the React import to add `useEffect`:
+
+```tsx
+import { useEffect, useState } from "react";
+```
+
+Add `focusApprovalId?: string | null;` to `ApprovalWorkspaceProps` (after `onReject`):
+
+```tsx
+  onReject: (approvalId: string, reason: string | undefined) => Promise<void> | void;
+  focusApprovalId?: string | null;
+```
+
+Destructure it in the component signature (after `onReject,`):
+
+```tsx
+  onReject,
+  focusApprovalId,
+```
+
+Add a scroll effect at the top of the component body, before the `return`:
+
+```tsx
+  useEffect(() => {
+    if (!focusApprovalId) return;
+    document
+      .querySelector(`[data-approval-id="${focusApprovalId}"]`)
+      ?.scrollIntoView({ block: "center" });
+  }, [focusApprovalId]);
+```
+
+Add `data-approval-id` to the approval card `<article>`:
+
+```tsx
+            <article
+              className="approval-card"
+              key={approval.approvalId}
+              data-approval-id={approval.approvalId}
+            >
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/components/ApprovalWorkspace.test.tsx`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/ApprovalWorkspace.tsx frontend/src/components/ApprovalWorkspace.test.tsx
+git commit -m "feat(m3-fe): focus a specific approval card by id"
+```
+
+---
+
+### Task 8: Wire the rail, queries, and inspect/jump state into `App`
 
 **Files:**
 - Modify: `frontend/src/App.tsx`
@@ -986,6 +1180,7 @@ Inside `App`, after the existing `useState` declarations, add:
   const [activeTab, setActiveTab] = useState<RailTab>("approvals");
   const [inspectedTurnId, setInspectedTurnId] = useState<string | null>(null);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
+  const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
   const wasInFlight = useRef(false);
 ```
 
@@ -1030,8 +1225,15 @@ Add the handlers (near `handleSelectSession`):
     setActiveTab("trace");
   }, []);
 
-  const handleJumpToMessage = useCallback((messageId: string) => {
+  // A trace approval span opens the specific card: switch to Approvals AND focus that id.
+  const handleViewApproval = useCallback((approvalId: string) => {
     setActiveTab("approvals");
+    setFocusApprovalId(approvalId);
+  }, []);
+
+  // Jump scrolls the conversation to the owning message; it must NOT change the rail tab,
+  // or the artifact gallery would vanish on click.
+  const handleJumpToMessage = useCallback((messageId: string) => {
     setFocusMessageId(messageId);
   }, []);
 ```
@@ -1061,6 +1263,7 @@ Replace the `rail={ … }` prop of `AppShell` with the tabbed rail:
               actionError={actionError}
               onApprove={handleApprove}
               onReject={handleReject}
+              focusApprovalId={focusApprovalId}
             />
           }
           artifacts={
@@ -1081,7 +1284,7 @@ Replace the `rail={ … }` prop of `AppShell` with the tabbed rail:
                 activeId && inspectedTurnId ? traceExportUrl(activeId, inspectedTurnId) : null
               }
               onViewArtifacts={() => setActiveTab("artifacts")}
-              onViewApproval={() => setActiveTab("approvals")}
+              onViewApproval={handleViewApproval}
             />
           }
           health={
@@ -1110,7 +1313,7 @@ git commit -m "feat(m3-fe): wire tabbed rail, trace/artifact reads, inspect + ju
 
 ---
 
-### Task 8: Full suite + production build green
+### Task 9: Full suite + production build green
 
 **Files:** none (verification only).
 
@@ -1136,18 +1339,19 @@ git commit -m "chore(m3-fe): build green for Phase 2 frontend"
 ## Self-Review
 
 **1. Spec coverage:**
-- §5.1 tabbed right rail (Approvals · Artifacts · Trace · Health), badge, single-dashboard tab state → Tasks 5, 7. ✓
-- §5.2 Inspect on agent_answer/agent_proposal → sets `inspectedTurnId` + switches to Trace tab → Tasks 6, 7. ✓
-- §5.3 TracePanel: turn header (duration/tokens/span count), span rows (icon/name/duration/status, expandable args/result/tokens), View-in-Artifacts + approval cross-links, Download trace JSON, and no-turn/loading/error/empty states → Task 4 (+ retry data flows from Task 7's query). ✓
-- §5.4 ArtifactPanel: thumbnail/tool/time cards, Download (`{id}.{ext}` via `extFromMime`), Jump-to-message, loading/empty/error; key `${message_id}:${id}` → Tasks 2, 3. ✓
-- §5.5 types, client (`getTrace`/`getArtifacts`/`traceExportUrl`), no reducer changes; `inspectedTurnId` + tab as the only new shell state → Tasks 1, 7. ✓
-- §5.5 / §3.4 status-bearing `ApiError` + 404 grace-retry predicate → Task 1; applied as `retry: shouldRetryTrace, retryDelay: 400` → Task 7. ✓
+- §5.1 tabbed right rail (Approvals · Artifacts · Trace · Health), badge, single-dashboard tab state → Tasks 5, 8. ✓
+- §5.2 Inspect on agent_answer/agent_proposal → sets `inspectedTurnId` + switches to Trace tab → Tasks 6, 8. ✓
+- §5.3 TracePanel: turn header (duration/tokens/span count), span rows (icon/name/duration/status, expandable args/result/tokens), View-in-Artifacts + approval cross-links, Download trace JSON, and no-turn/loading/error/empty states → Task 4 (+ retry data flows from Task 8's query). ✓
+- §5.3 / §design L235 the approval cross-link opens the **specific** proposal card: `onViewApproval(approvalId)` (Task 4) → `ApprovalWorkspace` `focusApprovalId` scroll (Task 7) → App `handleViewApproval` (Task 8). ✓
+- §5.4 ArtifactPanel: thumbnail/tool/**relative** time cards (`formatRelativeTime`, Task 2), Download (`{id}.{ext}` via `extFromMime`), Jump-to-message (scrolls the conversation only — does **not** switch tabs, Task 8), loading/empty/error; key `${message_id}:${id}` → Tasks 2, 3, 8. ✓
+- §5.5 types, client (`getTrace`/`getArtifacts`/`traceExportUrl`), no reducer changes; `inspectedTurnId` + tab + focus ids as the only new shell state → Tasks 1, 8. ✓
+- §5.5 / §3.4 status-bearing `ApiError` + 404 grace-retry predicate → Task 1; applied as `retry: shouldRetryTrace, retryDelay: 400` → Task 8. ✓
 - §6 client-side download from the data URI (`<a download>`), no byte-stream endpoint → Tasks 3 (artifact), 4 (trace export link). ✓
-- Refetch artifacts on turn completion (so new charts appear) → Task 7 effect. ✓
+- Refetch artifacts on turn completion (so new charts appear) → Task 8 effect. ✓
 
 **2. Placeholder scan:** No TBD/TODO/"handle errors"/"similar to" — every step shows full code or exact edits. ✓
 
-**3. Type consistency:** `TraceTimeline`/`TraceSpan`/`ArtifactSummary` (Task 1) match the panel props (Tasks 3, 4) and the backend `project_timeline`/`_session_artifacts` shapes confirmed in the backend code. `RailTab` (Task 5) is imported and used by `App` (Task 7). `getTrace(sessionId, turnId)`, `getArtifacts(sessionId)`, `traceExportUrl(sessionId, turnId)`, `shouldRetryTrace(count, error)` signatures are consistent between Task 1 (definition + tests) and Task 7 (call sites). `ConversationView` gains optional `onInspect?`/`focusMessageId?` (Task 6) used by `App` (Task 7); existing callers/tests that omit them still compile and render no button. `ApiError.message` stays the status string, so `App.tsx`'s existing `isNotFound` (`error.message === "404"`) is unaffected. ✓
+**3. Type consistency:** `TraceTimeline`/`TraceSpan`/`ArtifactSummary` (Task 1) match the panel props (Tasks 3, 4) and the backend `project_timeline`/`_session_artifacts` shapes confirmed in the backend code. `RailTab` (Task 5) is imported and used by `App` (Task 8). `getTrace(sessionId, turnId)`, `getArtifacts(sessionId)`, `traceExportUrl(sessionId, turnId)`, `shouldRetryTrace(count, error)` signatures are consistent between Task 1 (definition + tests) and Task 8 (call sites). `onViewApproval(approvalId)` is consistent between TracePanel (Task 4) and App's `handleViewApproval` (Task 8); `ApprovalWorkspace`'s `focusApprovalId?` (Task 7) is supplied by App (Task 8). `ConversationView` gains optional `onInspect?`/`focusMessageId?` (Task 6) used by `App` (Task 8); existing callers/tests that omit them still compile and render no button. `ApiError.message` stays the status string, so `App.tsx`'s existing `isNotFound` (`error.message === "404"`) is unaffected. ✓
 
 **Notes:**
 - Pure panels (no React Query inside) keep component tests provider-free, matching `HealthPanel.test.tsx`; the only RQ-aware test is the App integration test, which uses the file's existing `renderApp()` + `FakeEventSource` harness.
