@@ -67,6 +67,17 @@ describe("foldApprovals", () => {
     expect(views[0]).toMatchObject({ status: "rejected", reason: "too costly" });
   });
 
+  it("orders newest approval requests first", () => {
+    const views = foldApprovals([
+      m({ seq: 1, type: "agent_proposal", approval_id: "old", status: "pending" }),
+      m({ seq: 2, type: "agent_proposal", approval_id: "new", status: "pending" }),
+      m({ seq: 3, type: "approval_status", approval_id: "old", status: "approved" }),
+    ]);
+
+    expect(views.map((view) => view.approvalId)).toEqual(["new", "old"]);
+    expect(views[1]).toMatchObject({ approvalId: "old", status: "approved" });
+  });
+
   it("ignores messages without an approval_id", () => {
     expect(foldApprovals([m({ seq: 1, type: "agent_answer" })])).toEqual([]);
   });
