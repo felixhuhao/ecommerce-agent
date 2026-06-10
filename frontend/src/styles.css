@@ -169,7 +169,9 @@ button:disabled {
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(232px, 288px) minmax(0, 1fr) minmax(312px, 384px);
-  min-height: 100vh;
+  /* Pin the app to the viewport; each column scrolls on its own (below). */
+  height: 100vh;
+  overflow: hidden;
 }
 
 .console-sidebar,
@@ -178,6 +180,7 @@ button:disabled {
   min-width: 0;
   height: 100vh;
   min-height: 0;
+  overflow: hidden;
 }
 
 .console-sidebar {
@@ -219,7 +222,10 @@ button:disabled {
 .conversation-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
-  min-height: 100vh;
+  /* Bounded height so the message-list (the 1fr row) scrolls internally and the
+     composer stays pinned, instead of growing the whole page. */
+  height: 100%;
+  min-height: 0;
   padding: 22px 26px;
 }
 
@@ -1031,6 +1037,44 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* Complex (object/array) values stack full-width below their label. */
+.kv-list div.kv-block {
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+
+.kv-money {
+  color: var(--gold-deep);
+  font-weight: 600;
+}
+
+.kv-json {
+  margin: 2px 0 0;
+  max-height: 150px;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-inset);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.approval-op {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--gold-deep);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
 .raw-details {
   margin-top: 12px;
   color: var(--ink-dim);
@@ -1519,8 +1563,23 @@ button:disabled {
 /* ---------- Responsive ----------------------------------------------------- */
 
 @media (max-width: 1100px) {
+  /* Below the 3-pane width, return to normal document flow / page scroll. */
   .console-shell {
+    height: auto;
+    overflow: visible;
     grid-template-columns: 244px minmax(0, 1fr);
+  }
+
+  .console-sidebar,
+  .console-main {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .conversation-panel {
+    height: auto;
+    min-height: 72vh;
   }
 
   .console-rail {
