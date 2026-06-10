@@ -8,9 +8,9 @@ describe("HealthPanel", () => {
 
     expect(screen.getByText("API")).toBeInTheDocument();
     expect(screen.getByText("health endpoint unavailable")).toBeInTheDocument();
-    expect(screen.getByText("MCP health")).toBeInTheDocument();
+    expect(screen.getByText("Tool gateway")).toBeInTheDocument();
     expect(screen.getByText("health/mcp endpoint unavailable")).toBeInTheDocument();
-    expect(screen.getByText("api unavailable")).toBeInTheDocument();
+    expect(screen.getByText("API unavailable")).toBeInTheDocument();
   });
 
   it("renders component and server health when data is available", () => {
@@ -34,10 +34,13 @@ describe("HealthPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Mongo")).toBeInTheDocument();
+    expect(screen.getByText("Conversation store")).toBeInTheDocument();
+    expect(screen.getByText("Analysis sandbox")).toBeInTheDocument();
+    expect(screen.getByText("AI model")).toBeInTheDocument();
     expect(screen.getByText("deepseek-chat")).toBeInTheDocument();
-    expect(screen.getByText("spring")).toBeInTheDocument();
-    expect(screen.getByText("11 tools")).toBeInTheDocument();
+    expect(screen.getByText("Commerce tools")).toBeInTheDocument();
+    expect(screen.getByText("11 tools · spring")).toBeInTheDocument();
+    expect(screen.getByText("Environment: local")).toBeInTheDocument();
     expect(screen.queryByText("health endpoint unavailable")).not.toBeInTheDocument();
   });
 });

@@ -985,11 +985,17 @@ button:disabled {
   gap: 10px;
   margin-bottom: 12px;
 }
+.approval-card-header > div {
+  min-width: 0;
+  flex: 1;
+}
+.approval-card-header .status-pill {
+  flex: 0 0 auto;
+}
 
 .approval-tool,
 .approval-id {
   display: block;
-  overflow-wrap: anywhere;
 }
 
 .approval-tool {
@@ -1002,6 +1008,44 @@ button:disabled {
   color: var(--ink-faint);
   font-family: var(--font-mono);
   font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-sub {
+  display: block;
+  margin-top: 4px;
+}
+.approval-sub .approval-id {
+  margin-top: 0;
+}
+
+/* Headline money figure, pulled to the top of the card. */
+.approval-figure {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 13px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.approval-figure-label {
+  color: var(--ink-dim);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.approval-figure-value {
+  color: var(--gold-deep);
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .kv-list {
@@ -1049,6 +1093,43 @@ button:disabled {
   padding-left: 11px;
   gap: 7px;
   border-left: 1px solid var(--rule);
+}
+
+/* Collapsible top-level section (Current State, Operation Params, …). */
+.kv-section > summary {
+  display: flex;
+  align-items: baseline;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink);
+}
+.kv-section > summary::-webkit-details-marker {
+  display: none;
+}
+.kv-section > summary::before {
+  content: "▸";
+  margin-right: 8px;
+  color: var(--gold);
+  font-size: 0.7em;
+  transition: transform 0.12s ease;
+}
+.kv-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.kv-section-label {
+  color: var(--ink-dim);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.03em;
+}
+
+.kv-section-hint {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .kv-money {
@@ -1125,6 +1206,21 @@ button:disabled {
   box-shadow: inset 3px 0 0 var(--emerald);
 }
 
+/* Execution result of a consumed approval — collapsed section with a success accent. */
+.result-section {
+  margin-top: 10px;
+}
+.result-section > summary::before {
+  color: var(--emerald);
+}
+.result-message {
+  margin-left: auto;
+  color: var(--emerald-deep);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
 .state-note {
   margin: 12px 0 0;
   padding: 9px 11px;
@@ -1132,6 +1228,16 @@ button:disabled {
   background: var(--paper-inset);
   color: var(--ink-dim);
   font-size: 0.85rem;
+}
+.state-note-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .approval-actions {

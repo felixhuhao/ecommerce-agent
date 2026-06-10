@@ -8,6 +8,21 @@ interface HealthPanelProps {
   mcpUnavailable?: boolean;
 }
 
+const MCP_SERVER_LABELS: Record<string, string> = {
+  spring: "Commerce tools",
+  modelscope: "Chart tools",
+};
+
+function mcpServerLabel(name: string): string {
+  return MCP_SERVER_LABELS[name] ?? name;
+}
+
+function mcpServerDetail(name: string, toolCount?: number, error?: string): string | undefined {
+  if (error) return error;
+  const tools = typeof toolCount === "number" ? `${toolCount} tools` : undefined;
+  return tools ? `${tools} · ${name}` : name;
+}
+
 function statusClass(status?: string) {
   if (status === "ok") return "ok";
   if (status === "unconfigured") return "warn";
@@ -56,16 +71,24 @@ export function HealthPanel({
       <div className="health-group">
         <div className="health-group-title">
           <Database size={15} aria-hidden="true" />
-          <span>Core</span>
+          <span>Workspace</span>
         </div>
         {showCoreUnavailable ? (
           <StatusRow label="API" status="unavailable" detail="health endpoint unavailable" />
         ) : (
           <>
-            <StatusRow label="Mongo" status={components.mongo?.status} detail={components.mongo?.error} />
-            <StatusRow label="Sandbox" status={components.sandbox?.status} detail={components.sandbox?.error} />
             <StatusRow
-              label="Model"
+              label="Conversation store"
+              status={components.mongo?.status}
+              detail={components.mongo?.error}
+            />
+            <StatusRow
+              label="Analysis sandbox"
+              status={components.sandbox?.status}
+              detail={components.sandbox?.error}
+            />
+            <StatusRow
+              label="AI model"
               status={components.model?.status}
               detail={components.model?.model ?? components.model?.checked}
             />
@@ -76,26 +99,36 @@ export function HealthPanel({
       <div className="health-group">
         <div className="health-group-title">
           <Server size={15} aria-hidden="true" />
-          <span>MCP</span>
+          <span>Tool Providers</span>
         </div>
         {showMcpUnavailable ? (
-          <StatusRow label="MCP health" status="unavailable" detail="health/mcp endpoint unavailable" />
+          <StatusRow
+            label="Tool gateway"
+            status="unavailable"
+            detail="health/mcp endpoint unavailable"
+          />
         ) : mcp?.servers
           ? Object.entries(mcp.servers).map(([name, server]) => (
               <StatusRow
                 key={name}
-                label={name}
+                label={mcpServerLabel(name)}
                 status={server.status}
-                detail={typeof server.tool_count === "number" ? `${server.tool_count} tools` : server.error}
+                detail={mcpServerDetail(name, server.tool_count, server.error)}
               />
             ))
           : null}
-        {!mcp?.servers && !showMcpUnavailable ? <StatusRow label="MCP" status="unknown" /> : null}
+        {!mcp?.servers && !showMcpUnavailable ? <StatusRow label="Tool gateway" status="unknown" /> : null}
       </div>
 
       <div className="health-group-title muted">
         <Box size={15} aria-hidden="true" />
-        <span>{health?.environment || (healthUnavailable ? "api unavailable" : "environment")}</span>
+        <span>
+          {health?.environment
+            ? `Environment: ${health.environment}`
+            : healthUnavailable
+              ? "API unavailable"
+              : "Environment"}
+        </span>
       </div>
     </section>
   );

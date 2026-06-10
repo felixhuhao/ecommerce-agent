@@ -22,6 +22,10 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "do not call order_query or product_query again" in prompt
     assert "Do not include process narration" in prompt
     assert "chart" in prompt and "unavailable" in prompt
+    assert "Do not call write_todos" in prompt
+    assert "Do not run help()" in prompt
+    assert "python3 <<'PY'" in prompt
+    assert "Sales Forecast by Category" in prompt
 
 
 def test_get_order_manager_prompt_is_nonempty_and_approval_only() -> None:

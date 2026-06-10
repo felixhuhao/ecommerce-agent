@@ -16,8 +16,12 @@ interface ApprovalWorkspaceProps {
 const HEADER_KEYS = new Set(["approvalId", "toolName", "status", "operationType"]);
 const MONEY_KEY = /(?:cost|price|amount|total|subtotal|spend)/i;
 
+// Shorter / friendlier labels for a few verbose keys; everything else is humanized.
+const LABEL_OVERRIDES: Record<string, string> = { financialImpact: "Estimated Spend" };
+
 // camelCase / snake_case → "Title Case" so labels read as prose, not field names.
 function humanizeKey(key: string): string {
+  if (LABEL_OVERRIDES[key]) return LABEL_OVERRIDES[key];
   return key
     .replace(/[_-]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -34,9 +38,13 @@ function isMoney(key: string, value: unknown): value is number {
   return typeof value === "number" && MONEY_KEY.test(key);
 }
 
+function formatMoney(value: number): string {
+  return value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+
 function formatScalar(key: string, value: string | number | boolean): string {
   if (isMoney(key, value)) {
-    return value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+    return formatMoney(value);
   }
   return String(value);
 }
@@ -132,10 +140,60 @@ function renderValue(label: string, rawKey: string, value: unknown, depth: numbe
   );
 }
 
-function cardEntries(card: Record<string, unknown> | null) {
+function sectionHint(value: object): string {
+  if (Array.isArray(value)) {
+    return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  }
+  const count = Object.keys(value).filter((key) => !key.startsWith("_")).length;
+  return `${count} field${count === 1 ? "" : "s"}`;
+}
+
+// Top-level fields: scalars/money inline; multi-field objects & arrays become a
+// collapsible section (open while the operator is still deciding, i.e. pending).
+function renderTopEntry(label: string, rawKey: string, value: unknown, open: boolean): ReactNode {
+  if (value == null || isScalar(value) || singleScalarEntry(value)) {
+    return renderValue(label, rawKey, value, 0);
+  }
+  if (typeof value === "object") {
+    const children = entriesOf(value);
+    if (children.length === 0) {
+      return renderValue(label, rawKey, value, 0);
+    }
+    return (
+      <details key={rawKey} className="kv-section" open={open}>
+        <summary>
+          <span className="kv-section-label">{label}</span>
+          <span className="kv-section-hint">{sectionHint(value)}</span>
+        </summary>
+        <dl className="kv-list kv-nested">
+          {children.map(([childLabel, childKey, childValue]) =>
+            renderValue(childLabel, childKey, childValue, 1),
+          )}
+        </dl>
+      </details>
+    );
+  }
+  return renderValue(label, rawKey, value, 0);
+}
+
+// The first top-level money field becomes the headline figure (and is dropped from the body).
+function findMoneyHeadline(
+  card: Record<string, unknown>,
+): { key: string; label: string; value: number } | null {
+  for (const [key, value] of Object.entries(card)) {
+    if (key.startsWith("_") || HEADER_KEYS.has(key) || key === "title") continue;
+    const flat = isScalar(value) ? { key, value } : singleScalarEntry(value);
+    if (flat && isMoney(flat.key, flat.value)) {
+      return { key, label: humanizeKey(key), value: flat.value };
+    }
+  }
+  return null;
+}
+
+function cardEntries(card: Record<string, unknown> | null, exclude: Set<string>) {
   if (!card) return [];
   return Object.entries(card)
-    .filter(([key]) => !key.startsWith("_") && !HEADER_KEYS.has(key))
+    .filter(([key]) => !key.startsWith("_") && !HEADER_KEYS.has(key) && !exclude.has(key))
     .slice(0, 10);
 }
 
@@ -176,8 +234,21 @@ export function ApprovalWorkspace({
           const isPending = approval.status === "pending";
           const isBusy = pendingApprovalId === approval.approvalId;
           const reason = reasons[approval.approvalId] ?? "";
-          const operationType =
-            typeof approval.card?.operationType === "string" ? approval.card.operationType : null;
+          const card = approval.card ?? {};
+          const operationType = typeof card.operationType === "string" ? card.operationType : null;
+          const title = typeof card.title === "string" ? card.title : null;
+          const heading = title || approval.toolName || "approval";
+          const money = findMoneyHeadline(card);
+          const exclude = new Set<string>(["title", ...(money ? [money.key] : [])]);
+          const bodyEntries = cardEntries(approval.card, exclude);
+          const result = approval.status === "consumed" ? approval.result : null;
+          const resultMessage =
+            result && typeof result.message === "string" ? result.message : null;
+          const resultEntries = result
+            ? Object.entries(result).filter(
+                ([key]) => !key.startsWith("_") && key !== "approvalId" && key !== "message",
+              )
+            : [];
           return (
             <article
               className="approval-card"
@@ -187,27 +258,53 @@ export function ApprovalWorkspace({
               <header className="approval-card-header">
                 <div>
                   {operationType ? <span className="approval-op">{operationType}</span> : null}
-                  <span className="approval-tool">{approval.toolName || "approval"}</span>
-                  <span className="approval-id">{approval.approvalId}</span>
+                  <span className="approval-tool">{heading}</span>
+                  <span className="approval-sub">
+                    <span className="approval-id" title={approval.approvalId}>
+                      {approval.approvalId}
+                    </span>
+                  </span>
                 </div>
                 <span className={`status-pill status-${approval.status}`}>{approval.status}</span>
               </header>
 
-              {cardEntries(approval.card).length > 0 ? (
+              {money ? (
+                <div className="approval-figure">
+                  <span className="approval-figure-label">{money.label}</span>
+                  <span className="approval-figure-value">{formatMoney(money.value)}</span>
+                </div>
+              ) : null}
+
+              {bodyEntries.length > 0 ? (
                 <dl className="kv-list">
-                  {cardEntries(approval.card).map(([key, value]) =>
-                    renderValue(humanizeKey(key), key, value, 0),
+                  {bodyEntries.map(([key, value]) =>
+                    renderTopEntry(humanizeKey(key), key, value, isPending),
                   )}
                 </dl>
-              ) : (
-                <p className="empty-note">No card details</p>
-              )}
+              ) : null}
 
-              {approval.status === "consumed" && approval.result ? (
-                <pre className="result-block">{JSON.stringify(approval.result, null, 2)}</pre>
+              {result ? (
+                <details className="kv-section result-section">
+                  <summary>
+                    <span className="kv-section-label">Result</span>
+                    <span className="result-message">
+                      {resultMessage ?? `${resultEntries.length} fields`}
+                    </span>
+                  </summary>
+                  {resultEntries.length > 0 ? (
+                    <dl className="kv-list kv-nested">
+                      {resultEntries.map(([key, value]) =>
+                        renderValue(humanizeKey(key), key, value, 1),
+                      )}
+                    </dl>
+                  ) : null}
+                </details>
               ) : null}
               {approval.status === "rejected" && approval.reason ? (
-                <p className="state-note">{approval.reason}</p>
+                <p className="state-note">
+                  <span className="state-note-label">Rejection reason</span>
+                  {approval.reason}
+                </p>
               ) : null}
               {approval.status === "invalidated" ? (
                 <p className="state-note">Request a fresh approval.</p>
@@ -223,39 +320,41 @@ export function ApprovalWorkspace({
                 </details>
               ) : null}
 
-              <div className="approval-actions">
-                <input
-                  aria-label={`Reject reason for ${approval.approvalId}`}
-                  value={reason}
-                  onChange={(event) =>
-                    setReasons((current) => ({
-                      ...current,
-                      [approval.approvalId]: event.currentTarget.value,
-                    }))
-                  }
-                  disabled={!isPending || isBusy}
-                />
-                <button
-                  className="icon-button danger"
-                  type="button"
-                  onClick={() => onReject(approval.approvalId, reason.trim() || undefined)}
-                  disabled={!isPending || isBusy}
-                  title="Reject"
-                >
-                  <X size={16} aria-hidden="true" />
-                  <span className="sr-only">Reject</span>
-                </button>
-                <button
-                  className="icon-button success"
-                  type="button"
-                  onClick={() => onApprove(approval.approvalId)}
-                  disabled={!isPending || isBusy}
-                  title="Approve"
-                >
-                  <Check size={16} aria-hidden="true" />
-                  <span className="sr-only">Approve</span>
-                </button>
-              </div>
+              {isPending ? (
+                <div className="approval-actions">
+                  <input
+                    aria-label={`Reject reason for ${approval.approvalId}`}
+                    value={reason}
+                    onChange={(event) =>
+                      setReasons((current) => ({
+                        ...current,
+                        [approval.approvalId]: event.currentTarget.value,
+                      }))
+                    }
+                    disabled={isBusy}
+                  />
+                  <button
+                    className="icon-button danger"
+                    type="button"
+                    onClick={() => onReject(approval.approvalId, reason.trim() || undefined)}
+                    disabled={isBusy}
+                    title="Reject"
+                  >
+                    <X size={16} aria-hidden="true" />
+                    <span className="sr-only">Reject</span>
+                  </button>
+                  <button
+                    className="icon-button success"
+                    type="button"
+                    onClick={() => onApprove(approval.approvalId)}
+                    disabled={isBusy}
+                    title="Approve"
+                  >
+                    <Check size={16} aria-hidden="true" />
+                    <span className="sr-only">Approve</span>
+                  </button>
+                </div>
+              ) : null}
             </article>
           );
         })}
