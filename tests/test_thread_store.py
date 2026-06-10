@@ -28,3 +28,18 @@ async def test_list_messages_returns_seq_ordered_copy() -> None:
     assert [m.seq for m in msgs] == [1, 2]
     assert [m.content for m in msgs] == ["a", "b"]
     assert await store.list_messages("missing") == []
+
+
+@pytest.mark.asyncio
+async def test_latest_message_count_and_ping() -> None:
+    store = InMemoryThreadStore()
+    assert await store.latest_message("s1") is None
+    assert await store.count_messages("s1") == 0
+    assert await store.ping() is True
+
+    await store.append(ThreadMessage(session_id="s1", type="user", content="a"))
+    await store.append(ThreadMessage(session_id="s1", type="agent_answer", content="b"))
+
+    latest = await store.latest_message("s1")
+    assert latest is not None and latest.content == "b" and latest.seq == 2
+    assert await store.count_messages("s1") == 2

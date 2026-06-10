@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
 from ecommerce_agent.config import Settings
+from ecommerce_agent.sessions.store import InMemorySessionStore
+from ecommerce_agent.threads.store import InMemoryThreadStore
 
 
 class FakeAgent:
@@ -79,6 +81,11 @@ def make_settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **overrides)
 
 
+def use_in_memory_stores(app) -> None:  # noqa: ANN001
+    app.state.thread_store = InMemoryThreadStore()
+    app.state.session_store = InMemorySessionStore()
+
+
 def wait_for_thread_types(client: TestClient, session_id: str, expected_types: list[str]) -> dict:
     deadline = time.monotonic() + 2.0
     last_thread: dict | None = None
@@ -93,6 +100,7 @@ def wait_for_thread_types(client: TestClient, session_id: str, expected_types: l
 
 def test_health_reports_external_mcp_configuration() -> None:
     app = create_app(settings=make_settings())
+    use_in_memory_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health")
@@ -185,6 +193,26 @@ def test_lifespan_closes_thread_store() -> None:
     store = FakeThreadStore()
     app = create_app(settings=make_settings())
     app.state.thread_store = store
+    app.state.session_store = InMemorySessionStore()
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+    assert store.closed is True
+
+
+def test_lifespan_closes_session_store() -> None:
+    class FakeSessionStore:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    store = FakeSessionStore()
+    app = create_app(settings=make_settings())
+    app.state.thread_store = InMemoryThreadStore()
+    app.state.session_store = store
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -202,6 +230,7 @@ def test_lifespan_closes_cached_approval_clients() -> None:
 
     approval_client = FakeApprovalClient()
     app = create_app(settings=make_settings())
+    use_in_memory_stores(app)
     app.state.approval_clients = {"s1": approval_client}
 
     with TestClient(app) as client:
@@ -214,7 +243,6 @@ def test_lifespan_closes_cached_approval_clients() -> None:
 def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.app as app_module
     from ecommerce_agent.sessions.registry import SessionRuntime
-    from ecommerce_agent.threads.store import InMemoryThreadStore
 
     async def fake_build_runtime(session_id: str) -> SessionRuntime:
         return SessionRuntime(
@@ -227,10 +255,68 @@ def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "make_runtime_builder", lambda settings: fake_build_runtime)
 
     app = create_app(settings=make_settings())
-    app.state.thread_store = InMemoryThreadStore()
+    use_in_memory_stores(app)
     with TestClient(app) as client:
         session_id = client.post("/api/sessions").json()["session_id"]
         response = client.post(f"/api/sessions/{session_id}/messages", json={"message": "hello"})
         assert response.status_code == 202
         thread = wait_for_thread_types(client, session_id, ["user", "agent_answer"])
         assert [message["type"] for message in thread["messages"]] == ["user", "agent_answer"]
+
+
+def test_health_reports_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.health as health_module
+
+    monkeypatch.setattr(health_module, "probe_sandbox", lambda settings: {"status": "ok"})
+
+    app = create_app(settings=make_settings(llm_api_key="k"))
+    use_in_memory_stores(app)
+
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+
+    components = body["components"]
+    assert components["mongo"]["status"] == "ok"
+    assert components["sandbox"]["status"] == "ok"
+    assert components["model"]["status"] == "ok"
+    assert components["model"]["checked"] == "config-only"
+
+
+def test_health_model_unconfigured_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.health as health_module
+
+    monkeypatch.setattr(health_module, "probe_sandbox", lambda settings: {"status": "ok"})
+
+    app = create_app(settings=make_settings(llm_api_key=""))
+    use_in_memory_stores(app)
+
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+
+    assert body["components"]["model"]["status"] == "unconfigured"
+
+
+def test_app_starts_without_frontend_dist() -> None:
+    app = create_app(settings=make_settings(frontend_dist_dir="/nonexistent/dist"))
+    use_in_memory_stores(app)
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/some/spa/route").status_code == 404
+
+
+def test_spa_served_with_dist_fixture(tmp_path) -> None:
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>console</title>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+
+    app = create_app(settings=make_settings(frontend_dist_dir=str(dist)))
+    use_in_memory_stores(app)
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/api/sessions/ghost").status_code == 404
+        assert "<title>console" in client.get("/").text
+        assert "<title>console" in client.get("/some/spa/route").text
+        assert client.get("/assets/app.js").status_code == 200

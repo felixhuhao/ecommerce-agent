@@ -46,6 +46,7 @@ class SessionRegistry:
         self._idle_ttl_seconds = idle_ttl_seconds
         self._max_live_sessions = max_live_sessions
         self._runtimes: dict[str, SessionRuntime] = {}
+        self._active_turns: set[str] = set()
         self._lock = asyncio.Lock()
 
     async def create(self) -> str:
@@ -69,6 +70,42 @@ class SessionRegistry:
             runtime.touch()
             return runtime
 
+    async def get_or_create_runtime(
+        self,
+        session_id: str,
+        session_known: Callable[[str], Awaitable[bool]],
+    ) -> SessionRuntime:
+        async with self._lock:
+            cached = self._runtimes.get(session_id)
+            if cached is not None:
+                cached.touch()
+                return cached
+
+        if not await session_known(session_id):
+            raise KeyError(session_id)
+
+        runtime = await self._build_runtime(session_id)
+        async with self._lock:
+            winner = self._runtimes.get(session_id)
+            if winner is not None:
+                runtime.close()
+                winner.touch()
+                return winner
+            self._make_room_locked()
+            self._runtimes[session_id] = runtime
+            return runtime
+
+    async def try_begin_turn(self, session_id: str) -> bool:
+        async with self._lock:
+            if session_id in self._active_turns:
+                return False
+            self._active_turns.add(session_id)
+            return True
+
+    async def end_turn(self, session_id: str) -> None:
+        async with self._lock:
+            self._active_turns.discard(session_id)
+
     async def reap_idle(self) -> list[str]:
         async with self._lock:
             return self._reap_idle_locked()
@@ -78,6 +115,7 @@ class SessionRegistry:
             for runtime in self._runtimes.values():
                 runtime.close()
             self._runtimes.clear()
+            self._active_turns.clear()
 
     def _reap_idle_locked(self) -> list[str]:
         reaped: list[str] = []

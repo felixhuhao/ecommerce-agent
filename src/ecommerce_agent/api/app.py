@@ -6,7 +6,9 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from ecommerce_agent.api import health as health_module
 from ecommerce_agent.api.sessions import router as sessions_router
+from ecommerce_agent.api.spa import mount_spa
 from ecommerce_agent.config import Settings, get_settings
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
@@ -26,6 +28,7 @@ from ecommerce_agent.mcp_client import (
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.factory import build_session_runtime
 from ecommerce_agent.sessions.registry import SessionRegistry
+from ecommerce_agent.sessions.store import MongoSessionStore
 from ecommerce_agent.threads.mongo import MongoThreadStore
 
 
@@ -43,6 +46,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.thread_store = getattr(
         app.state, "thread_store", None
     ) or MongoThreadStore.from_settings(settings)
+    app.state.session_store = getattr(
+        app.state, "session_store", None
+    ) or MongoSessionStore.from_settings(settings)
     app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
     app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
     app.state.approval_clients = getattr(app.state, "approval_clients", None) or {}
@@ -70,6 +76,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         thread_store_close = getattr(app.state.thread_store, "close", None)
         if callable(thread_store_close):
             thread_store_close()
+        session_store_close = getattr(app.state.session_store, "close", None)
+        if callable(session_store_close):
+            session_store_close()
         await _close_approval_clients(getattr(app.state, "approval_clients", {}))
 
 
@@ -158,19 +167,22 @@ def create_app(
     app.state.last_trace = None
     app.state.trace_records = {}
     app.state.thread_store = None
+    app.state.session_store = None
     app.state.session_bus = None
     app.state.session_registry = None
     app.state.background_tasks = None
     app.state.approval_clients = None
 
     @app.get("/health")
-    async def health() -> dict[str, Any]:
+    async def health_endpoint() -> dict[str, Any]:
+        components = await health_module.health_components(app.state)
         return {
             "status": "ok",
             "app": app.state.settings.app_name,
             "environment": app.state.settings.environment,
             "configured_mcp_servers": configured_mcp_servers(app.state.settings),
             "agent_ready": app.state.session_registry is not None,
+            "components": components,
         }
 
     @app.get("/health/mcp")
@@ -188,6 +200,7 @@ def create_app(
         return {"status": overall_status, "servers": server_results}
 
     app.include_router(sessions_router)
+    mount_spa(app, app.state.settings.frontend_dist_dir)
     return app
 
 

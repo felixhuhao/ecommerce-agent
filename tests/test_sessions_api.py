@@ -14,6 +14,7 @@ from ecommerce_agent.approvals import ApprovalApiError
 from ecommerce_agent.config import Settings
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
+from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
 
@@ -98,6 +99,7 @@ def build_test_app() -> FastAPI:
     app = FastAPI()
     app.state.settings = Settings(_env_file=None)
     app.state.thread_store = InMemoryThreadStore()
+    app.state.session_store = InMemorySessionStore()
     app.state.session_bus = SessionBus()
     app.state.background_tasks = set()
     app.state.trace_records = {}
@@ -143,6 +145,28 @@ def test_message_runs_turn_and_thread_reload_shows_it() -> None:
         assert thread["messages"][0]["seq"] == 1
         assert thread["messages"][1]["seq"] == 2
         assert _wait_for_trace(client.app, session_id, turn_id).answer == "Hi there."
+
+
+def test_create_writes_record_and_list_returns_summary() -> None:
+    with TestClient(build_test_app()) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        client.post(f"/api/sessions/{session_id}/messages", json={"message": "hello there"})
+        _wait_for_thread(client, session_id, expected_types=["user", "agent_answer"])
+
+        listing = client.get("/api/sessions").json()
+        assert listing["sessions"][0]["session_id"] == session_id
+        assert listing["sessions"][0]["title"] == "hello there"
+        assert listing["sessions"][0]["message_count"] == 2
+        assert listing["sessions"][0]["last_message_preview"] == "Hi there."
+
+        meta = client.get(f"/api/sessions/{session_id}").json()
+        assert meta["session_id"] == session_id
+        assert meta["message_count"] == 2
+
+
+def test_get_unknown_session_404() -> None:
+    with TestClient(build_test_app()) as client:
+        assert client.get("/api/sessions/ghost").status_code == 404
 
 
 @pytest.mark.asyncio
@@ -215,6 +239,84 @@ def test_message_to_unknown_session_returns_404() -> None:
         assert response.status_code == 404
 
 
+def test_thread_and_approval_endpoints_404_unknown_session() -> None:
+    with TestClient(build_test_app()) as client:
+        assert client.get("/api/sessions/ghost/thread").status_code == 404
+        assert client.post("/api/sessions/ghost/approvals/a1/approve").status_code == 404
+        assert (
+            client.post("/api/sessions/ghost/approvals/a1/reject", json={"reason": "x"}).status_code
+            == 404
+        )
+
+
+def test_thread_ok_for_created_empty_session() -> None:
+    with TestClient(build_test_app()) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.get(f"/api/sessions/{session_id}/thread")
+        assert response.status_code == 200
+        assert response.json()["messages"] == []
+
+
+def test_approve_surfaces_java_session_binding_rejection() -> None:
+    app = build_test_app()
+
+    class BindingRejectingClient(FakeApprovalClient):
+        async def approve(self, approval_id: str) -> dict:
+            self.calls.append(f"approve:{approval_id}")
+            raise ApprovalApiError(403, {"message": "approval bound to a different session"})
+
+    app.state.approval_client_factory = lambda session_id: BindingRejectingClient()
+
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        response = client.post(f"/api/sessions/{session_id}/approvals/a1/approve")
+        thread = client.get(f"/api/sessions/{session_id}/thread").json()
+
+    assert response.status_code == 403
+    assert thread["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_second_concurrent_send_409_is_side_effect_free() -> None:
+    from fastapi import HTTPException
+
+    from ecommerce_agent.api.sessions import MessageRequest, post_message
+
+    app = build_test_app()
+    session_id = await app.state.session_registry.create()
+    await app.state.session_store.create(session_id)
+    assert await app.state.session_registry.try_begin_turn(session_id) is True
+
+    with pytest.raises(HTTPException) as exc:
+        await post_message(
+            session_id,
+            MessageRequest(message="hi"),
+            SimpleNamespace(app=app),  # type: ignore[arg-type]
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {"error": "turn_in_progress"}
+    assert await app.state.thread_store.list_messages(session_id) == []
+
+
+@pytest.mark.asyncio
+async def test_message_to_reaped_session_rehydrates() -> None:
+    from ecommerce_agent.api.sessions import MessageRequest, post_message
+
+    app = build_test_app()
+    session_id = await app.state.session_registry.create()
+    await app.state.session_store.create(session_id)
+    await app.state.session_registry.close_all()
+
+    result = await post_message(
+        session_id,
+        MessageRequest(message="hi"),
+        SimpleNamespace(app=app),  # type: ignore[arg-type]
+    )
+    assert "turn_id" in result
+    await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
+
+
 def test_approve_endpoint_orchestrates_execute_and_appends_messages() -> None:
     app = build_test_app()
     approval_client = FakeApprovalClient()
@@ -246,6 +348,7 @@ async def test_approve_endpoint_publishes_execution_result_to_session_bus() -> N
     approval_client = FakeApprovalClient()
     app.state.approval_client_factory = lambda session_id: approval_client
 
+    await app.state.session_store.create("s1")
     async with app.state.session_bus.subscription("s1") as sub:
         result = await approve_approval(
             "s1",

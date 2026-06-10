@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     approval_api_base_url: str = "http://localhost:8080"
     session_idle_ttl_seconds: int = Field(default=1800, gt=0)
     max_live_sessions: int = Field(default=50, gt=0)
+    frontend_dist_dir: str = "frontend/dist"
 
 
 @lru_cache

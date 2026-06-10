@@ -9,6 +9,7 @@ from ecommerce_agent.api.app import create_app
 from ecommerce_agent.approvals import extract_approval_id
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import SPRING_SERVER_NAME, build_mcp_client
+from ecommerce_agent.sessions.store import MongoSessionStore
 from tests.integration.helpers import (
     skip_on_spring_mcp_auth_error,
     skip_unless_mongo_is_running,
@@ -147,6 +148,14 @@ async def _preflight(settings: Settings) -> None:
     await skip_unless_mongo_is_running(settings)
 
 
+async def _create_session_record(settings: Settings, session_id: str) -> None:
+    store = MongoSessionStore.from_settings(settings)
+    try:
+        await store.create(session_id)
+    finally:
+        store.close()
+
+
 @pytest.mark.asyncio
 async def test_real_approval_loop_approve_execute_reload_and_stream() -> None:
     settings = _settings()
@@ -162,6 +171,7 @@ async def test_real_approval_loop_approve_execute_reload_and_stream() -> None:
             "items": [{"productId": 2, "quantity": 1, "unitCost": "12.50"}],
         },
     )
+    await _create_session_record(settings, session_id)
 
     app = create_app(settings=settings)
     with TestClient(app) as api:
@@ -199,6 +209,7 @@ async def test_real_approval_loop_reject_appends_status() -> None:
             "items": [{"productId": 2, "quantity": 1, "unitCost": "12.50"}],
         },
     )
+    await _create_session_record(settings, session_id)
 
     app = create_app(settings=settings)
     with TestClient(app) as api:
@@ -235,6 +246,7 @@ async def test_real_approval_loop_invalidated_precondition_appends_status() -> N
         operation_type="update",
         operation_params={"orderId": order_id, "newStatus": "cancelled"},
     )
+    await _create_session_record(settings, session_id)
 
     app = create_app(settings=settings)
     with TestClient(app) as api:

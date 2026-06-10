@@ -22,6 +22,18 @@ class ThreadStore(Protocol):
         """Return all messages for `session_id`, ordered by seq."""
         ...
 
+    async def latest_message(self, session_id: str) -> ThreadMessage | None:
+        """Return the newest message for `session_id`, or None."""
+        ...
+
+    async def count_messages(self, session_id: str) -> int:
+        """Return how many messages `session_id` has."""
+        ...
+
+    async def ping(self) -> bool:
+        """Return whether the backing store is reachable."""
+        ...
+
 
 class InMemoryThreadStore:
     """Async, test-only ThreadStore. Mongo is the prod source of truth."""
@@ -40,6 +52,18 @@ class InMemoryThreadStore:
     async def list_messages(self, session_id: str) -> list[ThreadMessage]:
         async with self._lock:
             return list(self._messages.get(session_id, ()))
+
+    async def latest_message(self, session_id: str) -> ThreadMessage | None:
+        async with self._lock:
+            bucket = self._messages.get(session_id, ())
+            return bucket[-1] if bucket else None
+
+    async def count_messages(self, session_id: str) -> int:
+        async with self._lock:
+            return len(self._messages.get(session_id, ()))
+
+    async def ping(self) -> bool:
+        return True
 
 
 async def append_and_publish(

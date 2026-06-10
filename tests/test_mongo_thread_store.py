@@ -42,10 +42,29 @@ class FakeMessages:
             [dict(doc) for doc in self.docs if doc["session_id"] == filt["session_id"]]
         )
 
+    async def find_one(self, filt, sort=None):  # noqa: ANN001
+        docs = [dict(doc) for doc in self.docs if doc["session_id"] == filt["session_id"]]
+        if not docs:
+            return None
+        if sort:
+            key, direction = sort[0]
+            docs = sorted(docs, key=lambda doc: doc[key], reverse=direction < 0)
+        return docs[0]
+
+    async def count_documents(self, filt):  # noqa: ANN001
+        return len([doc for doc in self.docs if doc["session_id"] == filt["session_id"]])
+
+
+class FakeAdmin:
+    async def command(self, name: str) -> dict:
+        assert name == "ping"
+        return {"ok": 1}
+
 
 class FakeClient:
     def __init__(self) -> None:
         self.closed = False
+        self.admin = FakeAdmin()
 
     def close(self) -> None:
         self.closed = True
@@ -61,6 +80,19 @@ async def test_mongo_store_append_and_list() -> None:
     msgs = await store.list_messages("s1")
     assert [msg.seq for msg in msgs] == [1, 2]
     assert [msg.content for msg in msgs] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_mongo_latest_message_count_and_ping() -> None:
+    messages = FakeMessages()
+    store = MongoThreadStore(messages=messages, counters=FakeCounters(), client=FakeClient())
+    await store.append(ThreadMessage(session_id="s1", type="user", content="a"))
+    await store.append(ThreadMessage(session_id="s1", type="agent_answer", content="b"))
+
+    latest = await store.latest_message("s1")
+    assert latest is not None and latest.content == "b"
+    assert await store.count_messages("s1") == 2
+    assert await store.ping() is True
 
 
 def test_mongo_store_closes_owned_client() -> None:

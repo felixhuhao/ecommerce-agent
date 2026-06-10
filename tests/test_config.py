@@ -46,3 +46,8 @@ def test_settings_expose_m2_session_defaults() -> None:
     assert settings.approval_api_base_url == "http://localhost:8080"
     assert settings.session_idle_ttl_seconds == 1800
     assert settings.max_live_sessions == 50
+
+
+def test_settings_expose_frontend_dist_dir() -> None:
+    assert Settings(_env_file=None).frontend_dist_dir == "frontend/dist"
+    assert Settings(_env_file=None, frontend_dist_dir="/tmp/x").frontend_dist_dir == "/tmp/x"

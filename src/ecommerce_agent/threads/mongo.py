@@ -45,3 +45,18 @@ class MongoThreadStore:
             ThreadMessage(**{key: value for key, value in doc.items() if key != "_id"})
             async for doc in cursor
         ]
+
+    async def latest_message(self, session_id: str) -> ThreadMessage | None:
+        doc = await self._messages.find_one({"session_id": session_id}, sort=[("seq", -1)])
+        if doc is None:
+            return None
+        return ThreadMessage(**{key: value for key, value in doc.items() if key != "_id"})
+
+    async def count_messages(self, session_id: str) -> int:
+        return await self._messages.count_documents({"session_id": session_id})
+
+    async def ping(self) -> bool:
+        if self._client is None:
+            return False
+        await self._client.admin.command("ping")
+        return True

@@ -157,14 +157,54 @@ def _raise_approval_error(exc: ApprovalApiError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.payload) from exc
 
 
+def _title_from_message(message: str) -> str:
+    return message.strip()[:80]
+
+
+async def _require_session(request: Request, session_id: str) -> None:
+    if not await request.app.state.session_store.exists(session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_session(request: Request) -> dict[str, str]:
     session_id = await request.app.state.session_registry.create()
+    await request.app.state.session_store.create(session_id)
     return {"session_id": session_id}
+
+
+@router.get("")
+async def list_sessions(request: Request) -> dict[str, Any]:
+    store = request.app.state.session_store
+    thread_store = request.app.state.thread_store
+    summaries = []
+    for record in await store.list_records():
+        session_id = record["session_id"]
+        latest = await thread_store.latest_message(session_id)
+        summaries.append(
+            {
+                **record,
+                "last_message_preview": latest.content[:120] if latest else None,
+                "message_count": await thread_store.count_messages(session_id),
+            }
+        )
+    return {"sessions": summaries}
+
+
+@router.get("/{session_id}")
+async def get_session(session_id: str, request: Request) -> dict[str, Any]:
+    record = await request.app.state.session_store.get(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {
+        **record,
+        "message_count": await request.app.state.thread_store.count_messages(session_id),
+    }
 
 
 @router.get("/{session_id}/thread")
 async def get_thread(session_id: str, request: Request) -> dict[str, Any]:
+    await _require_session(request, session_id)
     messages = await request.app.state.thread_store.list_messages(session_id)
     return {"session_id": session_id, "messages": [message.model_dump() for message in messages]}
 
@@ -176,45 +216,66 @@ async def post_message(
     request: Request,
 ) -> dict[str, Any]:
     registry = request.app.state.session_registry
+    session_store = request.app.state.session_store
+    await _require_session(request, session_id)
+
+    if not await registry.try_begin_turn(session_id):
+        raise HTTPException(status_code=409, detail={"error": "turn_in_progress"})
+
+    async def _known(sid: str) -> bool:
+        return await session_store.exists(sid)
+
     try:
-        runtime = await registry.get(session_id)
+        runtime = await registry.get_or_create_runtime(session_id, _known)
     except KeyError as exc:
+        await registry.end_turn(session_id)
         raise HTTPException(status_code=404, detail="session not found") from exc
+    except Exception:
+        await registry.end_turn(session_id)
+        raise
 
     store = request.app.state.thread_store
     bus = request.app.state.session_bus
     settings = request.app.state.settings
     turn_id = uuid.uuid4().hex
 
-    user_message = await append_and_publish(
-        store,
-        bus,
-        ThreadMessage(
-            session_id=session_id,
-            type="user",
-            content=payload.message,
-            actor_id="operator",
-        ),
-    )
+    try:
+        user_message = await append_and_publish(
+            store,
+            bus,
+            ThreadMessage(
+                session_id=session_id,
+                type="user",
+                content=payload.message,
+                actor_id="operator",
+            ),
+        )
+        await session_store.set_title_if_absent(session_id, _title_from_message(payload.message))
+    except Exception:
+        await registry.end_turn(session_id)
+        raise
 
     app_state = request.app.state
     approval_client = _approval_client(request, session_id)
 
     async def run_and_record_trace() -> None:
-        record = await run_turn(
-            agent=runtime.agent,
-            message=payload.message,
-            session_id=session_id,
-            turn_id=turn_id,
-            store=store,
-            bus=bus,
-            recursion_limit=settings.agent_recursion_limit,
-            approval_client=approval_client,
-        )
-        trace_records = app_state.trace_records
-        trace_records.setdefault(session_id, {})[turn_id] = record
-        # Compatibility shortcut for the sequential live reliability harness.
-        app_state.last_trace = record
+        try:
+            record = await run_turn(
+                agent=runtime.agent,
+                message=payload.message,
+                session_id=session_id,
+                turn_id=turn_id,
+                store=store,
+                bus=bus,
+                recursion_limit=settings.agent_recursion_limit,
+                approval_client=approval_client,
+            )
+            trace_records = app_state.trace_records
+            trace_records.setdefault(session_id, {})[turn_id] = record
+            # Compatibility shortcut for the sequential live reliability harness.
+            app_state.last_trace = record
+        finally:
+            await registry.end_turn(session_id)
 
     task = asyncio.create_task(run_and_record_trace())
     background_tasks = request.app.state.background_tasks
@@ -230,6 +291,7 @@ async def approve_approval(
     approval_id: str,
     request: Request,
 ) -> dict[str, Any]:
+    await _require_session(request, session_id)
     client = _approval_client(request, session_id)
     actor_id = request.app.state.settings.spring_mcp_user_id
     try:
@@ -282,6 +344,7 @@ async def reject_approval(
     request: Request,
     payload: RejectApprovalRequest | None = None,
 ) -> dict[str, Any]:
+    await _require_session(request, session_id)
     client = _approval_client(request, session_id)
     actor_id = request.app.state.settings.spring_mcp_user_id
     reason = payload.reason if payload else None
@@ -307,6 +370,7 @@ async def reject_approval(
 
 @router.get("/{session_id}/stream")
 async def stream(session_id: str, request: Request) -> EventSourceResponse:
+    await _require_session(request, session_id)
     store = request.app.state.thread_store
     bus = request.app.state.session_bus
     return EventSourceResponse(_session_events(session_id, request, store, bus))
