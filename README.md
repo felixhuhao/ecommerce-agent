@@ -65,6 +65,34 @@ CHART_MCP_PORT=1123 docker compose -f compose.chart-mcp.yml up chart-mcp
 
 and set `MODELSCOPE_MCP_URL=http://127.0.0.1:1123/mcp`.
 
+## Agent-Owned Infrastructure
+
+M2 adds a server-owned conversation thread backed by MongoDB. Mongo is owned by
+this repo; the Java MCP server and MySQL remain external in
+`../ecommerce-mcp-server`.
+
+Start Mongo when exercising sessions or the approval workflow:
+
+```bash
+docker compose up -d mongo
+```
+
+The default `.env.example` values point the app at that service:
+
+```env
+MONGO_URL=mongodb://localhost:27017
+MONGO_DB=ecommerce_agent
+APPROVAL_API_BASE_URL=http://localhost:8080
+```
+
+If `27017` is already in use, run:
+
+```bash
+MONGO_PORT=27018 docker compose up -d mongo
+```
+
+and set `MONGO_URL=mongodb://localhost:27018`.
+
 ## Local App
 
 ```bash
@@ -110,9 +138,12 @@ Run the opt-in M2 approval loop when Spring MCP/MySQL and MongoDB are both
 available:
 
 ```bash
+docker compose up -d mongo
 RUN_M2_APPROVAL_INTEGRATION=1 uv run pytest tests/integration/test_m2_approval_loop.py -v
 ```
 
 This creates real pending approvals through the Spring MCP `request_approval`
 tool, then drives FastAPI approve/reject/execute orchestration against Java REST
-and verifies Mongo thread reload/stream replay.
+and verifies Mongo thread reload/stream replay. The Java companion migration must
+have widened `approval_record.status` to `VARCHAR(20)` so the `invalidated` and
+`failed` terminal states fit.
