@@ -81,6 +81,18 @@ describe("sessionReducer", () => {
     expect(state.tokenBuffer).toBe("");
   });
 
+  it("finalizes the in-flight turn on error", () => {
+    let state = initialSessionState();
+    state = sessionReducer(state, { kind: "turn_started", turnId: "t1" });
+    state = sessionReducer(state, { kind: "token", text: "partial" });
+    state = sessionReducer(state, { kind: "tool", name: "search", phase: "start" });
+    state = sessionReducer(state, { kind: "error", message: "something broke" });
+    expect(state.inFlightTurnId).toBeNull();
+    expect(state.tokenBuffer).toBe("");
+    expect(state.activeTool).toBeNull();
+    expect(state.error).toBe("something broke");
+  });
+
   it("thread_loaded rebuilds state from the authoritative thread (409 reconcile)", () => {
     let state = initialSessionState();
     state = sessionReducer(state, { kind: "turn_started", turnId: "t1" });

@@ -397,6 +397,12 @@ async def _session_events(
                 event = await asyncio.wait_for(sub.queue.get(), timeout=1.0)
             except TimeoutError:
                 continue
-            if event["event"] == "thread.append" and event["message"]["seq"] <= cursor:
+            evt_name = event.get("event", "")
+            if (
+                evt_name == "thread.append"
+                and isinstance(event.get("message"), dict)
+                and isinstance(event["message"].get("seq"), int)
+                and event["message"]["seq"] <= cursor
+            ):
                 continue
-            yield {"event": event["event"], "data": _data(event)}
+            yield {"event": evt_name, "data": _data(event)}

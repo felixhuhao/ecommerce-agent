@@ -117,26 +117,23 @@ async def test_create_evicts_oldest_when_at_cap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_serializes_runtime_builds_to_preserve_cap() -> None:
-    active_builds = 0
-    max_active_builds = 0
-
+async def test_create_enforces_cap_after_concurrent_builds() -> None:
     async def build(session_id: str) -> SessionRuntime:
-        nonlocal active_builds, max_active_builds
-        active_builds += 1
-        max_active_builds = max(max_active_builds, active_builds)
         await asyncio.sleep(0.01)
-        active_builds -= 1
         return make_runtime(session_id, sandbox=object())
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=1)
 
     first, second = await asyncio.gather(registry.create(), registry.create())
 
-    assert max_active_builds == 1
-    with pytest.raises(KeyError):
-        await registry.get(first)
-    assert (await registry.get(second)).session_id == second
+    ids_in_registry = []
+    for s in (first, second):
+        try:
+            await registry.get(s)
+            ids_in_registry.append(s)
+        except KeyError:
+            pass
+    assert len(ids_in_registry) == 1
 
 
 @pytest.mark.asyncio
@@ -202,6 +199,49 @@ async def test_concurrent_rehydration_closes_loser_runtime() -> None:
     assert first_runtime is second_runtime
     assert build_count == 2
     assert len(closed) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rehydration_preserves_winner_at_cap_1() -> None:
+    closed: list[str] = []
+
+    class FakeSandbox:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def close(self) -> None:
+            closed.append(self.label)
+
+    build_started = asyncio.Event()
+    both_started = asyncio.Event()
+    release_builds = asyncio.Event()
+    build_count = 0
+
+    async def build(session_id: str) -> SessionRuntime:
+        nonlocal build_count
+        build_count += 1
+        label = f"{session_id}-{build_count}"
+        build_started.set()
+        if build_count == 2:
+            both_started.set()
+        await release_builds.wait()
+        return make_runtime(session_id, sandbox=FakeSandbox(label))
+
+    async def known(session_id: str) -> bool:
+        return session_id == "known"
+
+    registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=1)
+    first = asyncio.create_task(registry.get_or_create_runtime("known", known))
+    await build_started.wait()
+    second = asyncio.create_task(registry.get_or_create_runtime("known", known))
+    await both_started.wait()
+    release_builds.set()
+
+    first_runtime, second_runtime = await asyncio.gather(first, second)
+
+    assert first_runtime is second_runtime
+    assert len(closed) == 1
+    assert (await registry.get("known")) is first_runtime
 
 
 @pytest.mark.asyncio

@@ -75,7 +75,7 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     case "done":
       return action.turnId === state.inFlightTurnId ? finalize(state) : state;
     case "error":
-      return { ...state, error: action.message };
+      return { ...finalize(state), error: action.message };
     default:
       return state;
   }

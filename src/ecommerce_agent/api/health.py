@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from ecommerce_agent.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 async def probe_mongo(thread_store: Any) -> dict[str, str]:
     try:
         ok = await asyncio.wait_for(thread_store.ping(), timeout=1.0)
-    except Exception as exc:
-        return {"status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+    except Exception:
+        logger.warning("Mongo health probe failed", exc_info=True)
+        return {"status": "unavailable"}
     return {"status": "ok" if ok else "unavailable"}
 
 
@@ -21,8 +25,9 @@ def probe_sandbox(settings: Settings) -> dict[str, str]:
 
         client = docker.from_env()
         client.ping()
-    except Exception as exc:
-        return {"status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+    except Exception:
+        logger.warning("Sandbox health probe failed", exc_info=True)
+        return {"status": "unavailable"}
     finally:
         close = getattr(client, "close", None)
         if callable(close):
