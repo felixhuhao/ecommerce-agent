@@ -4,6 +4,8 @@ import type { HealthStatus, McpHealth } from "../types";
 interface HealthPanelProps {
   health?: HealthStatus;
   mcp?: McpHealth;
+  healthUnavailable?: boolean;
+  mcpUnavailable?: boolean;
 }
 
 function statusClass(status?: string) {
@@ -31,8 +33,15 @@ function StatusRow({
   );
 }
 
-export function HealthPanel({ health, mcp }: HealthPanelProps) {
+export function HealthPanel({
+  health,
+  mcp,
+  healthUnavailable = false,
+  mcpUnavailable = false,
+}: HealthPanelProps) {
   const components = health?.components ?? {};
+  const showCoreUnavailable = healthUnavailable && !health;
+  const showMcpUnavailable = mcpUnavailable && !mcp;
 
   return (
     <section className="rail-panel health-panel">
@@ -49,13 +58,19 @@ export function HealthPanel({ health, mcp }: HealthPanelProps) {
           <Database size={15} aria-hidden="true" />
           <span>Core</span>
         </div>
-        <StatusRow label="Mongo" status={components.mongo?.status} detail={components.mongo?.error} />
-        <StatusRow label="Sandbox" status={components.sandbox?.status} detail={components.sandbox?.error} />
-        <StatusRow
-          label="Model"
-          status={components.model?.status}
-          detail={components.model?.model ?? components.model?.checked}
-        />
+        {showCoreUnavailable ? (
+          <StatusRow label="API" status="unavailable" detail="health endpoint unavailable" />
+        ) : (
+          <>
+            <StatusRow label="Mongo" status={components.mongo?.status} detail={components.mongo?.error} />
+            <StatusRow label="Sandbox" status={components.sandbox?.status} detail={components.sandbox?.error} />
+            <StatusRow
+              label="Model"
+              status={components.model?.status}
+              detail={components.model?.model ?? components.model?.checked}
+            />
+          </>
+        )}
       </div>
 
       <div className="health-group">
@@ -63,7 +78,9 @@ export function HealthPanel({ health, mcp }: HealthPanelProps) {
           <Server size={15} aria-hidden="true" />
           <span>MCP</span>
         </div>
-        {mcp?.servers
+        {showMcpUnavailable ? (
+          <StatusRow label="MCP health" status="unavailable" detail="health/mcp endpoint unavailable" />
+        ) : mcp?.servers
           ? Object.entries(mcp.servers).map(([name, server]) => (
               <StatusRow
                 key={name}
@@ -73,12 +90,12 @@ export function HealthPanel({ health, mcp }: HealthPanelProps) {
               />
             ))
           : null}
-        {!mcp?.servers ? <StatusRow label="MCP" status="unknown" /> : null}
+        {!mcp?.servers && !showMcpUnavailable ? <StatusRow label="MCP" status="unknown" /> : null}
       </div>
 
       <div className="health-group-title muted">
         <Box size={15} aria-hidden="true" />
-        <span>{health?.environment || "environment"}</span>
+        <span>{health?.environment || (healthUnavailable ? "api unavailable" : "environment")}</span>
       </div>
     </section>
   );

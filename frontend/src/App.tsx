@@ -151,7 +151,12 @@ export function App() {
             onApprove={handleApprove}
             onReject={handleReject}
           />
-          <HealthPanel health={healthQuery.data} mcp={mcpQuery.data} />
+          <HealthPanel
+            health={healthQuery.data}
+            mcp={mcpQuery.data}
+            healthUnavailable={healthQuery.isError || healthQuery.isRefetchError}
+            mcpUnavailable={mcpQuery.isError || mcpQuery.isRefetchError}
+          />
         </>
       }
     />
