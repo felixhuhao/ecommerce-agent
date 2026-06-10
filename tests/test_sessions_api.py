@@ -17,6 +17,7 @@ from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
+from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 from ecommerce_agent.trace.store import InMemoryTraceStore
 
 
@@ -521,6 +522,61 @@ async def test_trace_save_failure_is_contained() -> None:
     types = [m.type for m in await app.state.thread_store.list_messages(session_id)]
     assert types == ["user", "agent_answer"]
     assert app.state.trace_records[session_id][turn_id].turn_id == turn_id
+
+
+def test_trace_endpoint_returns_timeline() -> None:
+    app = build_test_app()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        turn_id = client.post(
+            f"/api/sessions/{session_id}/messages", json={"message": "hello"}
+        ).json()["turn_id"]
+        _wait_for_trace(app, session_id, turn_id)
+
+        body = client.get(f"/api/sessions/{session_id}/turns/{turn_id}/trace")
+        assert body.status_code == 200
+        payload = body.json()
+        assert payload["turn_id"] == turn_id
+        assert payload["session_id"] == session_id
+        assert isinstance(payload["spans"], list)
+
+
+def test_trace_endpoint_falls_back_to_cache() -> None:
+    app = build_test_app()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        app.state.trace_records[session_id] = {
+            "t-cache": TraceRecord(session_id=session_id, turn_id="t-cache")
+        }
+
+        body = client.get(f"/api/sessions/{session_id}/turns/t-cache/trace")
+        assert body.status_code == 200
+        assert body.json()["turn_id"] == "t-cache"
+
+
+def test_trace_endpoint_404s_for_unknown_session_and_turn() -> None:
+    with TestClient(build_test_app()) as client:
+        assert client.get("/api/sessions/ghost/turns/t1/trace").status_code == 404
+        session_id = client.post("/api/sessions").json()["session_id"]
+        assert client.get(f"/api/sessions/{session_id}/turns/missing/trace").status_code == 404
+
+
+def test_trace_endpoint_serves_cache_when_store_get_raises() -> None:
+    class RaisingTraceStore(InMemoryTraceStore):
+        async def get(self, session_id, turn_id):  # noqa: ANN001
+            raise RuntimeError("mongo down")
+
+    app = build_test_app()
+    app.state.trace_store = RaisingTraceStore()
+    with TestClient(app) as client:
+        session_id = client.post("/api/sessions").json()["session_id"]
+        app.state.trace_records[session_id] = {
+            "t1": TraceRecord(session_id=session_id, turn_id="t1")
+        }
+
+        body = client.get(f"/api/sessions/{session_id}/turns/t1/trace")
+        assert body.status_code == 200
+        assert body.json()["turn_id"] == "t1"
 
 
 def _decode_sse(body: str) -> list[dict]:

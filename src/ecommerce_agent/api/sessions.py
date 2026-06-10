@@ -15,6 +15,8 @@ from ecommerce_agent.approvals import ApprovalApiError, execute_with_retry, make
 from ecommerce_agent.sessions.turn import run_turn
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import append_and_publish
+from ecommerce_agent.trace.projection import project_timeline
+from ecommerce_agent.trace.schema import TraceRecord
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
@@ -168,6 +170,19 @@ async def _require_session(request: Request, session_id: str) -> None:
         raise HTTPException(status_code=404, detail="session not found")
 
 
+async def _load_trace_record(
+    request: Request, session_id: str, turn_id: str
+) -> TraceRecord | None:
+    try:
+        record = await request.app.state.trace_store.get(session_id, turn_id)
+    except Exception:
+        logger.exception("trace_store.get failed for %s/%s", session_id, turn_id)
+        record = None
+    if record is not None:
+        return record
+    return request.app.state.trace_records.get(session_id, {}).get(turn_id)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_session(request: Request) -> dict[str, str]:
     session_id = await request.app.state.session_registry.create()
@@ -209,6 +224,15 @@ async def get_thread(session_id: str, request: Request) -> dict[str, Any]:
     await _require_session(request, session_id)
     messages = await request.app.state.thread_store.list_messages(session_id)
     return {"session_id": session_id, "messages": [message.model_dump() for message in messages]}
+
+
+@router.get("/{session_id}/turns/{turn_id}/trace")
+async def get_trace(session_id: str, turn_id: str, request: Request) -> dict[str, Any]:
+    await _require_session(request, session_id)
+    record = await _load_trace_record(request, session_id, turn_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="trace not found")
+    return project_timeline(record)
 
 
 @router.post("/{session_id}/messages", status_code=status.HTTP_202_ACCEPTED)
