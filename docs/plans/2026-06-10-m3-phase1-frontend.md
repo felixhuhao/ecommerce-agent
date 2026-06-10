@@ -67,12 +67,24 @@ export default defineConfig({
 import "@testing-library/jest-dom";
 ```
 
-- [ ] **Step 2: Verify the toolchain runs**
+- [ ] **Step 2: Add a scaffold smoke test (deterministic test run)**
+
+Create `frontend/src/sanity.test.ts`:
+
+```ts
+import { expect, it } from "vitest";
+
+it("toolchain runs", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+- [ ] **Step 3: Verify the toolchain runs**
 
 Run: `cd frontend && npm install && npm test -- --run`
-Expected: Vitest runs and reports "no test files" (or 0 tests) without config errors.
+Expected: PASS — 1 test. (A real test avoids Vitest's non-zero exit on "no test files"; remove `sanity.test.ts` once Task 2 lands.)
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add frontend/
@@ -117,6 +129,8 @@ describe("parseStreamEvent", () => {
   it("returns null for unknown or malformed frames", () => {
     expect(parseStreamEvent("nope", "{}")).toBeNull();
     expect(parseStreamEvent("token", "not json")).toBeNull();
+    expect(parseStreamEvent("tool", JSON.stringify({ name: 123 }))).toBeNull();
+    expect(parseStreamEvent("done", JSON.stringify({}))).toBeNull();
   });
 });
 ```
@@ -187,11 +201,13 @@ export function parseStreamEvent(eventName: string, data: string): StreamEvent |
     case "token":
       return typeof payload?.text === "string" ? { kind: "token", text: payload.text } : null;
     case "tool":
-      return { kind: "tool", name: payload?.name, phase: payload?.phase };
+      return typeof payload?.name === "string" && typeof payload?.phase === "string"
+        ? { kind: "tool", name: payload.name, phase: payload.phase }
+        : null;
     case "done":
-      return { kind: "done", turnId: payload?.turn_id };
+      return typeof payload?.turn_id === "string" ? { kind: "done", turnId: payload.turn_id } : null;
     case "error":
-      return { kind: "error", message: payload?.message ?? "error" };
+      return { kind: "error", message: typeof payload?.message === "string" ? payload.message : "error" };
     default:
       return null;
   }
@@ -226,7 +242,7 @@ A thin typed client over the REST endpoints. `postMessage` reports the `409 turn
 
 ```ts
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSession, listSessions, postMessage } from "./client";
+import { approveApproval, createSession, listSessions, postMessage } from "./client";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -256,6 +272,11 @@ describe("api client", () => {
   it("postMessage returns the turn id on 202", async () => {
     mockFetch(202, { turn_id: "t1", user_message_id: "m1" });
     expect(await postMessage("s1", "hi")).toEqual({ turnInProgress: false, turnId: "t1" });
+  });
+
+  it("approveApproval reports a conflict on 409 instead of throwing", async () => {
+    mockFetch(409, { detail: "already decided" });
+    expect(await approveApproval("s1", "a1")).toEqual({ conflict: true, body: { detail: "already decided" } });
   });
 });
 ```
@@ -306,20 +327,38 @@ export async function postMessage(sessionId: string, message: string): Promise<S
   return { turnInProgress: false, turnId: body.turn_id };
 }
 
-export async function approveApproval(sessionId: string, approvalId: string): Promise<unknown> {
-  return json(await fetch(`/api/sessions/${sessionId}/approvals/${approvalId}/approve`, { method: "POST" }));
+export type ApprovalActionResult = { conflict: boolean; body: unknown };
+
+async function approvalAction(url: string, init: RequestInit): Promise<ApprovalActionResult> {
+  const res = await fetch(url, init);
+  const body = await res.json().catch(() => null);
+  if (res.status === 409) return { conflict: true, body }; // already decided — caller refetches thread
+  if (!res.ok) throw new Error(`${res.status}`);
+  return { conflict: false, body };
 }
 
-export async function rejectApproval(sessionId: string, approvalId: string, reason?: string): Promise<unknown> {
-  return json(await fetch(`/api/sessions/${sessionId}/approvals/${approvalId}/reject`, {
+export async function approveApproval(sessionId: string, approvalId: string): Promise<ApprovalActionResult> {
+  return approvalAction(`/api/sessions/${sessionId}/approvals/${approvalId}/approve`, { method: "POST" });
+}
+
+export async function rejectApproval(
+  sessionId: string,
+  approvalId: string,
+  reason?: string,
+): Promise<ApprovalActionResult> {
+  return approvalAction(`/api/sessions/${sessionId}/approvals/${approvalId}/reject`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ reason }),
-  }));
+  });
 }
 
 export async function getHealth(): Promise<any> {
   return json(await fetch("/health"));
+}
+
+export async function getMcpHealth(): Promise<any> {
+  return json(await fetch("/health/mcp"));
 }
 ```
 
@@ -402,6 +441,16 @@ describe("sessionReducer", () => {
     s = sessionReducer(s, { kind: "done", turnId: "t1" });
     expect(s.activeTool).toBeNull();
   });
+
+  it("reset clears all state (session switch)", () => {
+    let s = initialSessionState();
+    s = sessionReducer(s, { kind: "turn_started", turnId: "t1" });
+    s = sessionReducer(s, { kind: "thread.append", message: msg({ seq: 1, content: "a" }) });
+    s = sessionReducer(s, { kind: "reset" });
+    expect(s.messages).toEqual([]);
+    expect(s.inFlightTurnId).toBeNull();
+    expect(s.tokenBuffer).toBe("");
+  });
 });
 ```
 
@@ -417,7 +466,10 @@ Expected: FAIL — module/exports missing.
 ```ts
 import type { StreamEvent, ThreadMessage } from "../types";
 
-export type SessionAction = StreamEvent | { kind: "turn_started"; turnId: string };
+export type SessionAction =
+  | StreamEvent
+  | { kind: "turn_started"; turnId: string }
+  | { kind: "reset" };
 
 export interface SessionState {
   bySeq: Record<number, ThreadMessage>;
@@ -440,6 +492,8 @@ function finalize(state: SessionState): SessionState {
 
 export function sessionReducer(state: SessionState, action: SessionAction): SessionState {
   switch (action.kind) {
+    case "reset":
+      return initialSessionState();
     case "turn_started":
       return { ...state, inFlightTurnId: action.turnId, tokenBuffer: "", activeTool: null, error: null };
     case "thread.append": {
@@ -621,6 +675,19 @@ describe("useSessionStream", () => {
     expect(result.current.state.messages.map((m) => m.seq)).toEqual([1]);
     expect(result.current.state.inFlightTurnId).toBeNull(); // finalized by the durable answer
   });
+
+  it("resets state when the session id changes", () => {
+    const factory = (url: string) => new FakeEventSource(url) as unknown as EventSource;
+    const { result, rerender } = renderHook(({ id }) => useSessionStream(id, factory), {
+      initialProps: { id: "s1" as string | null },
+    });
+    act(() => result.current.markTurnStarted("t1"));
+    expect(result.current.state.inFlightTurnId).toBe("t1");
+
+    rerender({ id: "s2" });
+    expect(result.current.state.inFlightTurnId).toBeNull();
+    expect(result.current.state.messages).toEqual([]);
+  });
 });
 ```
 
@@ -648,6 +715,7 @@ export function useSessionStream(sessionId: string | null, factory: ESFactory = 
   dispatchRef.current = dispatch;
 
   useEffect(() => {
+    dispatchRef.current({ kind: "reset" }); // session switch: clear A's state before B's backlog
     if (!sessionId) return;
     const es = factory(`/api/sessions/${sessionId}/stream`);
     const handlers = EVENT_NAMES.map((name) => {
@@ -682,11 +750,12 @@ git commit -m "feat(m3-fe): useSessionStream hook wiring EventSource to the redu
 
 ---
 
-### Task 7: Send action — no duplicate on 409
+### Task 7: Send + approval actions (409 handling)
 
 **Files:**
 - Create: `frontend/src/state/sendMessage.ts`
-- Test: `frontend/src/state/sendMessage.test.ts`
+- Create: `frontend/src/state/approvalActions.ts`
+- Test: `frontend/src/state/sendMessage.test.ts`, `frontend/src/state/approvalActions.test.ts`
 
 A small orchestrator: POST the message; on `202` mark the turn started (the user message streams back as `thread.append` — **no optimistic append**); on `409 turn_in_progress` do nothing but signal "busy".
 
@@ -758,6 +827,84 @@ git add frontend/src/state/sendMessage.ts frontend/src/state/sendMessage.test.ts
 git commit -m "feat(m3-fe): send action with 409 turn-in-progress handling"
 ```
 
+- [ ] **Step 6: Write the failing approval-action test**
+
+`frontend/src/state/approvalActions.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+import { performApprove } from "./approvalActions";
+
+describe("performApprove", () => {
+  it("refetches the thread on a 409 conflict (server-driven card)", async () => {
+    const api = { approveApproval: vi.fn(async () => ({ conflict: true as const, body: {} })) };
+    const onConflict = vi.fn();
+    await performApprove("s1", "a1", api, onConflict);
+    expect(onConflict).toHaveBeenCalledOnce();
+  });
+
+  it("does not refetch on success (durable messages arrive via the stream)", async () => {
+    const api = { approveApproval: vi.fn(async () => ({ conflict: false as const, body: {} })) };
+    const onConflict = vi.fn();
+    await performApprove("s1", "a1", api, onConflict);
+    expect(onConflict).not.toHaveBeenCalled();
+  });
+});
+```
+
+- [ ] **Step 7: Run test to verify it fails**
+
+Run: `cd frontend && npm test -- --run approvalActions`
+Expected: FAIL — `performApprove` missing.
+
+- [ ] **Step 8: Implement the approval actions**
+
+`frontend/src/state/approvalActions.ts`:
+
+```ts
+import type { ApprovalActionResult } from "../api/client";
+
+interface ApproveApi {
+  approveApproval: (sessionId: string, approvalId: string) => Promise<ApprovalActionResult>;
+}
+interface RejectApi {
+  rejectApproval: (sessionId: string, approvalId: string, reason?: string) => Promise<ApprovalActionResult>;
+}
+
+// On a 409 (already decided), refetch the thread so the card reconciles to server state (spec §6).
+// On success, the durable approval_status/execution_result arrive via the stream — no refetch needed.
+export async function performApprove(
+  sessionId: string,
+  approvalId: string,
+  api: ApproveApi,
+  onConflict: () => void,
+): Promise<void> {
+  const result = await api.approveApproval(sessionId, approvalId);
+  if (result.conflict) onConflict();
+}
+
+export async function performReject(
+  sessionId: string,
+  approvalId: string,
+  reason: string | undefined,
+  api: RejectApi,
+  onConflict: () => void,
+): Promise<void> {
+  const result = await api.rejectApproval(sessionId, approvalId, reason);
+  if (result.conflict) onConflict();
+}
+```
+
+- [ ] **Step 9: Run test to verify it passes, then commit**
+
+Run: `cd frontend && npm test -- --run approvalActions`
+Expected: PASS.
+
+```bash
+git add frontend/src/state/approvalActions.ts frontend/src/state/approvalActions.test.ts
+git commit -m "feat(m3-fe): approval actions with 409 thread-refetch reconciliation"
+```
+
 ---
 
 ### Task 8: Components + layout — delegate to `frontend-design`
@@ -765,7 +912,7 @@ git commit -m "feat(m3-fe): send action with 409 turn-in-progress handling"
 **Files:**
 - Create: `frontend/src/components/*`, update `frontend/src/App.tsx`
 
-This task builds the visual layer. **Invoke the `frontend-design` skill** to produce the dashboard; it must consume the tested logic from Tasks 2–7 and honor these **contracts** (data in / callbacks out). No business logic in components — they render state and call the provided actions.
+This task builds the visual layer. **If the `frontend-design` skill is available, invoke it** to produce the dashboard; otherwise build the components directly from the contracts below (they are fully specified — the skill improves the look but is not required for correctness). Either way, components consume the tested logic from Tasks 2–7, contain **no business logic**, and honor these **contracts** (data in / callbacks out).
 
 - [ ] **Step 1: Invoke frontend-design with these component contracts**
 
@@ -774,7 +921,7 @@ This task builds the visual layer. **Invoke the `frontend-design` skill** to pro
 - **ConversationView** — props: `messages: ThreadMessage[]`, `provisionalAnswer: string | null` (from `tokenBuffer` when `inFlightTurnId`), `activeTool: string | null`, `composerDisabled: boolean` (= `inFlightTurnId !== null`), `onSend(text)`. Renders each `type` distinctly; shows the provisional bubble while streaming; the composer is disabled during a turn; a `busy` send (409) surfaces a transient "a turn is already running" note and adds **no** message.
 - **ApprovalWorkspace** — props: `approvals: ApprovalView[]`, `onApprove(id)`, `onReject(id, reason)`. Card per approval: header from `{toolName, status}` + `card` fields rendered generically (labeled key/value) + a "raw details" expander showing `card` JSON (resilient to varying `operationDetail`). Buttons disabled while in flight or once `status !== "pending"`; show the execution `result` on `consumed`, the `reason` on `rejected`, the fresh-approval note on `invalidated`, the error on `failed`.
 - **HealthPanel** — props: `health` (`GET /health` body) + `mcp` (`GET /health/mcp` body). Status dots for `components.{mongo,sandbox,model}` + `servers.{spring,modelscope}`. Polls (React Query `refetchInterval`); never blocks.
-- **App** — wires `useSessionStream(activeId)`, `performSend`, React Query for sessions/health, and `foldApprovals(state.messages)` into `ApprovalWorkspace`.
+- **App** — wires `useSessionStream(activeId)` (auto-resets state on session switch), `performSend` (composer), and `performApprove`/`performReject` (on `conflict`, invalidate the thread query so the card reconciles to server state). React Query for `listSessions`, `getHealth`, and `getMcpHealth` (both polled via `refetchInterval`); `foldApprovals(state.messages)` feeds `ApprovalWorkspace`; `getHealth`+`getMcpHealth` feed `HealthPanel`. Durable messages from turns and approvals arrive via the stream; the thread query is the reload/reconcile fallback.
 
 - [ ] **Step 2: Smoke test the rendered shell**
 
@@ -819,14 +966,16 @@ Start the Java MCP server + MySQL + Mongo (external), then `uv run uvicorn ecomm
 
 **Spec coverage (§2/§4/§5/§6):**
 - §2 SPA served by FastAPI + dev proxy → Task 1 (backend `mount_spa` already serves `dist`).
-- §4 surfaces + SSE handling: types/parser → Task 2; reducer (seq dedupe, provisional→durable swap, `done`-or-terminal finalize, tool/error) → Task 4; hook → Task 6; components → Task 8.
+- §4 surfaces + SSE handling: types/parser (string-validated) → Task 2; reducer (seq dedupe, provisional→durable swap, `done`-or-terminal finalize, tool/error) → Task 4; hook → Task 6; components → Task 8.
+- §4 session-switch teardown/reset (spec §205): `reset` action → Task 4; dispatched on `sessionId` change → Task 6.
 - §4 composer disabled during a turn; 409 adds no duplicate → Tasks 7, 8.
+- §4/§3 health: `getHealth` + `getMcpHealth` → Task 3; `HealthPanel` consumes both (mcp + components) → Task 8.
 - §5 approval workspace: folding → Task 5; card generic render + raw-JSON fallback + one-click approve/reject + lifecycle states → Task 8.
-- §6 error handling: 409 busy (Task 7), reconnect re-sync via backlog replay (Task 6 + reducer dedupe), health degraded dots (Task 8), loading/empty states (Task 8).
+- §6 error handling: send 409 busy (Task 7), **approval 409 → thread refetch** (Tasks 3, 7), reconnect re-sync via backlog replay (Task 6 + reducer dedupe), health degraded dots (Task 8), loading/empty states (Task 8).
 - §9 acceptance → Task 9 walk-through.
 
-**Placeholder scan:** Tasks 1–7 contain complete code + exact commands. Task 8 deliberately delegates *visual* markup to `frontend-design` (per the chosen plan shape) but pins exact component contracts; Task 9 is a manual checklist. No "TODO"/vague-logic placeholders.
+**Placeholder scan:** Tasks 1–7 contain complete code + exact commands. Task 8 delegates *visual* markup to `frontend-design` **if available** (else builds from the pinned contracts) — the contracts are fully specified either way; Task 9 is a manual checklist. No "TODO"/vague-logic placeholders.
 
-**Type consistency:** `StreamEvent`/`ThreadMessage`/`SessionSummary` (Task 2) used identically in Tasks 3–8; `SessionState`/`SessionAction` + `turn_started` (Task 4) used by Tasks 6/8; `ApprovalView`/`foldApprovals` (Task 5) used by Task 8; `SendResult`/`postMessage` (Task 3) used by Task 7; `parseStreamEvent` (Task 2) used by Task 6.
+**Type consistency:** `StreamEvent`/`ThreadMessage`/`SessionSummary` (Task 2) used identically in Tasks 3–8; `SessionState`/`SessionAction` incl. `turn_started`/`reset` (Task 4) used by Tasks 6/8; `ApprovalView`/`foldApprovals` (Task 5) used by Task 8; `SendResult`/`postMessage` (Task 3) used by Task 7; `ApprovalActionResult`/`approveApproval`/`rejectApproval` (Task 3) used by `performApprove`/`performReject` (Task 7); `getMcpHealth` (Task 3) used by Task 8; `parseStreamEvent` (Task 2) used by Task 6.
 
 **Logic vs UI boundary:** all branching/state logic is in Tasks 2–7 with Vitest tests; Task 8 components are render-only against those contracts — keeping the token-worthy correctness under test while `frontend-design` owns the look.
