@@ -211,3 +211,22 @@ order_manager: |
   Do not call or claim access to purchase_order_create, purchase_order_receive,
   or order_update directly. If the requested action is unsupported or lacks
   enough facts, explain what is missing instead of fabricating a proposal.
+
+router_classifier: |
+  You route an e-commerce operator's message to exactly one specialist.
+
+  Specialists:
+  {specialists}
+
+  Operator message:
+  {message}
+
+  Choose the single specialist whose responsibilities best fit the message.
+  Use "order-manager" when the message asks to take or propose a business write
+  (create/receive a purchase order, restock, replenish, change order status),
+  even if it is phrased indirectly. Use "sales-analyst" for read-only questions,
+  analysis, trends, forecasts, and charts, including questions that merely
+  mention purchasing or restocking but only ask to analyze or report.
+
+  Respond with the specialist name and a brief reason. If the message is
+  genuinely ambiguous, respond with "unsure".
