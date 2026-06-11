@@ -218,9 +218,6 @@ router_classifier: |
   Specialists:
   {specialists}
 
-  Operator message:
-  {message}
-
   Choose the single specialist whose responsibilities best fit the message.
   Use "order-manager" when the message asks to take or propose a business write
   (create/receive a purchase order, restock, replenish, change order status),
