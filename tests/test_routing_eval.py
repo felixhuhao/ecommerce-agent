@@ -4,9 +4,12 @@ from ecommerce_agent.evals.routing import (
     EvalReport,
     RoutingCase,
     compare,
+    load_routing_cases,
     run_routing_eval,
     score_case,
 )
+from ecommerce_agent.routing.keyword import KeywordRouter
+from ecommerce_agent.routing.registry import build_specialist_registry
 from ecommerce_agent.routing.router import RouteDecision
 
 
@@ -86,3 +89,18 @@ async def test_compare_reports_overall_and_adversarial_delta() -> None:
     assert delta["overall_delta"] == pytest.approx(1.0)
     assert delta["adversarial_delta"] == pytest.approx(1.0)
     assert delta["flips"] == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_keyword_baseline_over_dataset_is_deterministic() -> None:
+    cases = load_routing_cases()
+
+    report = await run_routing_eval(
+        KeywordRouter(build_specialist_registry()),
+        cases,
+        router_name="keyword",
+    )
+
+    assert report.errors == 0
+    assert report.per_tag_accuracy["adversarial"] == 0.0
+    assert report.accuracy < 0.80
