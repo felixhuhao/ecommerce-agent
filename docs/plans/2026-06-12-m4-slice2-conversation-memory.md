@@ -678,14 +678,13 @@ async def test_run_turn_degrades_to_single_message_when_history_load_fails() -> 
 
     # History failed, but the turn still ran on the single-message input and completed.
     assert [m["content"] for m in agent.seen_inputs["messages"]] == ["hello"]
-    messages = await store.list_messages_safe() if hasattr(store, "list_messages_safe") else []
     assert record.answer == "answer"
 ```
 
-> **Note:** the last test's final two lines just confirm the turn produced its answer; if your
-> `InMemoryThreadStore` subclass also breaks `list_messages` for the append-result read, assert only
-> `record.answer == "answer"` and the captured single-message input. Keep it simple — the point is the
-> turn does not crash and does not go through the generic failure path.
+> **Note:** the point is that a memory failure does not crash the turn and does not route through
+> `run_turn`'s generic failure path. `FailingListStore` only breaks `list_messages`; `append` still
+> works, so the answer is recorded normally and `record.answer == "answer"`. The `RecordingAgent`
+> (defined in Task 5 Step 1) yields a single chunk with content `"answer"`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -911,10 +910,38 @@ Expected: PASS — live/integration tests skip without `RUN_LIVE_LLM` / Docker /
 in routing, session, turn, factory, or API tests. Confirm slice 1's offline keyword baseline
 (`test_routing_eval.py`) is still green under the new `history` signature.
 
-- [ ] **Step 2: Run ruff**
+- [ ] **Step 2: Run ruff (lint repo-wide; format-check only this slice's files)**
 
-Run: `uv run ruff check src tests && uv run ruff format --check src tests`
-Expected: clean (fix any findings, then re-run).
+`ruff check` is clean repo-wide today, so lint the whole tree:
+
+Run: `uv run ruff check src tests`
+Expected: `All checks passed!`.
+
+**Do not** run `ruff format --check src tests` repo-wide — 8 files have **pre-existing** format drift
+unrelated to this slice (`api/app.py`, `tools/__init__.py`, `tools/staging.py`, `tests/integration/*`,
+`test_staging_tool.py`, and the two this slice also touches). Reformatting them would add unrelated
+churn. Scope the format check to the files this slice creates or edits:
+
+Run:
+```bash
+uv run ruff format --check \
+  src/ecommerce_agent/threads/history.py \
+  src/ecommerce_agent/api/sessions.py \
+  src/ecommerce_agent/routing/router.py \
+  src/ecommerce_agent/routing/keyword.py \
+  src/ecommerce_agent/sessions/turn.py \
+  src/ecommerce_agent/sessions/factory.py \
+  tests/test_threads_history.py \
+  tests/test_sessions_api.py \
+  tests/test_routing_keyword.py \
+  tests/test_routing_router.py \
+  tests/test_session_turn.py \
+  tests/test_session_factory.py
+```
+Expected: clean. If any touched file is flagged, run `uv run ruff format <that file>` and re-check.
+Note: `api/sessions.py` and `test_sessions_api.py` already carried pre-existing drift; running
+`ruff format` on them will also tidy that drift — acceptable since the slice edits them anyway. Leave
+the untouched 6 drifted files alone (out of scope for this slice).
 
 - [ ] **Step 3 (optional, recommended): live two-turn coherence smoke**
 
