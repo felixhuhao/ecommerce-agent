@@ -238,3 +238,28 @@ async def test_capture_extracts_chart_artifact_from_wrapped_tool_message() -> No
 
     assert yielded[0].artifact_id == "chart-1"
     assert yielded[0].artifact["src"] == image_src
+
+
+async def test_capture_maps_route_decision_event() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_route_decision",
+            "data": {
+                "specialist": "order-manager",
+                "source": "classifier",
+                "reason": "po",
+            },
+        }
+
+    record = TraceRecord()
+
+    async for _ in capture(raw_events(), record):
+        pass
+
+    routes = [event for event in record.events if event.event_type == "route_decision"]
+    assert len(routes) == 1
+    assert routes[0].name == "order-manager"
+    assert routes[0].phase == "end"
+    assert routes[0].result_summary is not None
+    assert "classifier" in routes[0].result_summary
+    assert "po" in routes[0].result_summary

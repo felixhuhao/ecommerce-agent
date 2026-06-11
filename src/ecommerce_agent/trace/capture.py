@@ -246,6 +246,21 @@ def _to_trace_event(
             ),
         )
 
+    if event_type == "on_route_decision":
+        info = data if isinstance(data, dict) else {}
+        specialist = info.get("specialist")
+        source = info.get("source")
+        reason = info.get("reason", "")
+        return TraceEvent(
+            event_type="route_decision",
+            name=specialist,
+            phase="end",
+            status="ok",
+            trace_id=record.trace_id,
+            run_id=run_id,
+            result_summary=f"{source}: {reason}",
+        )
+
     return None
 
 

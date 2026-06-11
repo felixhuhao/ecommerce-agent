@@ -4,7 +4,7 @@ from typing import Any
 
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
-_SPAN_EVENT_TYPES = {"model_call", "tool_call"}
+_SPAN_EVENT_TYPES = {"model_call", "tool_call", "route_decision"}
 
 
 def _new_span(event: TraceEvent, span_id: str) -> dict[str, Any]:

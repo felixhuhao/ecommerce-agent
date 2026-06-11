@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions.bus import SessionBus
+from ecommerce_agent.sessions.factory import RoutedSessionAgent
 from ecommerce_agent.sessions.turn import run_turn
 from ecommerce_agent.threads.store import InMemoryThreadStore
 
@@ -142,6 +144,46 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_records_route_decision_event() -> None:
+    class StubRouter:
+        async def route(self, message: str) -> RouteDecision:
+            assert message == "what were sales last month?"
+            return RouteDecision("sales-analyst", "classifier", "analytics")
+
+    class LeafAgent:
+        async def astream_events(
+            self,
+            inputs: dict,
+            config: dict,
+            version: str,
+        ) -> AsyncIterator[dict]:
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "final",
+                "data": {"chunk": SimpleNamespace(content="hi")},
+            }
+
+    agent = RoutedSessionAgent(
+        router=StubRouter(),
+        agents={"sales-analyst": LeafAgent(), "order-manager": LeafAgent()},
+        default_specialist="sales-analyst",
+    )
+
+    record = await run_turn(
+        agent=agent,
+        message="what were sales last month?",
+        session_id="s1",
+        turn_id="t1",
+        store=InMemoryThreadStore(),
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    kinds = [(event.event_type, event.name) for event in record.events]
+    assert ("route_decision", "sales-analyst") in kinds
 
 
 @pytest.mark.asyncio
