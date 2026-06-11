@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from ecommerce_agent.config import Settings
@@ -114,7 +116,8 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
 
 
 @pytest.mark.asyncio
-async def test_routed_session_agent_delegates_to_router_choice() -> None:
+async def test_routed_session_agent_delegates_to_router_choice(caplog) -> None:
+    caplog.set_level(logging.INFO, logger=factory_module.__name__)
     agents = _agents()
     routed = RoutedSessionAgent(
         router=StubRouter("order-manager"),
@@ -145,6 +148,7 @@ async def test_routed_session_agent_delegates_to_router_choice() -> None:
     assert {"event": "selected", "name": "order-manager"} in events
     assert agents["order-manager"].calls == ["create a purchase order"]
     assert agents["sales-analyst"].calls == []
+    assert "route decision: specialist=order-manager source=classifier reason=r" in caplog.text
 
 
 @pytest.mark.asyncio

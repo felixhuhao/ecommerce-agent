@@ -1,6 +1,7 @@
 import pytest
 
 from ecommerce_agent.evals.routing import RoutingCase, load_routing_cases
+from ecommerce_agent.routing.registry import Specialist, SpecialistRegistry
 
 
 def test_dataset_loads_and_is_well_formed() -> None:
@@ -18,3 +19,13 @@ def test_loader_rejects_unknown_specialist(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         load_routing_cases(str(bad))
+
+
+def test_loader_accepts_explicit_registry(tmp_path) -> None:
+    custom = tmp_path / "custom.yaml"
+    custom.write_text("- id: x\n  prompt: hi\n  expected: wizard\n  tags: []\n", encoding="utf-8")
+    registry = SpecialistRegistry([Specialist("wizard", "custom", default=True)])
+
+    cases = load_routing_cases(str(custom), registry=registry)
+
+    assert cases == [RoutingCase(id="x", prompt="hi", expected="wizard", tags=[])]

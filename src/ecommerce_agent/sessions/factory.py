@@ -44,6 +44,12 @@ class RoutedSessionAgent:
     ) -> AsyncIterator[dict]:
         text = _latest_user_text(inputs)
         decision = await self.router.route(text)
+        logger.info(
+            "route decision: specialist=%s source=%s reason=%s",
+            decision.specialist,
+            decision.source,
+            decision.reason,
+        )
         yield {
             "event": "on_route_decision",
             "data": {

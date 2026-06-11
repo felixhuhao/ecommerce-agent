@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from ecommerce_agent.routing.registry import build_specialist_registry
+from ecommerce_agent.routing.registry import SpecialistRegistry, build_specialist_registry
 from ecommerce_agent.routing.router import RouteDecision, Router
 
 _DATASET_PATH = Path(__file__).parent / "datasets" / "routing.yaml"
@@ -20,10 +20,14 @@ class RoutingCase:
     tags: list[str] = field(default_factory=list)
 
 
-def load_routing_cases(path: str | None = None) -> list[RoutingCase]:
+def load_routing_cases(
+    path: str | None = None,
+    *,
+    registry: SpecialistRegistry | None = None,
+) -> list[RoutingCase]:
     target = Path(path) if path else _DATASET_PATH
     raw = yaml.safe_load(target.read_text(encoding="utf-8")) or []
-    registry = build_specialist_registry()
+    registry = registry or build_specialist_registry()
     cases: list[RoutingCase] = []
     for entry in raw:
         case = RoutingCase(
@@ -125,14 +129,25 @@ async def run_routing_eval(
 
 def compare(baseline: EvalReport, candidate: EvalReport) -> dict[str, object]:
     baseline_passed = {r.case_id: r.passed for r in baseline.cases}
-    flips = [
+    candidate_ids = {r.case_id for r in candidate.cases}
+    if set(baseline_passed) != candidate_ids:
+        raise ValueError("baseline and candidate reports must cover the same case ids")
+
+    improvements = [
         result.case_id
         for result in candidate.cases
-        if baseline_passed.get(result.case_id) != result.passed
+        if not baseline_passed[result.case_id] and result.passed
+    ]
+    regressions = [
+        result.case_id
+        for result in candidate.cases
+        if baseline_passed[result.case_id] and not result.passed
     ]
     return {
         "overall_delta": candidate.accuracy - baseline.accuracy,
         "adversarial_delta": candidate.per_tag_accuracy.get("adversarial", 0.0)
         - baseline.per_tag_accuracy.get("adversarial", 0.0),
-        "flips": flips,
+        "improvements": improvements,
+        "regressions": regressions,
+        "flips": improvements + regressions,
     }

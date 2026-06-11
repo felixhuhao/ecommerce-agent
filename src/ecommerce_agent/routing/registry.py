@@ -17,6 +17,9 @@ class SpecialistRegistry:
         defaults = [s for s in specialists if s.default]
         if len(defaults) != 1:
             raise ValueError("registry requires exactly one default specialist")
+        names = [s.name for s in specialists]
+        if len(set(names)) != len(names):
+            raise ValueError("registry specialist names must be unique")
         self.specialists = specialists
 
     def names(self) -> list[str]:

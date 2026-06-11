@@ -31,3 +31,13 @@ def test_registry_requires_exactly_one_default() -> None:
     ]
     with pytest.raises(ValueError):
         SpecialistRegistry(multiple_defaults)
+
+
+def test_registry_rejects_duplicate_names() -> None:
+    with pytest.raises(ValueError, match="unique"):
+        SpecialistRegistry(
+            [
+                Specialist("sales-analyst", "x", default=True),
+                Specialist("sales-analyst", "y"),
+            ]
+        )

@@ -74,19 +74,45 @@ async def test_errored_case_excluded_from_confusion_but_counts_as_failure() -> N
 
 @pytest.mark.asyncio
 async def test_compare_reports_overall_and_adversarial_delta() -> None:
-    cases = [_case("p1", "order-manager", ("adversarial",))]
+    cases = [
+        _case("p1", "order-manager", ("adversarial",)),
+        _case("p2", "sales-analyst", ("adversarial",)),
+    ]
     keyword = await run_routing_eval(
-        StubRouter({"p1": "sales-analyst"}), cases, router_name="keyword"
+        StubRouter({"p1": "sales-analyst", "p2": "sales-analyst"}),
+        cases,
+        router_name="keyword",
     )
     classifier = await run_routing_eval(
-        StubRouter({"p1": "order-manager"}), cases, router_name="classifier"
+        StubRouter({"p1": "order-manager", "p2": "order-manager"}),
+        cases,
+        router_name="classifier",
     )
 
     delta = compare(keyword, classifier)
 
-    assert delta["overall_delta"] == pytest.approx(1.0)
-    assert delta["adversarial_delta"] == pytest.approx(1.0)
-    assert delta["flips"] == ["p1"]
+    assert delta["overall_delta"] == pytest.approx(0.0)
+    assert delta["adversarial_delta"] == pytest.approx(0.0)
+    assert delta["improvements"] == ["p1"]
+    assert delta["regressions"] == ["p2"]
+    assert delta["flips"] == ["p1", "p2"]
+
+
+@pytest.mark.asyncio
+async def test_compare_rejects_mismatched_case_sets() -> None:
+    baseline = await run_routing_eval(
+        StubRouter({"p1": "sales-analyst"}),
+        [_case("p1", "sales-analyst")],
+        router_name="baseline",
+    )
+    candidate = await run_routing_eval(
+        StubRouter({"p2": "sales-analyst"}),
+        [_case("p2", "sales-analyst")],
+        router_name="candidate",
+    )
+
+    with pytest.raises(ValueError, match="same case ids"):
+        compare(baseline, candidate)
 
 
 @pytest.mark.asyncio
