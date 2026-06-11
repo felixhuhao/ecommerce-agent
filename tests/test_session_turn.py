@@ -7,6 +7,7 @@ from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.factory import RoutedSessionAgent
 from ecommerce_agent.sessions.turn import run_turn
+from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
 
 
@@ -114,6 +115,19 @@ class ChartAgent:
         }
 
 
+class RecordingAgent:
+    def __init__(self) -> None:
+        self.seen_inputs: dict | None = None
+
+    async def astream_events(self, inputs, config, version):
+        self.seen_inputs = inputs
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="answer")},
+        }
+
+
 @pytest.mark.asyncio
 async def test_run_turn_publishes_events_and_appends_answer() -> None:
     store = InMemoryThreadStore()
@@ -144,6 +158,77 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_prepends_prior_thread_history() -> None:
+    store = InMemoryThreadStore()
+    await store.append(ThreadMessage(session_id="s1", type="user", content="prior q", turn_id="t0"))
+    await store.append(
+        ThreadMessage(session_id="s1", type="agent_answer", content="prior a", turn_id="t0")
+    )
+    agent = RecordingAgent()
+
+    await run_turn(
+        agent=agent,
+        message="follow up",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert agent.seen_inputs is not None
+    contents = [m["content"] for m in agent.seen_inputs["messages"]]
+    assert contents == ["prior q", "prior a", "follow up"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_excludes_in_flight_user_message_by_turn_id() -> None:
+    store = InMemoryThreadStore()
+    await store.append(
+        ThreadMessage(session_id="s1", type="user", content="same text", turn_id="t1")
+    )
+    agent = RecordingAgent()
+
+    await run_turn(
+        agent=agent,
+        message="same text",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert agent.seen_inputs is not None
+    contents = [m["content"] for m in agent.seen_inputs["messages"]]
+    assert contents == ["same text"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_degrades_to_single_message_when_history_load_fails() -> None:
+    class FailingListStore(InMemoryThreadStore):
+        async def list_messages(self, session_id: str):
+            raise RuntimeError("mongo down")
+
+    store = FailingListStore()
+    agent = RecordingAgent()
+
+    record = await run_turn(
+        agent=agent,
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert agent.seen_inputs is not None
+    assert [m["content"] for m in agent.seen_inputs["messages"]] == ["hello"]
+    assert record.answer == "answer"
 
 
 @pytest.mark.asyncio
