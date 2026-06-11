@@ -144,7 +144,7 @@ def test_message_runs_turn_and_thread_reload_shows_it() -> None:
         thread = _wait_for_thread(client, session_id, expected_types=["user", "agent_answer"])
         types = [message["type"] for message in thread["messages"]]
         assert types == ["user", "agent_answer"]
-        assert thread["messages"][0]["turn_id"] is None
+        assert thread["messages"][0]["turn_id"] == turn_id
         assert thread["messages"][0]["seq"] == 1
         assert thread["messages"][1]["seq"] == 2
         assert _wait_for_trace(client.app, session_id, turn_id).answer == "Hi there."
@@ -512,9 +512,7 @@ async def test_trace_save_failure_is_contained() -> None:
     session_id = await app.state.session_registry.create()
     await app.state.session_store.create(session_id)
 
-    result = await post_message(
-        session_id, MessageRequest(message="hi"), SimpleNamespace(app=app)
-    )
+    result = await post_message(session_id, MessageRequest(message="hi"), SimpleNamespace(app=app))
     turn_id = result["turn_id"]
     await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
 

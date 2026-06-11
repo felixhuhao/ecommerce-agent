@@ -171,9 +171,7 @@ async def _require_session(request: Request, session_id: str) -> None:
         raise HTTPException(status_code=404, detail="session not found")
 
 
-async def _load_trace_record(
-    request: Request, session_id: str, turn_id: str
-) -> TraceRecord | None:
+async def _load_trace_record(request: Request, session_id: str, turn_id: str) -> TraceRecord | None:
     try:
         record = await request.app.state.trace_store.get(session_id, turn_id)
     except Exception:
@@ -319,6 +317,7 @@ async def post_message(
                 type="user",
                 content=payload.message,
                 actor_id="operator",
+                turn_id=turn_id,
             ),
         )
         await session_store.set_title_if_absent(session_id, _title_from_message(payload.message))
