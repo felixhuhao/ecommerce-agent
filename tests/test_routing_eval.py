@@ -77,25 +77,26 @@ async def test_compare_reports_overall_and_adversarial_delta() -> None:
     cases = [
         _case("p1", "order-manager", ("adversarial",)),
         _case("p2", "sales-analyst", ("adversarial",)),
+        _case("p3", "order-manager", ("adversarial",)),
     ]
     keyword = await run_routing_eval(
-        StubRouter({"p1": "sales-analyst", "p2": "sales-analyst"}),
+        StubRouter({"p1": "sales-analyst", "p2": "sales-analyst", "p3": "sales-analyst"}),
         cases,
         router_name="keyword",
     )
     classifier = await run_routing_eval(
-        StubRouter({"p1": "order-manager", "p2": "order-manager"}),
+        StubRouter({"p1": "order-manager", "p2": "order-manager", "p3": "order-manager"}),
         cases,
         router_name="classifier",
     )
 
     delta = compare(keyword, classifier)
 
-    assert delta["overall_delta"] == pytest.approx(0.0)
-    assert delta["adversarial_delta"] == pytest.approx(0.0)
-    assert delta["improvements"] == ["p1"]
+    assert delta["overall_delta"] == pytest.approx(1 / 3)
+    assert delta["adversarial_delta"] == pytest.approx(1 / 3)
+    assert delta["improvements"] == ["p1", "p3"]
     assert delta["regressions"] == ["p2"]
-    assert delta["flips"] == ["p1", "p2"]
+    assert delta["flips"] == ["p1", "p3", "p2"]
 
 
 @pytest.mark.asyncio

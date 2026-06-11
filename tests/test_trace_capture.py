@@ -273,11 +273,18 @@ async def test_capture_assigns_route_decision_run_id_when_missing() -> None:
             "event": "on_route_decision",
             "data": {"specialist": "sales-analyst", "source": "fallback", "reason": "x"},
         }
+        yield {
+            "event": "on_route_decision",
+            "data": {"specialist": "order-manager", "source": "classifier", "reason": "y"},
+        }
 
     record = TraceRecord(trace_id="trace-1")
 
     async for _ in capture(raw_events(), record):
         pass
 
-    assert record.events[0].event_type == "route_decision"
-    assert record.events[0].run_id == "trace-1:route_decision"
+    routes = [event for event in record.events if event.event_type == "route_decision"]
+    assert [event.run_id for event in routes] == [
+        "trace-1:route_decision:1",
+        "trace-1:route_decision:2",
+    ]

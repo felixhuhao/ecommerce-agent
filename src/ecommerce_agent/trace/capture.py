@@ -249,7 +249,12 @@ def _to_trace_event(
         specialist = info.get("specialist")
         source = info.get("source")
         reason = info.get("reason", "")
-        route_run_id = str(run_id) if run_id is not None else f"{record.trace_id}:route_decision"
+        route_count = sum(1 for event in record.events if event.event_type == "route_decision")
+        route_run_id = (
+            str(run_id)
+            if run_id is not None
+            else f"{record.trace_id}:route_decision:{route_count + 1}"
+        )
         return TraceEvent(
             event_type="route_decision",
             name=specialist,
