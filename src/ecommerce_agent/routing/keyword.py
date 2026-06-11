@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ecommerce_agent.routing.registry import SpecialistRegistry
 from ecommerce_agent.routing.router import RouteDecision
 
@@ -24,7 +26,8 @@ class KeywordRouter:
     def __init__(self, registry: SpecialistRegistry) -> None:
         self._registry = registry
 
-    async def route(self, message: str) -> RouteDecision:
+    async def route(self, message: str, *, history: Sequence[dict] = ()) -> RouteDecision:
+        del history
         lowered = message.lower()
         if any(keyword in lowered for keyword in ORDER_MANAGER_KEYWORDS):
             return RouteDecision(

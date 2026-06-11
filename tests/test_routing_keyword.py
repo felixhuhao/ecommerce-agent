@@ -22,3 +22,14 @@ async def test_no_keyword_routes_to_default() -> None:
 
     assert decision.specialist == "sales-analyst"
     assert decision.source == "keyword"
+
+
+@pytest.mark.asyncio
+async def test_keyword_router_accepts_and_ignores_history() -> None:
+    decision = await _router().route(
+        "Forecast next month sales by category",
+        history=[{"role": "user", "content": "earlier create a purchase order"}],
+    )
+
+    assert decision.specialist == "sales-analyst"
+    assert decision.source == "keyword"
