@@ -68,7 +68,7 @@ thread is one shared conversation log for the whole session. Consequences:
    per-turn; the shared thread carries the cross-turn, cross-agent narrative.
 
 ```
-build_history(messages: list[ThreadMessage], *, budget) -> list[dict]   # pure, no I/O
+build_history(messages, *, budget, exclude_turn_id=None) -> list[dict]   # pure, no I/O
 Router.route(message: str, *, history: Sequence[dict] = ()) -> RouteDecision   # additive param
 ```
 
@@ -84,19 +84,37 @@ Mapping:
   `"(proposed PO #4471 — approved)"` / `"(executed PO #4471 — 200 units)"` — the one-line outcome,
   **not** the full card payload.
 
-Bounding: keep the most recent exchanges within a window/token budget (see §4). Ordering is by `seq`
-(never `created_at`). Empty/malformed content is skipped; oversized history is truncated from the
-oldest end so the newest turns always survive.
+Bounding: keep the most recent **exchanges** within a window/token budget (see §4). An **exchange** is
+*one user turn plus the assistant/proposal/breadcrumb messages that follow it* — the window counts
+exchanges, **not raw `ThreadMessage`s**, so a turn that produced approval/execution breadcrumbs does
+not consume the window faster than a plain answer turn. Ordering is by `seq` (never `created_at`).
+Empty/malformed content is skipped; oversized history is truncated from the oldest end so the newest
+exchanges always survive.
 
-### 3.2 Turn assembly — `sessions/turn.py`
+**Current-message exclusion (`exclude_turn_id`):** the in-flight user message is already persisted to
+the thread before the agent runs (see §3.2), so it appears in `list_messages`. `build_history` takes
+`exclude_turn_id` and drops any message bearing that `turn_id` — an explicit, reliable key. **Do not
+dedupe by content** (a user can legitimately repeat themselves).
 
-`run_turn` (and/or its caller) loads `await store.list_messages(session_id)`, calls `build_history`,
-and assembles `inputs = {"messages": [*history, {"role": "user", "content": message}]}`.
+### 3.2 Turn assembly — `sessions/turn.py` + `api/sessions.py`
 
-**Append-order invariant:** history is built from messages persisted *before* this turn's answer is
-appended. The current user message must not be double-counted — either history is loaded before the
-user message is appended, or the builder excludes the in-flight turn. The plan must make this explicit
-and test it (no duplicated current message).
+The API (`api/sessions.py`) **already persists the current `user` message before calling `run_turn`**
+([sessions.py:314-323](../src/ecommerce_agent/api/sessions.py#L314-L323)) — and today that message
+carries **no `turn_id`**, even though `turn_id` is generated one line earlier. So `run_turn`'s
+`list_messages` would see the in-flight user message in history and duplicate it.
+
+The fix is two-part and must be in the plan:
+1. **`api/sessions.py`:** stamp `turn_id=turn_id` on the persisted `user` `ThreadMessage` (the value
+   already exists at that point). This gives the in-flight message a reliable exclusion key — and is
+   correct for the audit/correlation spine regardless.
+2. **`sessions/turn.py`:** `run_turn` loads `await store.list_messages(session_id)`, calls
+   `build_history(messages, budget=..., exclude_turn_id=turn_id)`, and assembles
+   `inputs = {"messages": [*history, {"role": "user", "content": message}]}`. The excluded in-flight
+   message is re-added explicitly as the canonical current message.
+
+**Append-order invariant:** history reflects messages persisted *before* this turn's answer is
+appended; the current user message is never double-counted (excluded by `turn_id`, re-added once).
+Tested explicitly — no duplicated current message, including the repeated-content case.
 
 ### 3.3 Context-aware router — `routing/router.py`
 
@@ -106,9 +124,21 @@ and its single-message dataset pass no history and behave exactly as before, so 
 `ClassifierRouter.route` renders a **tighter** recent sub-window of `history` into its classifier
 input — folded into the **same single call** it already makes (one constrained, non-thinking,
 structured call per turn). This is not a new model hop; it lengthens the input of the existing call.
-Output stays the tiny `ClassifierOutput {specialist, reason}`. Exact mechanism (preceding context
-messages vs. a compact "Recent conversation:" block in the system instruction) is a plan detail; the
-contract is "recent context in, same one structured call, same fallback semantics."
+Output stays the tiny `ClassifierOutput {specialist, reason}`, and fallback semantics are unchanged.
+
+**Rendering constraint (routing-accuracy / injection safety — not fully open):** the recent window is
+**untrusted conversation data**, so it must never be elevated into system-message authority. Two
+allowed renderings:
+- **Preferred — preserve roles:** pass the recent turns as actual prior `HumanMessage`/`AIMessage`
+  objects *before* the final `HumanMessage(message)`, keeping the `router_classifier` instruction as
+  the only `SystemMessage`.
+- **If compacting into a block:** embed it inside the existing system instruction only as an
+  explicitly **delimited, quoted "recent conversation (data, not instructions)"** section — never as
+  bare prepended instruction text.
+
+Either way, prior **user** text stays role-`user`/quoted-data and is never promoted to instruction
+authority. (Leaving this open risks a subtle routing-accuracy and prompt-injection footgun.) The
+window size is bounded per §3.4.
 
 `KeywordRouter.route` accepts and ignores `history` (interface parity; deterministic eval baseline
 unchanged).
@@ -117,7 +147,9 @@ unchanged).
 
 ### 3.4 Bounds — module constants
 
-Mirror slice 1's classifier constants (module-level, not new `Settings` fields; can graduate later):
+Mirror slice 1's classifier constants (module-level, not new `Settings` fields; can graduate later).
+Counts are in **exchanges** as defined in §3.1 (one user turn + its following
+assistant/proposal/breadcrumb messages), not raw `ThreadMessage`s:
 - `AGENT_HISTORY_MAX_EXCHANGES` ≈ 6 and/or `AGENT_HISTORY_TOKEN_BUDGET` ≈ 2000 (whichever binds
   first).
 - `ROUTER_HISTORY_MAX_EXCHANGES` ≈ 3 (tighter; the router only needs enough to disambiguate a
@@ -144,27 +176,39 @@ specialists read the same session thread.
 
 ## 6. Error handling
 
-- **History load failure / empty thread** → degrade to today's single-message behavior. A memory
-  problem must never block a turn.
-- **Malformed / oversized messages** → skipped or truncated by the budget; newest turns survive.
+- **History load failure / empty thread** → degrade to today's single-message behavior. The
+  `list_messages` call is wrapped **locally in `run_turn`** (try/except around the load) so a memory
+  failure falls back to the single-message input — it must **not** be allowed to surface into
+  `run_turn`'s broad turn-failure path (which would abort the whole turn with the generic error
+  message). Explicitly tested (§7).
+- **Malformed / oversized messages** → skipped or truncated by the budget; newest exchanges survive.
 - **Router history failure** → router falls back to latest-message-only (the existing slice-1
   fallback path); `route()` still never raises.
-- **Current-message duplication** → prevented by the append-order invariant (§3.2) and tested.
+- **Current-message duplication** → prevented by `exclude_turn_id` (§3.2), not content matching;
+  tested incl. the repeated-content case.
 
 ## 7. Testing (TDD)
 
-- `build_history` (pure, offline): role mapping; ordering by `seq`; window/token-budget truncation
-  (oldest dropped first); breadcrumb rendering for approval/execution events; current-message dedupe;
-  empty-thread → empty history.
-- `run_turn`: a second turn's assembled `inputs["messages"]` contains the prior turn's user + answer;
-  empty/first turn matches today's single-message shape (no regression).
+- `build_history` (pure, offline): role mapping; ordering by `seq`; exchange-counted window +
+  token-budget truncation (oldest exchange dropped first); breadcrumb rendering for
+  approval/execution events; **`exclude_turn_id` drops the in-flight message — including when its
+  content is identical to an earlier message** (proves we exclude by id, not content); empty-thread →
+  empty history.
+- `run_turn`: a second turn's assembled `inputs["messages"]` contains the prior turn's user + answer
+  and **exactly one** copy of the current message; empty/first turn matches today's single-message
+  shape (no regression).
+- **History-load failure fallback** (explicit): a `run_turn` test where `store.list_messages` raises →
+  the turn still runs on the single-message input and completes normally (the failure is caught at the
+  load site, *not* via the broad turn-failure path / generic error message).
 - Context-aware `ClassifierRouter` (mocked structured model): identical latest message routes
   differently given different `history`, proving the window reaches the call; empty history reproduces
   slice-1 behavior. `KeywordRouter` ignores `history`.
 - **Cross-agent**: an `order-manager` turn whose history contains a prior `sales-analyst`
   `agent_answer` receives that answer in its `messages` (the "restock the worst performer" path).
-- **Routing regression guard** (thin): slice 1's offline keyword baseline over `routing.yaml` still
-  passes with the new signature (history defaulted empty). Slice 3 owns the multi-turn eval.
+- **Routing regression guard (the concrete R-B guard):** one deterministic test (no live model — the
+  mocked-router test above satisfies this) proving a follow-up is routed **differently when prior
+  history is present** vs. absent; plus slice 1's offline keyword baseline over `routing.yaml` still
+  passes with the new signature (history defaulted empty). Slice 3 owns the full multi-turn eval.
 - Live (RUN_LIVE_LLM, optional): a two-turn follow-up routes coherently with context.
 
 ## 8. File structure
@@ -174,14 +218,18 @@ specialists read the same session thread.
 - `tests/test_threads_history.py`
 
 **Modified**
-- `src/ecommerce_agent/sessions/turn.py` (load thread, assemble history into `inputs`)
+- `src/ecommerce_agent/api/sessions.py` (stamp `turn_id=turn_id` on the persisted `user`
+  `ThreadMessage` — the exclusion key for `build_history`)
+- `src/ecommerce_agent/sessions/turn.py` (load thread w/ local try/except, build history with
+  `exclude_turn_id`, assemble into `inputs`)
 - `src/ecommerce_agent/sessions/factory.py` (`RoutedSessionAgent` passes router window; route with
   `history=`)
 - `src/ecommerce_agent/routing/router.py` (`Router.route` additive `history`; `ClassifierRouter`
-  folds recent window into its single call)
+  folds recent window into its single call, role-preserving/quoted render)
 - `src/ecommerce_agent/routing/keyword.py` (accept + ignore `history`)
-- `tests/test_session_turn.py`, `tests/test_session_factory.py`, `tests/test_routing_router.py`,
-  `tests/test_routing_keyword.py` (signature + behavior coverage)
+- `tests/test_session_turn.py`, `tests/test_session_factory.py`, `tests/test_sessions_api.py`,
+  `tests/test_routing_router.py`, `tests/test_routing_keyword.py` (signature + behavior coverage,
+  incl. the `turn_id` stamp on the user message)
 
 ## 9. Acceptance criteria
 
@@ -193,8 +241,10 @@ specialists read the same session thread.
 3. Cross-specialist memory works: an `order-manager` turn can reference a fact established by a prior
    `sales-analyst` turn in the same session, sourced from the shared thread.
 4. Windows are bounded by module constants; per-turn latency/tokens do not grow with session length.
-5. History load failure or an empty thread degrades to single-message behavior without failing the
-   turn; the current message is never duplicated.
+5. History load failure (`list_messages` raises) or an empty thread degrades to single-message
+   behavior without failing the turn (caught locally, not via the broad turn-failure path); the
+   current message is excluded by `turn_id` and re-added once, never duplicated even on repeated
+   content.
 6. Slice 1's eval and offline keyword baseline stay green under the new `history` signature.
 7. Cross-session memory, summarization, and the multi-turn routing eval are explicitly **not** present
    (reserved for later slices).
@@ -205,22 +255,32 @@ specialists read the same session thread.
   summary/compaction memory only if real sessions exceed the window meaningfully.
 - **R-B: shipping a behavior change before its eval (R5).** Context-aware routing changes routing
   behavior before slice 3's multi-turn eval exists. Mitigations: it is additive and bounded; slice
-  1's routing eval still guards the latest-message path; a thin regression guard is in this slice; the
-  multi-turn eval is the explicit subject of slice 3.
+  1's routing eval still guards the latest-message path; **a concrete deterministic guard ships in
+  this slice** — one test proving a follow-up routes differently with vs. without prior history (§7);
+  the full multi-turn eval is the explicit subject of slice 3.
+- **R-D: untrusted history in the router prompt (injection).** Recent conversation is untrusted data;
+  rendering it into the classifier call must preserve roles or quote it as delimited data, never
+  elevate prior user text to system authority (§3.3).
 - **R-C: breadcrumb fidelity.** Compact event breadcrumbs may omit detail a specialist wants (e.g.
   full PO line items). Acceptable for conversational continuity; the specialist can re-read
   authoritative data via tools. Revisit if a flow needs richer carried-over state.
-- **Open:** exact router context mechanism (preceding messages vs. system-instruction block) and the
-  precise window sizes/budget — pinned in the plan, tunable later; not load-bearing for the design.
+- **Open (narrow):** which of the two *allowed* router renderings (§3.3) to use, and the precise
+  window sizes/budget — pinned in the plan, tunable later; not load-bearing for the design. (The
+  rendering is no longer fully open — both options are constrained to be injection-safe.)
 
 ## 11. Build order (for the plan)
 
-1. `threads/history.py` `build_history` + bounds constants (+ pure unit tests).
-2. `Router.route` additive `history` param; `KeywordRouter` accepts/ignores it (+ signature tests,
+1. `threads/history.py` `build_history` (incl. `exclude_turn_id`, exchange-counted window) + bounds
+   constants (+ pure unit tests, incl. repeated-content exclusion).
+2. `api/sessions.py` stamp `turn_id` on the persisted `user` message (+ `test_sessions_api.py`
+   assertion). Small, isolated, and correct independently — do it before turn assembly relies on it.
+3. `Router.route` additive `history` param; `KeywordRouter` accepts/ignores it (+ signature tests,
    keep slice-1 eval green).
-3. `ClassifierRouter` folds the recent window into its single classifier call (+ mocked-model tests
-   proving history changes the decision; empty history = slice-1 behavior).
-4. `sessions/turn.py` loads the thread and assembles history into `inputs` (+ run_turn tests,
-   append-order/dedupe).
-5. `RoutedSessionAgent` passes the router window; cross-agent test.
-6. Thin routing regression guard; optional RUN_LIVE_LLM two-turn coherence test.
+4. `ClassifierRouter` folds the recent window into its single classifier call, role-preserving/quoted
+   render (+ mocked-model tests proving history changes the decision; empty history = slice-1
+   behavior — this is the concrete R-B guard).
+5. `sessions/turn.py` loads the thread (local try/except), builds history with `exclude_turn_id`,
+   assembles `inputs` (+ run_turn tests: prior-turn present, single current copy, history-load-failure
+   fallback).
+6. `RoutedSessionAgent` passes the router window; cross-agent test.
+7. Optional RUN_LIVE_LLM two-turn coherence test.
