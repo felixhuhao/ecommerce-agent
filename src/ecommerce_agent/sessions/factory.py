@@ -22,6 +22,7 @@ from ecommerce_agent.routing.router import ClassifierRouter, Router
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sessions.registry import SessionRuntime
+from ecommerce_agent.threads.history import ROUTER_HISTORY_MAX_EXCHANGES, take_last_exchanges
 from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,10 @@ class RoutedSessionAgent:
         config: dict,
         version: str,
     ) -> AsyncIterator[dict]:
+        messages = inputs.get("messages") or []
         text = _latest_user_text(inputs)
-        decision = await self.router.route(text)
+        history = take_last_exchanges(list(messages[:-1]), ROUTER_HISTORY_MAX_EXCHANGES)
+        decision = await self.router.route(text, history=history)
         logger.info(
             "route decision: specialist=%s source=%s reason=%s",
             decision.specialist,

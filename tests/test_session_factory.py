@@ -22,9 +22,11 @@ class StubRouter:
     def __init__(self, specialist: str) -> None:
         self._specialist = specialist
         self.seen: list[str] = []
+        self.seen_history: list = []
 
-    async def route(self, message: str) -> RouteDecision:
+    async def route(self, message: str, *, history=()) -> RouteDecision:
         self.seen.append(message)
+        self.seen_history = list(history)
         return RouteDecision(self._specialist, "classifier", "r")
 
 
@@ -149,6 +151,28 @@ async def test_routed_session_agent_delegates_to_router_choice(caplog) -> None:
     assert agents["order-manager"].calls == ["create a purchase order"]
     assert agents["sales-analyst"].calls == []
     assert "route decision: specialist=order-manager source=classifier reason=r" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_routed_agent_passes_recent_history_to_router() -> None:
+    router = StubRouter("order-manager")
+    routed = RoutedSessionAgent(
+        router=router,
+        agents=_agents(),
+        default_specialist="sales-analyst",
+    )
+
+    messages = [
+        {"role": "user", "content": "how are electronics selling?"},
+        {"role": "assistant", "content": "Down 12% this month."},
+        {"role": "user", "content": "restock the worst performer"},
+    ]
+
+    _ = [e async for e in routed.astream_events({"messages": messages}, config={}, version="v2")]
+
+    assert router.seen == ["restock the worst performer"]
+    assert {"role": "assistant", "content": "Down 12% this month."} in router.seen_history
+    assert {"role": "user", "content": "restock the worst performer"} not in router.seen_history
 
 
 @pytest.mark.asyncio
