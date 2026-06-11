@@ -25,5 +25,9 @@ def test_describe_lists_names_and_descriptions() -> None:
 def test_registry_requires_exactly_one_default() -> None:
     with pytest.raises(ValueError):
         SpecialistRegistry([Specialist("a", "x", default=False)])
+    multiple_defaults = [
+        Specialist("a", "x", default=True),
+        Specialist("b", "y", default=True),
+    ]
     with pytest.raises(ValueError):
-        SpecialistRegistry([Specialist("a", "x", default=True), Specialist("b", "y", default=True)])
+        SpecialistRegistry(multiple_defaults)
