@@ -51,9 +51,7 @@ async def test_valid_specialist_is_returned_from_classifier() -> None:
 
     decision = await router.route("create a purchase order for 200 units")
 
-    assert decision == RouteDecision(
-        specialist="order-manager", source="classifier", reason="po"
-    )
+    assert decision == RouteDecision(specialist="order-manager", source="classifier", reason="po")
     assert model.method == "function_calling"
     sent = model._structured.calls[0]
     assert sent[1].content == "create a purchase order for 200 units"

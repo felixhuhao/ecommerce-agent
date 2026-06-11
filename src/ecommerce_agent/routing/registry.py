@@ -38,8 +38,7 @@ def build_specialist_registry() -> SpecialistRegistry:
         [
             Specialist(
                 "sales-analyst",
-                "read-only sales analytics: querying business data, trends, "
-                "forecasts, and charts.",
+                "read-only sales analytics: querying business data, trends, forecasts, and charts.",
                 default=True,
             ),
             Specialist(

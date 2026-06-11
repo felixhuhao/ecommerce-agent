@@ -100,9 +100,7 @@ async def test_capture_records_model_call_timing_and_tokens() -> None:
             "name": "ChatDeepSeek",
             "run_id": "model-run",
             "data": {
-                "output": SimpleNamespace(
-                    usage_metadata={"input_tokens": 123, "output_tokens": 45}
-                )
+                "output": SimpleNamespace(usage_metadata={"input_tokens": 123, "output_tokens": 45})
             },
         }
 
@@ -127,9 +125,7 @@ async def test_capture_extracts_model_tokens_from_response_metadata() -> None:
             "run_id": "model-run",
             "data": {
                 "output": SimpleNamespace(
-                    response_metadata={
-                        "token_usage": {"prompt_tokens": 12, "completion_tokens": 7}
-                    }
+                    response_metadata={"token_usage": {"prompt_tokens": 12, "completion_tokens": 7}}
                 )
             },
         }

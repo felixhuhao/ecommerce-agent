@@ -240,9 +240,7 @@ def _to_trace_event(
             artifact_id=artifact.get("id") if artifact else None,
             artifact=artifact,
             approval_id=(
-                extract_approval_id(output)
-                if raw.get("name") == "request_approval"
-                else None
+                extract_approval_id(output) if raw.get("name") == "request_approval" else None
             ),
         )
 

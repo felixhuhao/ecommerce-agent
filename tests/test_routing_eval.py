@@ -45,9 +45,7 @@ async def test_run_routing_eval_aggregates_accuracy_and_confusion() -> None:
         _case("p2", "order-manager", ("adversarial",)),
         _case("p3", "order-manager", ("adversarial",)),
     ]
-    router = StubRouter(
-        {"p1": "sales-analyst", "p2": "order-manager", "p3": "sales-analyst"}
-    )
+    router = StubRouter({"p1": "sales-analyst", "p2": "order-manager", "p3": "sales-analyst"})
 
     report = await run_routing_eval(router, cases, router_name="stub")
 

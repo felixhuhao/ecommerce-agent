@@ -26,6 +26,4 @@ def test_registry_requires_exactly_one_default() -> None:
     with pytest.raises(ValueError):
         SpecialistRegistry([Specialist("a", "x", default=False)])
     with pytest.raises(ValueError):
-        SpecialistRegistry(
-            [Specialist("a", "x", default=True), Specialist("b", "y", default=True)]
-        )
+        SpecialistRegistry([Specialist("a", "x", default=True), Specialist("b", "y", default=True)])

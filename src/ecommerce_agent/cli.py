@@ -69,10 +69,7 @@ def run_eval_command(args: argparse.Namespace) -> None:
     keyword_adversarial = keyword.per_tag_accuracy.get("adversarial")
     classifier_adversarial = classifier.per_tag_accuracy.get("adversarial")
     print(f"keyword    accuracy={keyword.accuracy:.2f} adversarial={keyword_adversarial}")
-    print(
-        f"classifier accuracy={classifier.accuracy:.2f} "
-        f"adversarial={classifier_adversarial}"
-    )
+    print(f"classifier accuracy={classifier.accuracy:.2f} adversarial={classifier_adversarial}")
     print(
         f"delta overall={delta['overall_delta']:+.2f} "
         f"adversarial={delta['adversarial_delta']:+.2f} flips={delta['flips']}"
