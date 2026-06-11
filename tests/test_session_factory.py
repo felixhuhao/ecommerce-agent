@@ -1,6 +1,7 @@
 import pytest
 
 from ecommerce_agent.config import Settings
+from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions import factory as factory_module
 from ecommerce_agent.sessions.factory import RoutedSessionAgent, build_session_runtime
 
@@ -13,6 +14,23 @@ class FakeAgent:
     async def astream_events(self, inputs: dict, *, config: dict, version: str):
         self.calls.append(inputs["messages"][0]["content"])
         yield {"event": "selected", "name": self.name}
+
+
+class StubRouter:
+    def __init__(self, specialist: str) -> None:
+        self._specialist = specialist
+        self.seen: list[str] = []
+
+    async def route(self, message: str) -> RouteDecision:
+        self.seen.append(message)
+        return RouteDecision(self._specialist, "classifier", "r")
+
+
+def _agents() -> dict[str, FakeAgent]:
+    return {
+        "sales-analyst": FakeAgent("analyst"),
+        "order-manager": FakeAgent("order-manager"),
+    }
 
 
 @pytest.mark.asyncio
@@ -69,6 +87,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
     monkeypatch.setattr(factory_module, "build_sales_analysis_staging_tool", fake_build_stage_tool)
     monkeypatch.setattr(factory_module, "get_primary_model", lambda settings: object())
+    monkeypatch.setattr(factory_module, "get_classifier_model", lambda settings: object())
     monkeypatch.setattr(factory_module, "build_sales_analyst", fake_build_sales_analyst)
     monkeypatch.setattr(factory_module, "build_order_manager", fake_build_order_manager)
 
@@ -95,19 +114,22 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
 
 
 @pytest.mark.asyncio
-async def test_routed_session_agent_sends_analysis_directly_to_analyst() -> None:
-    analyst = FakeAgent("analyst")
-    order_manager = FakeAgent("order-manager")
-    routed = RoutedSessionAgent(analyst_agent=analyst, order_manager_agent=order_manager)
+async def test_routed_session_agent_delegates_to_router_choice() -> None:
+    agents = _agents()
+    routed = RoutedSessionAgent(
+        router=StubRouter("order-manager"),
+        agents=agents,
+        default_specialist="sales-analyst",
+    )
 
     events = [
-        event
-        async for event in routed.astream_events(
+        e
+        async for e in routed.astream_events(
             {
                 "messages": [
                     {
                         "role": "user",
-                        "content": "Forecast next month sales by category",
+                        "content": "create a purchase order",
                     }
                 ]
             },
@@ -116,16 +138,23 @@ async def test_routed_session_agent_sends_analysis_directly_to_analyst() -> None
         )
     ]
 
-    assert events == [{"event": "selected", "name": "analyst"}]
-    assert analyst.calls == ["Forecast next month sales by category"]
-    assert order_manager.calls == []
+    assert events[0] == {
+        "event": "on_route_decision",
+        "data": {"specialist": "order-manager", "source": "classifier", "reason": "r"},
+    }
+    assert {"event": "selected", "name": "order-manager"} in events
+    assert agents["order-manager"].calls == ["create a purchase order"]
+    assert agents["sales-analyst"].calls == []
 
 
 @pytest.mark.asyncio
-async def test_routed_session_agent_sends_restock_actions_directly_to_order_manager() -> None:
-    analyst = FakeAgent("analyst")
-    order_manager = FakeAgent("order-manager")
-    routed = RoutedSessionAgent(analyst_agent=analyst, order_manager_agent=order_manager)
+async def test_routed_session_agent_falls_back_to_default_on_unknown_key() -> None:
+    agents = _agents()
+    routed = RoutedSessionAgent(
+        router=StubRouter("ghost"),
+        agents=agents,
+        default_specialist="sales-analyst",
+    )
 
     events = [
         event
@@ -134,7 +163,7 @@ async def test_routed_session_agent_sends_restock_actions_directly_to_order_mana
                 "messages": [
                     {
                         "role": "user",
-                        "content": "Create a purchase order to restock product 1",
+                        "content": "hi",
                     }
                 ]
             },
@@ -143,6 +172,5 @@ async def test_routed_session_agent_sends_restock_actions_directly_to_order_mana
         )
     ]
 
-    assert events == [{"event": "selected", "name": "order-manager"}]
-    assert analyst.calls == []
-    assert order_manager.calls == ["Create a purchase order to restock product 1"]
+    assert {"event": "selected", "name": "analyst"} in events
+    assert agents["sales-analyst"].calls == ["hi"]

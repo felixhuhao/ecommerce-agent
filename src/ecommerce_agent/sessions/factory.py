@@ -16,7 +16,9 @@ from ecommerce_agent.mcp_client import (
     filter_spring_read_tools,
     load_modelscope_viz_tools,
 )
-from ecommerce_agent.models import get_primary_model
+from ecommerce_agent.models import get_classifier_model, get_primary_model
+from ecommerce_agent.routing.registry import build_specialist_registry
+from ecommerce_agent.routing.router import ClassifierRouter, Router
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sessions.registry import SessionRuntime
@@ -25,29 +27,13 @@ from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 logger = logging.getLogger(__name__)
 
 
-# M3 single-operator shortcut: direct keyword routing avoids coordinator latency.
-# Conversation-aware or ambiguous routing should move back to the coordinator seam
-# or a typed intent classifier once multi-turn context is part of the runtime.
-_ORDER_MANAGER_KEYWORDS = (
-    "approval",
-    "approve",
-    "create purchase order",
-    "purchase order",
-    "receive purchase",
-    "receive po",
-    "replenish",
-    "restock",
-    "update order",
-    "order status",
-)
-
-
 class RoutedSessionAgent:
-    """Route single-specialist turns directly, leaving the coordinator as a future seam."""
+    """Route each turn via a Router, then delegate to the chosen specialist agent."""
 
-    def __init__(self, *, analyst_agent: Any, order_manager_agent: Any) -> None:
-        self.analyst_agent = analyst_agent
-        self.order_manager_agent = order_manager_agent
+    def __init__(self, *, router: Router, agents: dict[str, Any], default_specialist: str) -> None:
+        self.router = router
+        self.agents = agents
+        self.default_specialist = default_specialist
 
     async def astream_events(
         self,
@@ -57,7 +43,16 @@ class RoutedSessionAgent:
         version: str,
     ) -> AsyncIterator[dict]:
         text = _latest_user_text(inputs)
-        selected = self.order_manager_agent if _needs_order_manager(text) else self.analyst_agent
+        decision = await self.router.route(text)
+        yield {
+            "event": "on_route_decision",
+            "data": {
+                "specialist": decision.specialist,
+                "source": decision.source,
+                "reason": decision.reason,
+            },
+        }
+        selected = self.agents.get(decision.specialist) or self.agents[self.default_specialist]
         async for event in selected.astream_events(inputs, config=config, version=version):
             yield event
 
@@ -69,11 +64,6 @@ def _latest_user_text(inputs: dict) -> str:
             content = message.get("content")
             return content if isinstance(content, str) else ""
     return ""
-
-
-def _needs_order_manager(text: str) -> bool:
-    lowered = text.lower()
-    return any(keyword in lowered for keyword in _ORDER_MANAGER_KEYWORDS)
 
 
 def build_session_sandbox(settings: Settings, *, session_id: str) -> DockerSandbox:
@@ -122,9 +112,11 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         order_manager_tools=order_manager_tools,
         backend=sandbox,
     )
+    registry = build_specialist_registry()
     routed_agent = RoutedSessionAgent(
-        analyst_agent=analyst_agent,
-        order_manager_agent=order_manager_agent,
+        router=ClassifierRouter(get_classifier_model(settings), registry),
+        agents={"sales-analyst": analyst_agent, "order-manager": order_manager_agent},
+        default_specialist=registry.default.name,
     )
     return SessionRuntime(
         session_id=session_id,
