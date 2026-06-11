@@ -278,41 +278,36 @@ the audit/correlation spine regardless. Small and isolated; land it before turn 
 
 **Files:**
 - Modify: `src/ecommerce_agent/api/sessions.py:314-323`
-- Test: `tests/test_sessions_api.py`
+- Test: `tests/test_sessions_api.py:136-150`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Update the existing assertion to the new (failing) expectation**
 
-First, find an existing test in `tests/test_sessions_api.py` that posts a message and inspects the
-stored `user` message (search for `type == "user"` or `"user"` in stored messages). Add a focused
-assertion test alongside it. Add to `tests/test_sessions_api.py`:
+The existing test `test_message_runs_turn_and_thread_reload_shows_it`
+([tests/test_sessions_api.py:136](../../tests/test_sessions_api.py#L136)) already posts a message,
+captures `turn_id` from the response, reloads the thread, and **currently asserts the user message's
+`turn_id` is `None`** (line 147). That assertion is exactly what changes. The POST response already
+returns `turn_id` (line 142: `turn_id = post.json()["turn_id"]`), so fold the new check in by
+replacing line 147:
 
 ```python
-@pytest.mark.asyncio
-async def test_posting_message_stamps_turn_id_on_user_message(app_client) -> None:
-    # app_client: reuse this file's existing fixture that yields (client, app) or a TestClient with
-    # app.state.thread_store set to an InMemoryThreadStore. Adapt names to the fixtures already used
-    # by the other tests in this file.
-    client, app = app_client
-    session_id = await _create_session(client)  # reuse this file's existing helper/flow
-
-    await client.post(f"/sessions/{session_id}/messages", json={"message": "hello"})
-
-    messages = await app.state.thread_store.list_messages(session_id)
-    user_messages = [m for m in messages if m.type == "user"]
-    assert user_messages, "expected a persisted user message"
-    assert user_messages[0].turn_id is not None
-    assert user_messages[0].content == "hello"
+        assert thread["messages"][0]["turn_id"] is None
 ```
 
-> **Note for the engineer:** `tests/test_sessions_api.py` already exercises this POST route end to end.
-> Mirror its existing setup (fixture names, how it creates a session, how it reaches the thread store
-> and waits for the background turn task). Do **not** invent a new fixture — reuse what the file uses.
-> The only new assertion is `turn_id is not None` on the stored user message.
+with:
+
+```python
+        assert thread["messages"][0]["turn_id"] == turn_id
+```
+
+Do **not** add a new test — this is the right target, and it keeps the assertion that the user message
+correlates to the turn that produced the answer (the same `turn_id` already asserted on the trace at
+line 150). The harness is the sync `TestClient(build_test_app())` / `/api/sessions/...` flow used
+throughout this file; no new fixture is needed.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `uv run pytest tests/test_sessions_api.py -q`
-Expected: FAIL — the stored user message's `turn_id` is `None`.
+Run: `uv run pytest tests/test_sessions_api.py::test_message_runs_turn_and_thread_reload_shows_it -q`
+Expected: FAIL — the stored user message's `turn_id` is still `None`, so `== turn_id` fails.
 
 - [ ] **Step 3: Make the change**
 
