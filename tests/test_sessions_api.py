@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.auth import router as auth_router
-from ecommerce_agent.api.sessions import _session_events, approve_approval
+from ecommerce_agent.api.sessions import _approval_client, _session_events, approve_approval
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.approvals import ApprovalApiError
 from ecommerce_agent.auth.dependencies import current_actor
@@ -204,6 +204,46 @@ def test_create_writes_record_and_list_returns_summary() -> None:
 def test_get_unknown_session_404() -> None:
     with TestClient(build_test_app()) as client:
         assert client.get("/api/sessions/ghost").status_code == 404
+
+
+def test_approval_client_uses_actor_spring_user_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+    made = object()
+
+    def fake_make(settings: Settings, *, session_id: str, user_id: str | None = None) -> object:
+        captured["session_id"] = session_id
+        captured["user_id"] = user_id
+        return made
+
+    monkeypatch.setattr("ecommerce_agent.api.sessions.make_approval_client", fake_make)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=Settings(_env_file=None),
+                approval_clients={},
+                approval_client_factory=None,
+            )
+        )
+    )
+    actor = Actor(user_id="alice", username="alice", role=Role.OPERATOR, spring_user_id=42)
+
+    client = _approval_client(request, "sess-1", actor)  # type: ignore[arg-type]
+
+    assert client is made
+    assert captured == {"session_id": "sess-1", "user_id": "42"}
+
+
+def test_viewer_cannot_approve_or_reject() -> None:
+    app = build_test_app()
+    viewer = Actor(user_id="viewer", username="viewer", role=Role.VIEWER, spring_user_id=8)
+    app.dependency_overrides[current_actor] = lambda: viewer
+
+    with TestClient(app) as client:
+        approve = client.post("/api/sessions/s1/approvals/a1/approve")
+        reject = client.post("/api/sessions/s1/approvals/a1/reject")
+
+    assert approve.status_code == 403
+    assert reject.status_code == 403
 
 
 @pytest.mark.asyncio

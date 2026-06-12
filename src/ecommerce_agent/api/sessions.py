@@ -13,7 +13,7 @@ from pydantic import BaseModel, StringConstraints
 from sse_starlette.sse import EventSourceResponse
 
 from ecommerce_agent.approvals import ApprovalApiError, execute_with_retry, make_approval_client
-from ecommerce_agent.auth.dependencies import current_actor
+from ecommerce_agent.auth.dependencies import current_actor, require
 from ecommerce_agent.auth.models import Action, Actor
 from ecommerce_agent.auth.permissions import can
 from ecommerce_agent.sessions.registry import RuntimeActor
@@ -26,6 +26,7 @@ from ecommerce_agent.trace.schema import TraceRecord
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
 ActorDep = Annotated[Actor, Depends(current_actor)]
+ApproveActorDep = Annotated[Actor, Depends(require(Action.APPROVE))]
 
 
 class MessageRequest(BaseModel):
@@ -40,18 +41,27 @@ def _data(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def _approval_client(request: Request, session_id: str) -> Any:
+def _approval_client(request: Request, session_id: str, actor: Actor) -> Any:
     factory = getattr(request.app.state, "approval_client_factory", None)
     if callable(factory):
         return factory(session_id)
+    user_id = str(actor.spring_user_id)
     clients = getattr(request.app.state, "approval_clients", None)
     if isinstance(clients, dict):
         client = clients.get(session_id)
         if client is None:
-            client = make_approval_client(request.app.state.settings, session_id=session_id)
+            client = make_approval_client(
+                request.app.state.settings,
+                session_id=session_id,
+                user_id=user_id,
+            )
             clients[session_id] = client
         return client
-    return make_approval_client(request.app.state.settings, session_id=session_id)
+    return make_approval_client(
+        request.app.state.settings,
+        session_id=session_id,
+        user_id=user_id,
+    )
 
 
 def _public_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -357,7 +367,7 @@ async def post_message(
         raise
 
     app_state = request.app.state
-    approval_client = _approval_client(request, session_id)
+    approval_client = _approval_client(request, session_id, actor)
 
     async def run_and_record_trace() -> None:
         try:
@@ -397,11 +407,11 @@ async def approve_approval(
     session_id: str,
     approval_id: str,
     request: Request,
-    actor: ActorDep,
+    actor: ApproveActorDep,
 ) -> dict[str, Any]:
     await _require_owned_session(request, session_id, actor)
-    client = _approval_client(request, session_id)
-    actor_id = request.app.state.settings.spring_mcp_user_id
+    client = _approval_client(request, session_id, actor)
+    actor_id = actor.user_id
     try:
         await _ensure_approval_visible(client=client, approval_id=approval_id)
         decision = await client.approve(approval_id)
@@ -450,12 +460,12 @@ async def reject_approval(
     session_id: str,
     approval_id: str,
     request: Request,
-    actor: ActorDep,
+    actor: ApproveActorDep,
     payload: RejectApprovalRequest | None = None,
 ) -> dict[str, Any]:
     await _require_owned_session(request, session_id, actor)
-    client = _approval_client(request, session_id)
-    actor_id = request.app.state.settings.spring_mcp_user_id
+    client = _approval_client(request, session_id, actor)
+    actor_id = actor.user_id
     reason = payload.reason if payload else None
     try:
         await _ensure_approval_visible(client=client, approval_id=approval_id)
