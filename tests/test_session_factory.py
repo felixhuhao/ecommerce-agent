@@ -5,7 +5,11 @@ import pytest
 from ecommerce_agent.config import Settings
 from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions import factory as factory_module
-from ecommerce_agent.sessions.factory import RoutedSessionAgent, build_session_runtime
+from ecommerce_agent.sessions.factory import (
+    POLICY_DENIED_MESSAGE,
+    RoutedSessionAgent,
+    build_session_runtime,
+)
 from ecommerce_agent.sessions.registry import RuntimeActor
 
 
@@ -181,7 +185,7 @@ async def test_routed_agent_passes_recent_history_to_router() -> None:
 
 
 @pytest.mark.asyncio
-async def test_routed_session_agent_falls_back_to_default_on_unknown_key() -> None:
+async def test_routed_session_agent_denies_unknown_specialist() -> None:
     agents = _agents()
     routed = RoutedSessionAgent(
         router=StubRouter("ghost"),
@@ -205,5 +209,9 @@ async def test_routed_session_agent_falls_back_to_default_on_unknown_key() -> No
         )
     ]
 
-    assert {"event": "selected", "name": "analyst"} in events
-    assert agents["sales-analyst"].calls == ["hi"]
+    assert events[1] == {
+        "event": "on_policy_denied",
+        "data": {"specialist": "ghost", "reason": "role_not_permitted"},
+    }
+    assert events[2]["data"]["chunk"].content == POLICY_DENIED_MESSAGE
+    assert agents["sales-analyst"].calls == []

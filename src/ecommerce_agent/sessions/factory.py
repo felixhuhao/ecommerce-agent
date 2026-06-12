@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 from ecommerce_agent.agents import (
@@ -26,6 +27,22 @@ from ecommerce_agent.threads.history import ROUTER_HISTORY_MAX_EXCHANGES, take_l
 from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 
 logger = logging.getLogger(__name__)
+POLICY_DENIED_MESSAGE = (
+    "This request would create an operational change, which your role is not permitted to "
+    "propose. Ask an operator to perform write actions."
+)
+
+
+def build_role_shaped_agents(
+    analyst_agent: Any,
+    order_manager_agent: Any | None,
+    *,
+    can_propose: bool,
+) -> dict[str, Any]:
+    agents: dict[str, Any] = {"sales-analyst": analyst_agent}
+    if can_propose and order_manager_agent is not None:
+        agents["order-manager"] = order_manager_agent
+    return agents
 
 
 class RoutedSessionAgent:
@@ -61,7 +78,20 @@ class RoutedSessionAgent:
                 "reason": decision.reason,
             },
         }
-        selected = self.agents.get(decision.specialist) or self.agents[self.default_specialist]
+        selected = self.agents.get(decision.specialist)
+        if selected is None:
+            yield {
+                "event": "on_policy_denied",
+                "data": {
+                    "specialist": decision.specialist,
+                    "reason": "role_not_permitted",
+                },
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": SimpleNamespace(content=POLICY_DENIED_MESSAGE)},
+            }
+            return
         async for event in selected.astream_events(inputs, config=config, version=version):
             yield event
 
@@ -92,7 +122,6 @@ async def build_session_runtime(
     )
     spring_all_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
     spring_tools = filter_spring_read_tools(spring_all_tools)
-    order_manager_tools = filter_order_manager_tools(spring_all_tools)
     if settings.modelscope_mcp_url:
         try:
             viz_tools = await load_modelscope_viz_tools(mcp_client)
@@ -120,15 +149,22 @@ async def build_session_runtime(
         viz_tools=viz_tools,
         backend=sandbox,
     )
-    order_manager_agent = build_order_manager(
-        model,
-        order_manager_tools=order_manager_tools,
-        backend=sandbox,
-    )
+    order_manager_agent = None
+    if actor.can_propose:
+        order_manager_tools = filter_order_manager_tools(spring_all_tools)
+        order_manager_agent = build_order_manager(
+            model,
+            order_manager_tools=order_manager_tools,
+            backend=sandbox,
+        )
     registry = build_specialist_registry()
     routed_agent = RoutedSessionAgent(
         router=ClassifierRouter(get_classifier_model(settings), registry),
-        agents={"sales-analyst": analyst_agent, "order-manager": order_manager_agent},
+        agents=build_role_shaped_agents(
+            analyst_agent,
+            order_manager_agent,
+            can_propose=actor.can_propose,
+        ),
         default_specialist=registry.default.name,
     )
     return SessionRuntime(

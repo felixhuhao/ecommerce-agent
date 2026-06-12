@@ -5,7 +5,7 @@ import pytest
 
 from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions.bus import SessionBus
-from ecommerce_agent.sessions.factory import RoutedSessionAgent
+from ecommerce_agent.sessions.factory import POLICY_DENIED_MESSAGE, RoutedSessionAgent
 from ecommerce_agent.sessions.turn import run_turn
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
@@ -269,6 +269,39 @@ async def test_run_turn_records_route_decision_event() -> None:
 
     kinds = [(event.event_type, event.name) for event in record.events]
     assert ("route_decision", "sales-analyst") in kinds
+
+
+@pytest.mark.asyncio
+async def test_run_turn_records_policy_denial_event_and_answer() -> None:
+    class StubRouter:
+        async def route(self, message: str, *, history=()) -> RouteDecision:
+            return RouteDecision("order-manager", "classifier", "write intent")
+
+    agent = RoutedSessionAgent(
+        router=StubRouter(),
+        agents={"sales-analyst": RecordingAgent()},
+        default_specialist="sales-analyst",
+    )
+    store = InMemoryThreadStore()
+
+    record = await run_turn(
+        agent=agent,
+        message="create a purchase order",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].content == POLICY_DENIED_MESSAGE
+    assert any(
+        event.event_type == "policy_denial"
+        and event.name == "order-manager"
+        and event.status == "denied"
+        for event in record.events
+    )
 
 
 @pytest.mark.asyncio
