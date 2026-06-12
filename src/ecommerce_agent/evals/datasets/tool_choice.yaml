@@ -1,0 +1,45 @@
+- id: tc-sales-by-category
+  prompt: "what were total sales by category last month?"
+  expected_tool: get_statistics
+  forbidden_tools: [stage_sales_analysis_inputs]
+  tags: [aggregate]
+- id: tc-top-sellers
+  prompt: "which products are my top sellers this year?"
+  expected_tool: get_statistics
+  forbidden_tools: [stage_sales_analysis_inputs]
+  tags: [aggregate]
+- id: tc-inventory-snapshot
+  prompt: "how much inventory do we have on hand right now?"
+  expected_tool: get_statistics
+  forbidden_tools: [stage_sales_analysis_inputs]
+  tags: [aggregate]
+- id: tc-order-count
+  prompt: "how many orders did we get last week?"
+  expected_tool: get_statistics
+  forbidden_tools: [stage_sales_analysis_inputs]
+  tags: [aggregate]
+- id: tc-forecast-sales
+  prompt: "forecast next month's sales"
+  expected_tool: stage_sales_analysis_inputs
+  forbidden_tools: [get_statistics]
+  tags: [forecast]
+- id: tc-category-trends
+  prompt: "which categories are trending up or down over the last 6 months?"
+  expected_tool: stage_sales_analysis_inputs
+  forbidden_tools: [get_statistics]
+  tags: [forecast]
+- id: tc-price-correlation
+  prompt: "is there a correlation between price and units sold?"
+  expected_tool: stage_sales_analysis_inputs
+  forbidden_tools: [get_statistics]
+  tags: [forecast]
+- id: tc-product-cost
+  prompt: "what's the unit cost of SKU-9?"
+  expected_tool: product_query
+  forbidden_tools: [get_statistics, stage_sales_analysis_inputs]
+  tags: [lookup]
+- id: tc-supplier
+  prompt: "who supplies SKU-3?"
+  expected_tool: supplier_query
+  forbidden_tools: [get_statistics, stage_sales_analysis_inputs]
+  tags: [lookup]

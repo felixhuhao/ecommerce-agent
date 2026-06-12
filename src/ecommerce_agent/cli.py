@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.set_defaults(func=serve)
 
     eval_parser = subparsers.add_parser("eval", help="Run an eval")
-    eval_parser.add_argument("eval_target", choices=["routing", "approval-safety"])
+    eval_parser.add_argument("eval_target", choices=["routing", "approval-safety", "tool-choice"])
     eval_parser.set_defaults(func=run_eval_command)
 
     return parser
@@ -35,6 +35,9 @@ def serve(args: argparse.Namespace) -> None:
 
 
 def run_eval_command(args: argparse.Namespace) -> None:
+    if args.eval_target == "tool-choice":
+        _run_tool_choice_cli()
+        return
     if args.eval_target == "approval-safety":
         _run_approval_safety_cli()
         return
@@ -100,6 +103,27 @@ def _run_approval_safety_cli() -> None:
         f"missed_proposal_rate={report.missed_proposal_rate:.2f}"
     )
     print(f"confusion={report.confusion}")
+
+
+def _run_tool_choice_cli() -> None:
+    import asyncio
+
+    from ecommerce_agent.config import get_settings
+    from ecommerce_agent.evals.tool_choice import (
+        build_stub_sales_analyst,
+        load_tool_choice_cases,
+        run_tool_choice_eval,
+    )
+
+    settings = get_settings()
+    cases = load_tool_choice_cases()
+    agent = build_stub_sales_analyst(settings)
+    report = asyncio.run(run_tool_choice_eval(agent, cases))
+    print(
+        f"tool-choice accuracy={report.accuracy:.2f} "
+        f"aggregate_authority_miss_rate={report.aggregate_authority_miss_rate:.2f}"
+    )
+    print(f"per_tag_accuracy={report.per_tag_accuracy}")
 
 
 def main(argv: Sequence[str] | None = None) -> None:

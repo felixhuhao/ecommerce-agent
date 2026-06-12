@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 ORDERS_RAW_PATH = "/workspace/orders_raw.json"
 PRODUCTS_RAW_PATH = "/workspace/products_raw.json"
 STAGE_SALES_ANALYSIS_TOOL_NAME = "stage_sales_analysis_inputs"
+STAGE_SALES_ANALYSIS_DESCRIPTION = (
+    "Fetch order_query and product_query results, write the raw JSON payloads directly "
+    "to /workspace/orders_raw.json and /workspace/products_raw.json, and return compact "
+    "file-path metadata for sandbox analysis. Use this instead of copying raw rows "
+    "through write_file."
+)
 
 
 class StageSalesAnalysisInput(BaseModel):
@@ -120,12 +126,6 @@ def build_sales_analysis_staging_tool(
     return StructuredTool.from_function(
         coroutine=stage_sales_analysis_inputs,
         name=STAGE_SALES_ANALYSIS_TOOL_NAME,
-        description=(
-            "Fetch order_query and product_query results, write the raw JSON payloads directly "
-            "to /workspace/orders_raw.json and /workspace/products_raw.json, and return compact "
-            "file-path metadata for sandbox analysis. Use this instead of copying raw rows "
-            "through write_file."
-        ),
+        description=STAGE_SALES_ANALYSIS_DESCRIPTION,
         args_schema=StageSalesAnalysisInput,
     )
-

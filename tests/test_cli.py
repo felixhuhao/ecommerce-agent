@@ -63,6 +63,16 @@ def test_parser_accepts_eval_approval_safety() -> None:
     assert callable(args.func)
 
 
+def test_parser_accepts_eval_tool_choice() -> None:
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["eval", "tool-choice"])
+
+    assert args.command == "eval"
+    assert args.eval_target == "tool-choice"
+    assert callable(args.func)
+
+
 def test_parser_still_accepts_eval_routing() -> None:
     parser = cli.build_parser()
 
@@ -105,3 +115,39 @@ def test_eval_approval_safety_dispatch_runs_branch(
     out = capsys.readouterr().out
     assert "approval-safety accuracy=1.00" in out
     assert "false_proposal_rate=0.00" in out
+
+
+def test_eval_tool_choice_dispatch_runs_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import ecommerce_agent.config as config_module
+    import ecommerce_agent.evals.tool_choice as tc
+    from ecommerce_agent.evals.tool_choice import ToolChoiceReport
+
+    monkeypatch.setattr(config_module, "get_settings", lambda: object())
+    monkeypatch.setattr(tc, "load_tool_choice_cases", lambda: ["case"])
+    monkeypatch.setattr(tc, "build_stub_sales_analyst", lambda settings: "ANALYST")
+
+    async def fake_run(agent, cases, **kwargs):
+        assert agent == "ANALYST"
+        assert cases == ["case"]
+        return ToolChoiceReport(
+            n=1,
+            passed=1,
+            accuracy=1.0,
+            per_tag_accuracy={"aggregate": 1.0},
+            per_expected_tool_accuracy={"get_statistics": 1.0},
+            aggregate_authority_miss_rate=0.0,
+            post_choice_errors=0,
+            errors_before_choice=0,
+            cases=[],
+        )
+
+    monkeypatch.setattr(tc, "run_tool_choice_eval", fake_run)
+
+    cli.run_eval_command(argparse.Namespace(eval_target="tool-choice"))
+
+    out = capsys.readouterr().out
+    assert "tool-choice accuracy=1.00" in out
+    assert "aggregate_authority_miss_rate=0.00" in out

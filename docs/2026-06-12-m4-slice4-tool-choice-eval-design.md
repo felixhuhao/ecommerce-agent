@@ -147,11 +147,12 @@ A `build_stub_sales_analyst_tools()` builder returns the tool list (offline-test
 
 ### 5.3 Runner — precise error semantics
 
-Per case, run one turn through `capture()` into a `TraceRecord` at a **live-friendly
-`DEFAULT_RECURSION_LIMIT = 50`** (carry slice 3's live lesson — a forecast case with `backend=None` can
-loop/retry around the missing sandbox step, and too low a limit can make it fail *before* the decisive
-call). Catch any exception but **keep the partially-captured record** (do not discard on error — unlike
-slice 3's approval-safety runner). Then score from `fired_tools` (start events) per §4, and classify:
+Per case, run one turn through `capture()` into a `TraceRecord` at a **phase-1-friendly
+`DEFAULT_RECURSION_LIMIT = 15`**. Live calibration showed that too high a limit lets forecast turns
+thrash around the deliberately absent sandbox and pollute the trace with post-choice recovery attempts;
+15 gives the model enough budget to reveal the decisive tool choice while keeping the eval focused on
+phase 1. Catch any exception but **keep the partially-captured record** (do not discard on error —
+unlike slice 3's approval-safety runner). Then score from `fired_tools` (start events) per §4, and classify:
 
 - **No raise:** score normally.
 - **Raised after the decisive correct call** (`expected_tool in fired_tools` and forbidden absent) →
@@ -260,7 +261,7 @@ choice is observed regardless of whether a forecast turn's sandbox phase runs.
    (aggregate cases where `get_statistics` did not fire), `post_choice_errors`, and
    `errors_before_choice`, persisting a JSON-safe baseline line.
 5. The behavioral eval runs the analyst with stub tools + real model, `backend=None`, no Docker, no
-   Spring, at `DEFAULT_RECURSION_LIMIT = 50`. The staging stub reuses the real tool's name, args schema,
+   Spring, at `DEFAULT_RECURSION_LIMIT = 15`. The staging stub reuses the real tool's name, args schema,
    and description.
 6. RUN_LIVE_LLM: `aggregate_authority_miss_rate == 0` and overall accuracy ≥ 0.80.
 7. `eval tool-choice` CLI subcommand ships. No runtime/agent/prompt change. Groundedness absent.
@@ -292,7 +293,7 @@ choice is observed regardless of whether a forecast turn's sandbox phase runs.
 6. Stub-tool analyst harness: `build_stub_sales_analyst_tools` (staging stub reuses the real name/schema/
    description; Spring stubs pin realistic descriptions) + `build_stub_sales_analyst` (+ offline
    construction and stub-fidelity tests, monkeypatched).
-7. Runner `run_tool_choice_eval` with §5.3 error semantics and `DEFAULT_RECURSION_LIMIT = 50`
+7. Runner `run_tool_choice_eval` with §5.3 error semantics and `DEFAULT_RECURSION_LIMIT = 15`
    (+ fake-analyst offline tests for the three outcomes).
 8. RUN_LIVE_LLM integration test (`aggregate_authority_miss_rate == 0`, accuracy ≥ 0.80, persist baseline).
 9. `eval tool-choice` CLI subcommand (+ parser + dispatch tests).
