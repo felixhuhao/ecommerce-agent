@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
+from ecommerce_agent.audit.query import InMemoryAuditStore
 from ecommerce_agent.auth.dependencies import current_actor
 from ecommerce_agent.auth.login_sessions import InMemoryLoginSessionStore
 from ecommerce_agent.auth.models import Actor, Role, User
@@ -111,6 +112,7 @@ def use_in_memory_auth_stores(app) -> None:  # noqa: ANN001
     app.state.user_store._by_id[TEST_USER.user_id] = TEST_USER
     app.state.user_store._by_username[TEST_USER.username] = TEST_USER.user_id
     app.state.login_session_store = InMemoryLoginSessionStore()
+    app.state.audit_store = InMemoryAuditStore()
     app.dependency_overrides[current_actor] = lambda: TEST_ACTOR
 
 

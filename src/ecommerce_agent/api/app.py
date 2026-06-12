@@ -7,9 +7,11 @@ from typing import Any
 from fastapi import FastAPI
 
 from ecommerce_agent.api import health as health_module
+from ecommerce_agent.api.audit import router as audit_router
 from ecommerce_agent.api.auth import router as auth_router
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.api.spa import mount_spa
+from ecommerce_agent.audit.mongo import MongoAuditStore
 from ecommerce_agent.auth.login_sessions import MongoLoginSessionStore
 from ecommerce_agent.auth.users_store import MongoUserStore
 from ecommerce_agent.config import Settings, get_settings
@@ -62,7 +64,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.login_session_store = getattr(
         app.state, "login_session_store", None
     ) or MongoLoginSessionStore.from_settings(settings)
-    for store in (app.state.user_store, app.state.login_session_store):
+    app.state.audit_store = getattr(
+        app.state, "audit_store", None
+    ) or MongoAuditStore.from_settings(settings)
+    for store in (app.state.user_store, app.state.login_session_store, app.state.audit_store):
         ensure = getattr(store, "ensure_indexes", None)
         if callable(ensure):
             await ensure()
@@ -102,6 +107,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for store in (
             getattr(app.state, "user_store", None),
             getattr(app.state, "login_session_store", None),
+            getattr(app.state, "audit_store", None),
         ):
             close = getattr(store, "close", None)
             if callable(close):
@@ -202,6 +208,7 @@ def create_app(
     app.state.approval_clients = None
     app.state.user_store = None
     app.state.login_session_store = None
+    app.state.audit_store = None
 
     @app.get("/health")
     async def health_endpoint() -> dict[str, Any]:
@@ -230,6 +237,7 @@ def create_app(
         return {"status": overall_status, "servers": server_results}
 
     app.include_router(auth_router)
+    app.include_router(audit_router)
     app.include_router(sessions_router)
     mount_spa(app, app.state.settings.frontend_dist_dir)
     return app
