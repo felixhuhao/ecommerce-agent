@@ -70,6 +70,11 @@ def _exchanges_tokens(exchanges: list[list[RoleMessage]]) -> int:
     return sum(_estimate_tokens(m["content"]) for group in exchanges for m in group)
 
 
+def _validate_max_exchanges(max_exchanges: int) -> None:
+    if max_exchanges < 0:
+        raise ValueError("max_exchanges must be >= 0")
+
+
 def build_history(
     messages: Sequence[ThreadMessage],
     *,
@@ -82,6 +87,7 @@ def build_history(
     `messages` is assumed already ordered by `seq` (as ThreadStore.list_messages returns).
     `exclude_turn_id` drops the in-flight turn's message(s) by id, never by content.
     """
+    _validate_max_exchanges(max_exchanges)
     mapped: list[RoleMessage] = []
     for message in messages:
         if exclude_turn_id is not None and message.turn_id == exclude_turn_id:
@@ -102,6 +108,7 @@ def build_history(
 
 def take_last_exchanges(history: list[RoleMessage], max_exchanges: int) -> list[RoleMessage]:
     """Trim an already-mapped role-dict history to its last `max_exchanges` exchanges."""
+    _validate_max_exchanges(max_exchanges)
     if max_exchanges == 0:
         return []
     groups = _group_into_exchanges(history)

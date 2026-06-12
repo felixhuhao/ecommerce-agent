@@ -135,6 +135,24 @@ async def test_empty_history_reproduces_slice1_two_message_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_content_history_items_are_skipped() -> None:
+    router, model = _router(ClassifierOutput(specialist="order-manager", reason="ctx"))
+
+    await router.route(
+        "yes",
+        history=[
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": "   "},
+            {"role": "user", "content": "restock SKU-12"},
+        ],
+    )
+
+    sent = model._structured.calls[0]
+    assert [type(m) for m in sent] == [SystemMessage, HumanMessage, HumanMessage]
+    assert [m.content for m in sent[1:]] == ["restock SKU-12", "yes"]
+
+
+@pytest.mark.asyncio
 async def test_router_decision_changes_with_history_present() -> None:
     class HistoryAwareStructured:
         def __init__(self) -> None:

@@ -83,7 +83,9 @@ def _history_to_messages(history: Sequence[dict]) -> list[Any]:
     windowed = take_last_exchanges(list(history), ROUTER_HISTORY_MAX_EXCHANGES)
     rendered: list[Any] = []
     for item in windowed:
-        content = item.get("content", "")
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
         if item.get("role") == "user":
             rendered.append(HumanMessage(content=content))
         else:

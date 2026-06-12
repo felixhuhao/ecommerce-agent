@@ -116,6 +116,20 @@ def test_exclude_turn_id_drops_in_flight_message_even_with_duplicate_content() -
     ]
 
 
+def test_exclude_turn_id_drops_all_messages_from_that_turn() -> None:
+    msgs = [
+        _msg("user", "old q", turn_id="t0"),
+        _msg("agent_answer", "old a", turn_id="t0"),
+        _msg("user", "current q", turn_id="t1"),
+        _msg("agent_answer", "current a", turn_id="t1"),
+        _msg("user", "later q", turn_id="t2"),
+    ]
+
+    history = build_history(msgs, exclude_turn_id="t1")
+
+    assert [m["content"] for m in history] == ["old q", "old a", "later q"]
+
+
 def test_window_keeps_last_n_exchanges() -> None:
     msgs = []
     for i in range(4):
@@ -171,6 +185,22 @@ def test_empty_input_returns_empty() -> None:
 def test_zero_max_exchanges_returns_empty() -> None:
     assert build_history([_msg("user", "hidden")], max_exchanges=0) == []
     assert take_last_exchanges([{"role": "user", "content": "hidden"}], 0) == []
+
+
+def test_negative_max_exchanges_is_rejected() -> None:
+    try:
+        build_history([_msg("user", "hidden")], max_exchanges=-1)
+    except ValueError as exc:
+        assert "max_exchanges" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+    try:
+        take_last_exchanges([{"role": "user", "content": "hidden"}], -1)
+    except ValueError as exc:
+        assert "max_exchanges" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_take_last_exchanges_trims_role_dict_list() -> None:
