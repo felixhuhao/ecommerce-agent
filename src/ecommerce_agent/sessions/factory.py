@@ -21,7 +21,7 @@ from ecommerce_agent.routing.registry import build_specialist_registry
 from ecommerce_agent.routing.router import ClassifierRouter, Router
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
-from ecommerce_agent.sessions.registry import SessionRuntime
+from ecommerce_agent.sessions.registry import RuntimeActor, SessionRuntime
 from ecommerce_agent.threads.history import ROUTER_HISTORY_MAX_EXCHANGES, take_last_exchanges
 from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 
@@ -79,11 +79,15 @@ def build_session_sandbox(settings: Settings, *, session_id: str) -> DockerSandb
     return DockerSandbox(limits_from_settings(settings), session_id=session_id)
 
 
-async def build_session_runtime(session_id: str, settings: Settings) -> SessionRuntime:
-    """Build a per-session runtime: session-scoped MCP headers, sandbox, and agent."""
+async def build_session_runtime(
+    session_id: str,
+    settings: Settings,
+    actor: RuntimeActor,
+) -> SessionRuntime:
+    """Build a per-session runtime bound to `actor` (Spring id + proposal capability)."""
     mcp_client = build_mcp_client(
         settings,
-        user_id=settings.spring_mcp_user_id,
+        user_id=str(actor.spring_user_id),
         session_id=session_id,
     )
     spring_all_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
@@ -132,4 +136,6 @@ async def build_session_runtime(session_id: str, settings: Settings) -> SessionR
         agent=routed_agent,
         mcp_client=mcp_client,
         sandbox=sandbox,
+        owner_id=actor.user_id,
+        spring_user_id=actor.spring_user_id,
     )

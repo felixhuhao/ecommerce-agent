@@ -6,6 +6,7 @@ from ecommerce_agent.config import Settings
 from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions import factory as factory_module
 from ecommerce_agent.sessions.factory import RoutedSessionAgent, build_session_runtime
+from ecommerce_agent.sessions.registry import RuntimeActor
 
 
 class FakeAgent:
@@ -97,12 +98,16 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
 
     settings = Settings(_env_file=None, llm_api_key="k", spring_mcp_user_id="9")
 
-    runtime = await build_session_runtime("sess-1", settings)
+    actor = RuntimeActor(user_id="alice", spring_user_id=42, can_propose=True)
+
+    runtime = await build_session_runtime("sess-1", settings, actor)
 
     assert runtime.session_id == "sess-1"
     assert isinstance(runtime.agent, RoutedSessionAgent)
+    assert runtime.owner_id == "alice"
+    assert runtime.spring_user_id == 42
     assert captured["session_id"] == "sess-1"
-    assert captured["user_id"] == "9"
+    assert captured["user_id"] == "42"
     assert captured["sandbox_session_id"] == "sess-1"
     assert captured["stage_tool_inputs"] == ["product_query", "order_query"]
     assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]

@@ -37,8 +37,8 @@ from ecommerce_agent.trace.mongo import MongoTraceStore
 
 
 def make_runtime_builder(settings: Settings):
-    async def build_runtime(session_id: str):
-        return await build_session_runtime(session_id, settings)
+    async def build_runtime(session_id: str, actor):
+        return await build_session_runtime(session_id, settings, actor)
 
     return build_runtime
 

@@ -15,7 +15,7 @@ def _now_iso() -> str:
 
 
 class SessionStore(Protocol):
-    async def create(self, session_id: str) -> None:
+    async def create(self, session_id: str, *, owner_id: str) -> None:
         """Create a durable session record if it does not already exist."""
         ...
 
@@ -31,8 +31,12 @@ class SessionStore(Protocol):
         """Set the title once from the first user message."""
         ...
 
-    async def list_records(self) -> list[dict[str, Any]]:
+    async def list_records(self, *, owner_id: str | None = None) -> list[dict[str, Any]]:
         """Return session records newest-first."""
+        ...
+
+    async def backfill_ownerless(self, *, owner_id: str) -> int:
+        """Assign `owner_id` to records that predate session ownership."""
         ...
 
 
@@ -45,12 +49,13 @@ class InMemorySessionStore:
         self._seq: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, session_id: str) -> None:
+    async def create(self, session_id: str, *, owner_id: str) -> None:
         async with self._lock:
             if session_id in self._records:
                 return
             self._records[session_id] = {
                 "session_id": session_id,
+                "owner_id": owner_id,
                 "title": None,
                 "created_at": _now_iso(),
             }
@@ -71,9 +76,9 @@ class InMemorySessionStore:
             if record is not None and record["title"] is None:
                 record["title"] = title
 
-    async def list_records(self) -> list[dict[str, Any]]:
+    async def list_records(self, *, owner_id: str | None = None) -> list[dict[str, Any]]:
         async with self._lock:
-            return [
+            records = [
                 dict(record)
                 for _, record in sorted(
                     self._records.items(),
@@ -81,6 +86,18 @@ class InMemorySessionStore:
                     reverse=True,
                 )
             ]
+        if owner_id is not None:
+            records = [record for record in records if record.get("owner_id") == owner_id]
+        return records
+
+    async def backfill_ownerless(self, *, owner_id: str) -> int:
+        count = 0
+        async with self._lock:
+            for record in self._records.values():
+                if record.get("owner_id") is None:
+                    record["owner_id"] = owner_id
+                    count += 1
+        return count
 
 
 class MongoSessionStore:
@@ -101,10 +118,10 @@ class MongoSessionStore:
         if callable(close):
             close()
 
-    async def create(self, session_id: str) -> None:
+    async def create(self, session_id: str, *, owner_id: str) -> None:
         await self._sessions.update_one(
             {"_id": session_id},
-            {"$setOnInsert": {"title": None, "created_at": _now_iso()}},
+            {"$setOnInsert": {"owner_id": owner_id, "title": None, "created_at": _now_iso()}},
             upsert=True,
         )
 
@@ -121,14 +138,23 @@ class MongoSessionStore:
             {"$set": {"title": title}},
         )
 
-    async def list_records(self) -> list[dict[str, Any]]:
-        cursor = self._sessions.find().sort("created_at", -1)
+    async def list_records(self, *, owner_id: str | None = None) -> list[dict[str, Any]]:
+        query = {"owner_id": owner_id} if owner_id is not None else {}
+        cursor = self._sessions.find(query).sort("created_at", -1)
         return [self._to_record(doc) async for doc in cursor]
+
+    async def backfill_ownerless(self, *, owner_id: str) -> int:
+        result = await self._sessions.update_many(
+            {"owner_id": {"$exists": False}},
+            {"$set": {"owner_id": owner_id}},
+        )
+        return int(result.modified_count)
 
     @staticmethod
     def _to_record(doc: dict[str, Any]) -> dict[str, Any]:
         return {
             "session_id": doc["_id"],
+            "owner_id": doc.get("owner_id"),
             "title": doc.get("title"),
             "created_at": doc.get("created_at"),
         }

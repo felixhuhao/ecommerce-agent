@@ -6,9 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
+from ecommerce_agent.auth.dependencies import current_actor
 from ecommerce_agent.auth.login_sessions import InMemoryLoginSessionStore
+from ecommerce_agent.auth.models import Actor, Role, User
+from ecommerce_agent.auth.passwords import hash_password
 from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
+from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.store import InMemoryThreadStore
 from ecommerce_agent.trace.store import InMemoryTraceStore
@@ -84,6 +88,17 @@ def make_settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **overrides)
 
 
+TEST_USER = User(
+    user_id="alice",
+    username="alice",
+    password_hash=hash_password("pw"),
+    role=Role.OPERATOR,
+    spring_user_id=7,
+    created_at="2026-06-13T00:00:00+00:00",
+)
+TEST_ACTOR = Actor.from_user(TEST_USER)
+
+
 def use_in_memory_stores(app) -> None:  # noqa: ANN001
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = InMemorySessionStore()
@@ -93,7 +108,10 @@ def use_in_memory_stores(app) -> None:  # noqa: ANN001
 
 def use_in_memory_auth_stores(app) -> None:  # noqa: ANN001
     app.state.user_store = InMemoryUserStore()
+    app.state.user_store._by_id[TEST_USER.user_id] = TEST_USER
+    app.state.user_store._by_username[TEST_USER.username] = TEST_USER.user_id
     app.state.login_session_store = InMemoryLoginSessionStore()
+    app.dependency_overrides[current_actor] = lambda: TEST_ACTOR
 
 
 def wait_for_thread_types(client: TestClient, session_id: str, expected_types: list[str]) -> dict:
@@ -260,12 +278,14 @@ def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.app as app_module
     from ecommerce_agent.sessions.registry import SessionRuntime
 
-    async def fake_build_runtime(session_id: str) -> SessionRuntime:
+    async def fake_build_runtime(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         return SessionRuntime(
             session_id=session_id,
             agent=FakeAgent(),
             mcp_client=object(),
             sandbox=object(),
+            owner_id=actor.user_id,
+            spring_user_id=actor.spring_user_id,
         )
 
     monkeypatch.setattr(app_module, "make_runtime_builder", lambda settings: fake_build_runtime)

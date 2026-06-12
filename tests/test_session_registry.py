@@ -2,15 +2,23 @@ import asyncio
 
 import pytest
 
-from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
+from ecommerce_agent.sessions.registry import RuntimeActor, SessionRegistry, SessionRuntime
+
+TEST_ACTOR = RuntimeActor(user_id="alice", spring_user_id=7, can_propose=True)
 
 
-def make_runtime(session_id: str, sandbox: object) -> SessionRuntime:
+def make_runtime(
+    session_id: str,
+    sandbox: object,
+    actor: RuntimeActor = TEST_ACTOR,
+) -> SessionRuntime:
     return SessionRuntime(
         session_id=session_id,
         agent=object(),
         mcp_client=object(),
         sandbox=sandbox,
+        owner_id=actor.user_id,
+        spring_user_id=actor.spring_user_id,
     )
 
 
@@ -18,13 +26,13 @@ def make_runtime(session_id: str, sandbox: object) -> SessionRuntime:
 async def test_create_then_get_returns_same_runtime() -> None:
     built: list[str] = []
 
-    async def build(session_id: str) -> SessionRuntime:
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         built.append(session_id)
-        return make_runtime(session_id, sandbox=object())
+        return make_runtime(session_id, sandbox=object(), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=50)
 
-    session_id = await registry.create()
+    session_id = await registry.create(TEST_ACTOR)
     runtime = await registry.get(session_id)
 
     assert runtime.session_id == session_id
@@ -34,8 +42,8 @@ async def test_create_then_get_returns_same_runtime() -> None:
 
 @pytest.mark.asyncio
 async def test_get_unknown_session_raises_keyerror() -> None:
-    async def build(session_id: str) -> SessionRuntime:
-        return make_runtime(session_id, sandbox=object())
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
+        return make_runtime(session_id, sandbox=object(), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=50)
 
@@ -54,11 +62,11 @@ async def test_reap_idle_closes_sandbox_and_drops_session() -> None:
         def close(self) -> None:
             closed.append(self._session_id)
 
-    async def build(session_id: str) -> SessionRuntime:
-        return make_runtime(session_id, sandbox=FakeSandbox(session_id))
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
+        return make_runtime(session_id, sandbox=FakeSandbox(session_id), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=0, max_live_sessions=50)
-    session_id = await registry.create()
+    session_id = await registry.create(TEST_ACTOR)
 
     reaped = await registry.reap_idle()
 
@@ -76,11 +84,11 @@ async def test_reap_idle_skips_session_with_active_turn() -> None:
         def close(self) -> None:
             closed.append("closed")
 
-    async def build(session_id: str) -> SessionRuntime:
-        return make_runtime(session_id, sandbox=FakeSandbox())
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
+        return make_runtime(session_id, sandbox=FakeSandbox(), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=0, max_live_sessions=50)
-    session_id = await registry.create()
+    session_id = await registry.create(TEST_ACTOR)
     assert await registry.try_begin_turn(session_id) is True
 
     assert await registry.reap_idle() == []
@@ -103,12 +111,12 @@ async def test_create_evicts_oldest_when_at_cap() -> None:
         def close(self) -> None:
             closed.append(self._session_id)
 
-    async def build(session_id: str) -> SessionRuntime:
-        return make_runtime(session_id, sandbox=FakeSandbox(session_id))
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
+        return make_runtime(session_id, sandbox=FakeSandbox(session_id), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=1)
-    first = await registry.create()
-    second = await registry.create()
+    first = await registry.create(TEST_ACTOR)
+    second = await registry.create(TEST_ACTOR)
 
     assert closed == [first]
     with pytest.raises(KeyError):
@@ -118,13 +126,16 @@ async def test_create_evicts_oldest_when_at_cap() -> None:
 
 @pytest.mark.asyncio
 async def test_create_enforces_cap_after_concurrent_builds() -> None:
-    async def build(session_id: str) -> SessionRuntime:
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         await asyncio.sleep(0.01)
-        return make_runtime(session_id, sandbox=object())
+        return make_runtime(session_id, sandbox=object(), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=1)
 
-    first, second = await asyncio.gather(registry.create(), registry.create())
+    first, second = await asyncio.gather(
+        registry.create(TEST_ACTOR),
+        registry.create(TEST_ACTOR),
+    )
 
     ids_in_registry = []
     for s in (first, second):
@@ -140,22 +151,22 @@ async def test_create_enforces_cap_after_concurrent_builds() -> None:
 async def test_get_or_create_rehydrates_known_session() -> None:
     built: list[str] = []
 
-    async def build(session_id: str) -> SessionRuntime:
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         built.append(session_id)
-        return make_runtime(session_id, sandbox=object())
+        return make_runtime(session_id, sandbox=object(), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=50)
 
     async def known(session_id: str) -> bool:
         return session_id == "known"
 
-    runtime = await registry.get_or_create_runtime("known", known)
+    runtime = await registry.get_or_create_runtime("known", TEST_ACTOR, known)
     assert runtime.session_id == "known"
-    assert await registry.get_or_create_runtime("known", known) is runtime
+    assert await registry.get_or_create_runtime("known", TEST_ACTOR, known) is runtime
     assert built == ["known"]
 
     with pytest.raises(KeyError):
-        await registry.get_or_create_runtime("ghost", known)
+        await registry.get_or_create_runtime("ghost", TEST_ACTOR, known)
 
 
 @pytest.mark.asyncio
@@ -174,7 +185,7 @@ async def test_concurrent_rehydration_closes_loser_runtime() -> None:
     release_builds = asyncio.Event()
     build_count = 0
 
-    async def build(session_id: str) -> SessionRuntime:
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         nonlocal build_count
         build_count += 1
         label = f"{session_id}-{build_count}"
@@ -182,15 +193,15 @@ async def test_concurrent_rehydration_closes_loser_runtime() -> None:
         if build_count == 2:
             both_started.set()
         await release_builds.wait()
-        return make_runtime(session_id, sandbox=FakeSandbox(label))
+        return make_runtime(session_id, sandbox=FakeSandbox(label), actor=actor)
 
     async def known(session_id: str) -> bool:
         return session_id == "known"
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=50)
-    first = asyncio.create_task(registry.get_or_create_runtime("known", known))
+    first = asyncio.create_task(registry.get_or_create_runtime("known", TEST_ACTOR, known))
     await build_started.wait()
-    second = asyncio.create_task(registry.get_or_create_runtime("known", known))
+    second = asyncio.create_task(registry.get_or_create_runtime("known", TEST_ACTOR, known))
     await both_started.wait()
     release_builds.set()
 
@@ -217,7 +228,7 @@ async def test_concurrent_rehydration_preserves_winner_at_cap_1() -> None:
     release_builds = asyncio.Event()
     build_count = 0
 
-    async def build(session_id: str) -> SessionRuntime:
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         nonlocal build_count
         build_count += 1
         label = f"{session_id}-{build_count}"
@@ -225,15 +236,15 @@ async def test_concurrent_rehydration_preserves_winner_at_cap_1() -> None:
         if build_count == 2:
             both_started.set()
         await release_builds.wait()
-        return make_runtime(session_id, sandbox=FakeSandbox(label))
+        return make_runtime(session_id, sandbox=FakeSandbox(label), actor=actor)
 
     async def known(session_id: str) -> bool:
         return session_id == "known"
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=1)
-    first = asyncio.create_task(registry.get_or_create_runtime("known", known))
+    first = asyncio.create_task(registry.get_or_create_runtime("known", TEST_ACTOR, known))
     await build_started.wait()
-    second = asyncio.create_task(registry.get_or_create_runtime("known", known))
+    second = asyncio.create_task(registry.get_or_create_runtime("known", TEST_ACTOR, known))
     await both_started.wait()
     release_builds.set()
 
@@ -246,8 +257,8 @@ async def test_concurrent_rehydration_preserves_winner_at_cap_1() -> None:
 
 @pytest.mark.asyncio
 async def test_try_begin_turn_enforces_single_turn() -> None:
-    async def build(session_id: str) -> SessionRuntime:
-        return make_runtime(session_id, sandbox=object())
+    async def build(session_id: str, actor: RuntimeActor) -> SessionRuntime:
+        return make_runtime(session_id, sandbox=object(), actor=actor)
 
     registry = SessionRegistry(build_runtime=build, idle_ttl_seconds=1800, max_live_sessions=50)
 
