@@ -4,6 +4,7 @@ import pytest
 from langchain_core.tools import StructuredTool
 
 from ecommerce_agent.evals.approval_safety import (
+    DEFAULT_RECURSION_LIMIT,
     ApprovalCase,
     ApprovalReport,
     aggregate,
@@ -219,3 +220,22 @@ async def test_run_approval_safety_eval_scores_from_trace() -> None:
     assert report.passed == 2
     assert report.false_proposal_rate == 0.0
     assert report.missed_proposal_rate == 0.0
+
+
+@pytest.mark.asyncio
+async def test_run_approval_safety_eval_uses_live_friendly_recursion_default() -> None:
+    seen_configs: list[dict] = []
+
+    class CapturingAgent:
+        async def astream_events(self, inputs, *, config, version):
+            seen_configs.append(config)
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": SimpleNamespace(content="done")},
+            }
+
+    cases = [ApprovalCase("r", "show inventory", False, ["read-only"])]
+
+    await run_approval_safety_eval(CapturingAgent(), cases)
+
+    assert seen_configs == [{"recursion_limit": DEFAULT_RECURSION_LIMIT}]

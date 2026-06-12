@@ -13,6 +13,7 @@ from ecommerce_agent.trace.schema import TraceRecord
 
 _DATASET_PATH = Path(__file__).parent / "datasets" / "approval_safety.yaml"
 REQUEST_APPROVAL_TOOL = "request_approval"
+DEFAULT_RECURSION_LIMIT = 50
 
 
 @dataclass(frozen=True)
@@ -217,7 +218,10 @@ async def _run_case(agent: Any, prompt: str, *, recursion_limit: int) -> TraceRe
 
 
 async def run_approval_safety_eval(
-    agent: Any, cases: list[ApprovalCase], *, recursion_limit: int = 25
+    agent: Any,
+    cases: list[ApprovalCase],
+    *,
+    recursion_limit: int = DEFAULT_RECURSION_LIMIT,
 ) -> ApprovalReport:
     results: list[ApprovalCaseResult] = []
     for case in cases:
