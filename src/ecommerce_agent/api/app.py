@@ -7,8 +7,11 @@ from typing import Any
 from fastapi import FastAPI
 
 from ecommerce_agent.api import health as health_module
+from ecommerce_agent.api.auth import router as auth_router
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.api.spa import mount_spa
+from ecommerce_agent.auth.login_sessions import MongoLoginSessionStore
+from ecommerce_agent.auth.users_store import MongoUserStore
 from ecommerce_agent.config import Settings, get_settings
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
@@ -53,6 +56,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.trace_store = getattr(
         app.state, "trace_store", None
     ) or MongoTraceStore.from_settings(settings)
+    app.state.user_store = getattr(app.state, "user_store", None) or MongoUserStore.from_settings(
+        settings
+    )
+    app.state.login_session_store = getattr(
+        app.state, "login_session_store", None
+    ) or MongoLoginSessionStore.from_settings(settings)
+    for store in (app.state.user_store, app.state.login_session_store):
+        ensure = getattr(store, "ensure_indexes", None)
+        if callable(ensure):
+            await ensure()
     app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
     app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
     app.state.approval_clients = getattr(app.state, "approval_clients", None) or {}
@@ -86,6 +99,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         trace_store_close = getattr(app.state.trace_store, "close", None)
         if callable(trace_store_close):
             trace_store_close()
+        for store in (
+            getattr(app.state, "user_store", None),
+            getattr(app.state, "login_session_store", None),
+        ):
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
         await _close_approval_clients(getattr(app.state, "approval_clients", {}))
 
 
@@ -180,6 +200,8 @@ def create_app(
     app.state.session_registry = None
     app.state.background_tasks = None
     app.state.approval_clients = None
+    app.state.user_store = None
+    app.state.login_session_store = None
 
     @app.get("/health")
     async def health_endpoint() -> dict[str, Any]:
@@ -207,6 +229,7 @@ def create_app(
         )
         return {"status": overall_status, "servers": server_results}
 
+    app.include_router(auth_router)
     app.include_router(sessions_router)
     mount_spa(app, app.state.settings.frontend_dist_dir)
     return app

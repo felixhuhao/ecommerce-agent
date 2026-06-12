@@ -6,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
+from ecommerce_agent.auth.login_sessions import InMemoryLoginSessionStore
+from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.store import InMemoryThreadStore
@@ -86,6 +88,12 @@ def use_in_memory_stores(app) -> None:  # noqa: ANN001
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = InMemorySessionStore()
     app.state.trace_store = InMemoryTraceStore()
+    use_in_memory_auth_stores(app)
+
+
+def use_in_memory_auth_stores(app) -> None:  # noqa: ANN001
+    app.state.user_store = InMemoryUserStore()
+    app.state.login_session_store = InMemoryLoginSessionStore()
 
 
 def wait_for_thread_types(client: TestClient, session_id: str, expected_types: list[str]) -> dict:
@@ -116,6 +124,7 @@ def test_health_reports_external_mcp_configuration() -> None:
 
 def test_mcp_health_reports_spring_tool_visibility() -> None:
     app = create_app(settings=make_settings(), mcp_client=HealthyFakeMcpClient())
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -153,6 +162,7 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
         settings=make_settings(modelscope_mcp_url="http://modelscope.example/mcp"),
         mcp_client=HealthySpringAndModelscopeFakeMcpClient(),
     )
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -174,6 +184,7 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
 
 def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
     app = create_app(settings=make_settings(), mcp_client=FailingFakeMcpClient())
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -197,6 +208,7 @@ def test_lifespan_closes_thread_store() -> None:
     app = create_app(settings=make_settings())
     app.state.thread_store = store
     app.state.session_store = InMemorySessionStore()
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -216,6 +228,7 @@ def test_lifespan_closes_session_store() -> None:
     app = create_app(settings=make_settings())
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = store
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
