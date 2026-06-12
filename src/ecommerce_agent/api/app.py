@@ -67,7 +67,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.audit_store = getattr(
         app.state, "audit_store", None
     ) or MongoAuditStore.from_settings(settings)
-    for store in (app.state.user_store, app.state.login_session_store, app.state.audit_store):
+    for store in (
+        app.state.thread_store,
+        app.state.trace_store,
+        app.state.user_store,
+        app.state.login_session_store,
+        app.state.audit_store,
+    ):
         ensure = getattr(store, "ensure_indexes", None)
         if callable(ensure):
             await ensure()
@@ -121,6 +127,13 @@ async def _reap_loop(app: FastAPI) -> None:
         while True:
             await asyncio.sleep(60)
             await registry.reap_idle()
+            for store in (
+                getattr(app.state, "thread_store", None),
+                getattr(app.state, "trace_store", None),
+            ):
+                sweep = getattr(store, "sweep_expired", None)
+                if callable(sweep):
+                    await sweep()
     except asyncio.CancelledError:
         pass
 
