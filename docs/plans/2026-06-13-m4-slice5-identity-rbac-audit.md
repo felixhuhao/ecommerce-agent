@@ -4,7 +4,7 @@
 
 **Goal:** Add authenticated multi-operator identity, per-owner session isolation, role-based permissions (viewer/operator), end-to-end per-actor binding through Spring, a cross-session audit query API, and TTL-based retention.
 
-**Architecture:** A single actor-identity spine. Browser↔FastAPI is authenticated with an HttpOnly server-side session cookie (opaque id → Mongo `auth_sessions` → `users`). FastAPI↔Spring sends the authenticated user's `spring_user_id` as `X-User-Id` on every Spring path (MCP tools + approval REST), where existing `TrustedActorFilter`/`isSameActor` already bind and enforce ownership. RBAC routes through one `can(role, action)` map; viewer runtimes are shaped so they cannot create proposals. Audit search reads the existing thread-message store across sessions; retention bounds it via a Mongo TTL index.
+**Architecture:** A single actor-identity spine. Browser↔FastAPI is authenticated with an HttpOnly server-side session cookie (opaque id → Mongo `auth_sessions` → `users`). FastAPI↔Spring sends the authenticated user's `spring_user_id` as `X-User-Id` on every Spring path (MCP tools + approval REST), where existing `TrustedActorFilter`/`isSameActor` already bind and enforce ownership. RBAC routes through one `can(role, action)` map; viewer runtimes are shaped so they cannot create proposals. Audit search reads the existing thread-message store across sessions; retention bounds it via Mongo TTL indexes and equivalent in-memory sweeps.
 
 **Tech Stack:** Python 3.12, FastAPI, motor (MongoDB), Pydantic, `argon2-cffi` (password hashing), pytest (`asyncio_mode=auto`), React/TypeScript (frontend shell), Spring Boot (cross-repo test + doc only).
 
@@ -14,7 +14,9 @@
 - Stores are a `Protocol` + an `InMemory*` test double + a `Mongo*` source-of-truth, mirroring `sessions/store.py`.
 - API tests build a bare `FastAPI()`, set `app.state.*` to in-memory doubles, `app.include_router(...)`, and drive it with `TestClient` (see `tests/test_sessions_api.py`).
 - Run tests: `uv run pytest <path> -v`. Lint: `uv run ruff check <path>`.
-- Commit per task (TDD: failing test → run → implement → run → commit).
+- Commit per task (TDD: failing test → run → implement → run → commit). **Exception:** Tasks 7
+  and 8 are one atomic checkpoint because endpoint isolation depends on the new actor-bound runtime
+  signature; do not commit after Task 7 until Task 8 is green.
 
 **Deviation note (approved direction):** the spec says "passlib (argon2)". This plan uses **`argon2-cffi`** directly — passlib is effectively unmaintained and argon2-cffi is the backend it would wrap. The public API (`hash_password`/`verify_password`) is identical, so the spec intent (argon2, constant-time verify) holds.
 
@@ -38,14 +40,17 @@
 
 **Modified (Python)**
 - `src/ecommerce_agent/config.py` — auth/audit settings.
-- `src/ecommerce_agent/sessions/store.py` — `owner_id`.
+- `src/ecommerce_agent/sessions/store.py` — `owner_id`, legacy-owner backfill helper.
 - `src/ecommerce_agent/sessions/registry.py` — `RuntimeActor`, actor-bound create/rebuild, cached-owner check, `SessionRuntime.owner_id/spring_user_id`.
 - `src/ecommerce_agent/sessions/factory.py` — actor `spring_user_id` into MCP client; role-shaped specialist map; `RoutedSessionAgent` policy-deny.
 - `src/ecommerce_agent/api/sessions.py` — `current_actor` deps, ownership 403/404, actor wiring.
 - `src/ecommerce_agent/api/app.py` — wire stores + routers + cookie config.
-- `src/ecommerce_agent/threads/mongo.py` — `expire_at` + TTL index + audit indexes.
-- `src/ecommerce_agent/trace/mongo.py` — `expire_at` + TTL index.
-- `src/ecommerce_agent/cli.py` — `users add` seed command.
+- `src/ecommerce_agent/threads/store.py` / `threads/mongo.py` — in-memory retention sweep,
+  `expire_at` + TTL index + audit indexes.
+- `src/ecommerce_agent/trace/store.py` / `trace/mongo.py` — in-memory retention sweep,
+  `expire_at` + TTL index.
+- `src/ecommerce_agent/trace/capture.py`, `trace/projection.py` — policy-denial trace event.
+- `src/ecommerce_agent/cli.py` — `users add` seed command + legacy session-owner backfill command.
 - `pyproject.toml` — add `argon2-cffi`.
 
 **New tests**
@@ -773,9 +778,9 @@ from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
 
 
-async def _build():
+async def _build(*, auth_cookie_secure: bool = False):
     app = FastAPI()
-    app.state.settings = Settings(_env_file=None)
+    app.state.settings = Settings(_env_file=None, auth_cookie_secure=auth_cookie_secure)
     app.state.user_store = InMemoryUserStore()
     app.state.login_session_store = InMemoryLoginSessionStore()
     await app.state.user_store.create(
@@ -798,10 +803,19 @@ async def test_login_sets_cookie_and_me_returns_actor():
         resp = client.post("/api/auth/login", json={"username": "alice", "password": "pw"})
         assert resp.status_code == 200
         assert "ea_session" in resp.cookies
+        assert "Secure" not in resp.headers["set-cookie"]
         assert resp.json()["role"] == "operator"
         me = client.get("/api/auth/me")
         assert me.status_code == 200
         assert me.json()["username"] == "alice"
+
+
+async def test_login_secure_cookie_flag_is_configurable():
+    app = await _build(auth_cookie_secure=True)
+    with TestClient(app) as client:
+        resp = client.post("/api/auth/login", json={"username": "alice", "password": "pw"})
+        assert resp.status_code == 200
+        assert "Secure" in resp.headers["set-cookie"]
 
 
 async def test_login_bad_password_is_401_generic():
@@ -906,7 +920,7 @@ async def me(actor: Actor = Depends(current_actor)) -> dict:
 - [ ] **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_auth_api.py -v`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Wire stores + router into the app**
 
@@ -971,10 +985,15 @@ git commit -m "feat(auth): login/logout/me API and app wiring"
 
 ## Task 7: Session ownership + isolation enforcement
 
+> **Atomic checkpoint with Task 8:** Task 7 writes endpoint isolation code that calls the new
+> `RuntimeActor`/registry signatures. Keep this work in the worktree, continue directly to Task 8,
+> and commit only after the Task 8 verification command passes. Do not leave a committed red state.
+
 **Files:**
 - Modify: `src/ecommerce_agent/sessions/store.py`
 - Modify: `src/ecommerce_agent/api/sessions.py`
-- Test: `tests/test_session_store.py` (extend), `tests/test_session_isolation.py` (new)
+- Test: `tests/test_session_store.py` (extend), `tests/test_mongo_session_store.py` (update),
+  `tests/test_sessions_api.py` (update), `tests/test_session_isolation.py` (new)
 
 - [ ] **Step 1: Write the failing store tests**
 
@@ -992,21 +1011,37 @@ async def test_create_stamps_owner_and_list_filters_by_owner():
     assert alice == ["s1"]
     everyone = [r["session_id"] for r in await store.list_records()]
     assert set(everyone) == {"s1", "s2"}
+
+
+async def test_backfill_ownerless_sessions():
+    store = InMemorySessionStore()
+    await store.create("owned", owner_id="alice")
+    store._records["legacy"] = {
+        "session_id": "legacy",
+        "title": None,
+        "created_at": "2026-06-13T00:00:00+00:00",
+    }
+    count = await store.backfill_ownerless(owner_id="seed-operator")
+    assert count == 1
+    assert (await store.get("legacy"))["owner_id"] == "seed-operator"
+    assert (await store.get("owned"))["owner_id"] == "alice"
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `uv run pytest tests/test_session_store.py::test_create_stamps_owner_and_list_filters_by_owner -v`
-Expected: FAIL (`create()` takes no `owner_id`).
+Run: `uv run pytest tests/test_session_store.py -k "owner or backfill" -v`
+Expected: FAIL (`create()` takes no `owner_id`; `backfill_ownerless()` is missing).
 
 - [ ] **Step 3: Implement `owner_id` in the session store**
 
 In `src/ecommerce_agent/sessions/store.py`:
 
-Update the `SessionStore` Protocol `create` and `list_records` signatures:
+Update the `SessionStore` Protocol `create` and `list_records` signatures, and add a small
+backfill hook for legacy ownerless sessions:
 ```python
     async def create(self, session_id: str, *, owner_id: str) -> None: ...
     async def list_records(self, *, owner_id: str | None = None) -> list[dict[str, Any]]: ...
+    async def backfill_ownerless(self, *, owner_id: str) -> int: ...
 ```
 
 `InMemorySessionStore.create`:
@@ -1041,6 +1076,18 @@ Update the `SessionStore` Protocol `create` and `list_records` signatures:
         return records
 ```
 
+`InMemorySessionStore.backfill_ownerless`:
+```python
+    async def backfill_ownerless(self, *, owner_id: str) -> int:
+        count = 0
+        async with self._lock:
+            for record in self._records.values():
+                if record.get("owner_id") is None:
+                    record["owner_id"] = owner_id
+                    count += 1
+        return count
+```
+
 `MongoSessionStore.create`:
 ```python
     async def create(self, session_id: str, *, owner_id: str) -> None:
@@ -1059,6 +1106,16 @@ Update the `SessionStore` Protocol `create` and `list_records` signatures:
         return [self._to_record(doc) async for doc in cursor]
 ```
 
+`MongoSessionStore.backfill_ownerless`:
+```python
+    async def backfill_ownerless(self, *, owner_id: str) -> int:
+        result = await self._sessions.update_many(
+            {"owner_id": {"$exists": False}},
+            {"$set": {"owner_id": owner_id}},
+        )
+        return int(result.modified_count)
+```
+
 `MongoSessionStore._to_record` — add `owner_id`:
 ```python
     @staticmethod
@@ -1073,7 +1130,11 @@ Update the `SessionStore` Protocol `create` and `list_records` signatures:
 
 - [ ] **Step 4: Run to verify the store test passes**
 
-Run: `uv run pytest tests/test_session_store.py -v`
+Update existing session-store tests to pass `owner_id=...` to `create()` and update expected records for
+the new `owner_id` field. Then run:
+
+`uv run pytest tests/test_session_store.py tests/test_mongo_session_store.py -v`
+
 Expected: PASS.
 
 - [ ] **Step 5: Write the failing isolation tests**
@@ -1178,7 +1239,7 @@ async def test_user_cannot_see_or_access_other_users_session():
 - [ ] **Step 6: Run to verify failure**
 
 Run: `uv run pytest tests/test_session_isolation.py -v`
-Expected: FAIL (endpoints not yet auth/owner gated; `SessionRuntime`/`RuntimeActor`/registry signature not yet updated — these land in Task 8, so this test stays red until then). Note: this is the one cross-task red test; proceed to Task 8 to green it.
+Expected: FAIL (endpoints not yet auth/owner gated; `SessionRuntime`/`RuntimeActor`/registry signature not yet updated — these land in Task 8). Keep this as an uncommitted in-progress checkpoint and proceed to Task 8 to green it.
 
 - [ ] **Step 7: Add ownership enforcement to the session endpoints**
 
@@ -1246,6 +1307,12 @@ async def get_session(session_id: str, request: Request, actor: Actor = Depends(
     return {**record, "message_count": await request.app.state.thread_store.count_messages(session_id)}
 ```
 
+`approve_approval` / `reject_approval`: also add `actor: Actor = Depends(current_actor)` and replace
+`await _require_session(request, session_id)` with `await _require_owned_session(request, session_id, actor)`.
+Keep the old `_approval_client(request, session_id)` and `settings.spring_mcp_user_id` stamping for this
+task; Task 9 replaces those with the `APPROVE` gate and per-actor `X-User-Id`. This avoids an undefined
+`_require_session` window while keeping the authorization change staged.
+
 `post_message` — add the dep, owner check, pass the actor to the runtime, and stamp the real `actor_id`:
 ```python
 @router.post("/{session_id}/messages", status_code=status.HTTP_202_ACCEPTED)
@@ -1281,14 +1348,20 @@ async def post_message(
         await registry.end_turn(session_id)
         raise
 ```
-Then in the same function, change the user `ThreadMessage(... actor_id="operator" ...)` to `actor_id=actor.user_id`, and the `approval_client = _approval_client(request, session_id)` line to `approval_client = _approval_client(request, session_id, actor)` (see Task 9 for the helper signature change). Keep the rest of the function body unchanged.
+Then in the same function, change the user `ThreadMessage(... actor_id="operator" ...)` to
+`actor_id=actor.user_id`. Keep `approval_client = _approval_client(request, session_id)` unchanged for
+now; Task 9 changes it when the helper signature is updated. Keep the rest of the function body unchanged.
 
-- [ ] **Step 8: Commit (test still red until Task 8 lands the registry signature)**
+Update existing `tests/test_sessions_api.py` setup helpers to install `user_store` / `login_session_store`,
+create a default operator, log in, and create/store sessions with `owner_id`. Tests that intentionally
+exercise unauthenticated requests should assert 401; all other existing session endpoint tests should use
+an authenticated owner. Also update any non-live integration setup that calls `session_store.create(...)`
+without `owner_id`.
 
-```bash
-git add src/ecommerce_agent/sessions/store.py src/ecommerce_agent/api/sessions.py tests/test_session_store.py tests/test_session_isolation.py
-git commit -m "feat(sessions): owner_id + auth/ownership gating on session endpoints"
-```
+- [ ] **Step 8: Do not commit yet**
+
+Leave these changes unstaged or staged locally, then continue directly to Task 8. The commit happens at
+the end of Task 8 after `tests/test_session_isolation.py` is green.
 
 ---
 
@@ -1486,12 +1559,13 @@ def make_runtime_builder(settings: Settings):
 - [ ] **Step 7: Run factory + isolation tests**
 
 Update `tests/test_session_factory.py` call sites to pass a `RuntimeActor`. Then:
-Run: `uv run pytest tests/test_session_factory.py tests/test_runtime_actor.py tests/test_session_isolation.py -v`
+Run: `uv run pytest tests/test_session_factory.py tests/test_runtime_actor.py tests/test_session_isolation.py tests/test_sessions_api.py tests/test_mongo_session_store.py -v`
 Expected: PASS (isolation test from Task 7 now goes green).
 
 - [ ] **Step 8: Commit**
 
 ```bash
+git add src/ecommerce_agent/sessions/store.py src/ecommerce_agent/api/sessions.py tests/test_session_store.py tests/test_mongo_session_store.py tests/test_sessions_api.py tests/test_session_isolation.py
 git add src/ecommerce_agent/sessions/registry.py src/ecommerce_agent/sessions/factory.py src/ecommerce_agent/api/app.py tests/test_runtime_actor.py tests/test_session_registry.py tests/test_session_factory.py
 git commit -m "feat(sessions): actor-bound runtime with owner + spring_user_id"
 ```
@@ -1502,6 +1576,7 @@ git commit -m "feat(sessions): actor-bound runtime with owner + spring_user_id"
 
 **Files:**
 - Modify: `src/ecommerce_agent/api/sessions.py`
+- Modify: `src/ecommerce_agent/approvals.py`
 - Test: `tests/test_sessions_api.py` (update + add)
 
 - [ ] **Step 1: Write the failing test**
@@ -1542,7 +1617,8 @@ Expected: FAIL (`_approval_client` takes 2 args; doesn't pass `user_id`).
 
 - [ ] **Step 3: Implement**
 
-In `src/ecommerce_agent/api/sessions.py`, update `_approval_client` to accept the actor and thread its spring id:
+In `src/ecommerce_agent/api/sessions.py`, add/keep `require` in the auth dependency imports, then update
+`_approval_client` to accept the actor and thread its spring id:
 ```python
 def _approval_client(request: Request, session_id: str, actor: Actor) -> Any:
     factory = getattr(request.app.state, "approval_client_factory", None)
@@ -1567,7 +1643,13 @@ def make_approval_client(settings: Settings, *, session_id: str, user_id: str | 
     return ApprovalClient.from_settings(settings, session_id=session_id, user_id=user_id)
 ```
 
-Update `approve_approval` and `reject_approval` to depend on `current_actor`, owner-check, and pass the actor:
+Update `post_message` to use the per-actor approval client for approval-card fetches after
+`request_approval`:
+```python
+    approval_client = _approval_client(request, session_id, actor)
+```
+
+Update `approve_approval` and `reject_approval` to depend on `require(Action.APPROVE)`, owner-check, and pass the actor:
 ```python
 @router.post("/{session_id}/approvals/{approval_id}/approve")
 async def approve_approval(
@@ -1601,7 +1683,9 @@ git commit -m "feat(approvals): per-actor X-User-Id and APPROVE gate on approve/
 
 **Files:**
 - Modify: `src/ecommerce_agent/sessions/factory.py`
-- Test: `tests/test_role_shaped_runtime.py` (new)
+- Modify: `src/ecommerce_agent/trace/capture.py`
+- Modify: `src/ecommerce_agent/trace/projection.py`
+- Test: `tests/test_role_shaped_runtime.py` (new), `tests/test_session_turn.py` (extend)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1647,6 +1731,35 @@ async def test_router_denies_unavailable_specialist_without_delegating():
     kinds = [e["event"] for e in events]
     assert "on_policy_denied" in kinds
     assert any(e["event"] == "on_chat_model_stream" for e in events)  # a denial answer is streamed
+
+
+async def test_viewer_runtime_does_not_build_order_manager(monkeypatch):
+    import ecommerce_agent.sessions.factory as factory
+    from ecommerce_agent.config import Settings
+    from ecommerce_agent.sessions.registry import RuntimeActor
+
+    class _Mcp:
+        async def get_tools(self, server_name):
+            return []
+
+    monkeypatch.setattr(factory, "build_mcp_client", lambda *a, **k: _Mcp())
+    monkeypatch.setattr(factory, "build_session_sandbox", lambda *a, **k: object())
+    monkeypatch.setattr(factory, "get_primary_model", lambda settings: object())
+    monkeypatch.setattr(factory, "get_classifier_model", lambda settings: object())
+    monkeypatch.setattr(factory, "build_sales_analysis_staging_tool", lambda **k: object())
+    monkeypatch.setattr(factory, "build_sales_analyst", lambda *a, **k: _Spy("analyst"))
+
+    def fail_build_order_manager(*a, **k):
+        raise AssertionError("viewer runtime must not build order-manager")
+
+    monkeypatch.setattr(factory, "build_order_manager", fail_build_order_manager)
+
+    runtime = await factory.build_session_runtime(
+        "s1",
+        Settings(_env_file=None),
+        RuntimeActor(user_id="viewer", spring_user_id=9, can_propose=False),
+    )
+    assert "order-manager" not in runtime.agent.agents
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1668,7 +1781,7 @@ POLICY_DENIED_MESSAGE = (
 
 def build_role_shaped_agents(analyst_agent, order_manager_agent, *, can_propose: bool) -> dict[str, Any]:
     agents: dict[str, Any] = {"sales-analyst": analyst_agent}
-    if can_propose:
+    if can_propose and order_manager_agent is not None:
         agents["order-manager"] = order_manager_agent
     return agents
 ```
@@ -1691,7 +1804,19 @@ Update `RoutedSessionAgent.astream_events` so an unavailable specialist is denie
 ```
 Add `from types import SimpleNamespace` to the factory imports.
 
-In `build_session_runtime`, replace the hardcoded `agents={...}` with the role-shaped map:
+In `build_session_runtime`, do **not** build or expose order-manager capability for viewers:
+```python
+    order_manager_agent = None
+    if actor.can_propose:
+        order_manager_tools = filter_order_manager_tools(spring_all_tools)
+        order_manager_agent = build_order_manager(
+            model,
+            order_manager_tools=order_manager_tools,
+            backend=sandbox,
+        )
+```
+
+Then replace the hardcoded `agents={...}` with the role-shaped map:
 ```python
     routed_agent = RoutedSessionAgent(
         router=ClassifierRouter(get_classifier_model(settings), registry),
@@ -1700,15 +1825,49 @@ In `build_session_runtime`, replace the hardcoded `agents={...}` with the role-s
     )
 ```
 
-- [ ] **Step 4: Run to verify pass**
+This is stricter than merely removing `order-manager` from the routed map after construction: no viewer
+runtime should ever hold the `request_approval` tool.
 
-Run: `uv run pytest tests/test_role_shaped_runtime.py -v`
+- [ ] **Step 4: Preserve the policy denial in traces**
+
+Read `src/ecommerce_agent/trace/capture.py` and `trace/projection.py` before editing; the snippet below is
+the intended behavior and should be adapted to the actual local variable names and projection structure.
+Today `capture.py` uses `event_type`, `data`, `run_id`, and `record`, and `projection.py` has a
+`_SPAN_EVENT_TYPES` set.
+
+In `src/ecommerce_agent/trace/capture.py`, map the raw policy-denial event:
+```python
+    if event_type == "on_policy_denied":
+        info = data if isinstance(data, dict) else {}
+        specialist = info.get("specialist")
+        reason = info.get("reason", "role_not_permitted")
+        run = str(run_id) if run_id is not None else f"{record.trace_id}:policy_denied"
+        return TraceEvent(
+            event_type="policy_denial",
+            name=specialist,
+            phase="end",
+            status="denied",
+            trace_id=record.trace_id,
+            run_id=run,
+            result_summary=str(reason),
+        )
+```
+
+In `src/ecommerce_agent/trace/projection.py`, add `"policy_denial"` to `_SPAN_EVENT_TYPES` so the UI/export
+timeline includes the authorization decision.
+
+Add a `tests/test_session_turn.py` assertion that a denied turn appends the denial answer and that
+`record.events` contains a `policy_denial` event with `name == "order-manager"` and `status == "denied"`.
+
+- [ ] **Step 5: Run to verify pass**
+
+Run: `uv run pytest tests/test_role_shaped_runtime.py tests/test_session_turn.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/ecommerce_agent/sessions/factory.py tests/test_role_shaped_runtime.py
+git add src/ecommerce_agent/sessions/factory.py src/ecommerce_agent/trace/capture.py src/ecommerce_agent/trace/projection.py tests/test_role_shaped_runtime.py tests/test_session_turn.py
 git commit -m "feat(sessions): role-shaped runtime; deny write specialist for non-proposers"
 ```
 
@@ -1977,7 +2136,9 @@ git commit -m "feat(audit): operator-only cross-session audit query API"
 ## Task 12: Retention (TTL index + expire_at on threads and traces)
 
 **Files:**
+- Modify: `src/ecommerce_agent/threads/store.py`
 - Modify: `src/ecommerce_agent/threads/mongo.py`
+- Modify: `src/ecommerce_agent/trace/store.py`
 - Modify: `src/ecommerce_agent/trace/mongo.py`
 - Modify: `src/ecommerce_agent/api/app.py`
 - Test: `tests/test_retention.py` (new)
@@ -2025,14 +2186,71 @@ async def test_ensure_indexes_creates_ttl_index():
     await store.ensure_indexes()
     ttl = [(a, k) for (a, k) in messages.indexes if k.get("expireAfterSeconds") == 0]
     assert any(a == ("expire_at",) for a, _ in ttl)
+
+
+async def test_in_memory_thread_sweep_removes_expired_messages():
+    from datetime import timedelta
+
+    from ecommerce_agent.threads.store import InMemoryThreadStore
+
+    now = datetime(2026, 6, 13, tzinfo=UTC)
+    store = InMemoryThreadStore(retention_days=1, now=lambda: now)
+    await store.append(
+        ThreadMessage(
+            session_id="s1",
+            type="user",
+            content="old",
+            created_at=(now - timedelta(days=2)).isoformat(),
+        )
+    )
+    await store.append(ThreadMessage(session_id="s1", type="user", content="fresh", created_at=now.isoformat()))
+    assert await store.sweep_expired() == 1
+    assert [m.content for m in await store.list_messages("s1")] == ["fresh"]
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
 Run: `uv run pytest tests/test_retention.py -v`
-Expected: FAIL (`MongoThreadStore.__init__` has no `retention_days`; no `expire_at`; no `ensure_indexes`).
+Expected: FAIL (`MongoThreadStore.__init__` has no `retention_days`; no `expire_at`; no `ensure_indexes`; in-memory stores have no `sweep_expired`).
 
 - [ ] **Step 3: Implement retention in the thread store**
+
+In `src/ecommerce_agent/threads/store.py`, add imports for `Callable`, `UTC`, `datetime`, and `timedelta`,
+then add equivalent in-memory retention so tests and local non-Mongo runs follow the same policy:
+```python
+def _parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+class InMemoryThreadStore:
+    def __init__(
+        self,
+        *,
+        retention_days: int = 90,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._messages: dict[str, list[ThreadMessage]] = defaultdict(list)
+        self._lock = asyncio.Lock()
+        self._retention_days = retention_days
+        self._now = now
+
+    async def sweep_expired(self) -> int:
+        cutoff = self._now() - timedelta(days=self._retention_days)
+        removed = 0
+        async with self._lock:
+            for session_id, messages in list(self._messages.items()):
+                kept = [m for m in messages if _parse_iso(m.created_at) >= cutoff]
+                removed += len(messages) - len(kept)
+                if kept:
+                    self._messages[session_id] = kept
+                else:
+                    self._messages.pop(session_id, None)
+        return removed
+```
+
+Merge these additions into the existing `InMemoryThreadStore`; do not replace the current
+`append`/`list_messages`/`latest_message`/`count_messages`/`ping` methods. The new constructor kwargs are
+keyword-only with defaults so existing `InMemoryThreadStore()` call sites remain valid.
 
 In `src/ecommerce_agent/threads/mongo.py`:
 
@@ -2086,11 +2304,16 @@ Constructor + `from_settings`:
 
 - [ ] **Step 4: Apply the same pattern to the trace store**
 
+In `src/ecommerce_agent/trace/store.py`: add `retention_days`, `now`, and `sweep_expired()` to
+`InMemoryTraceStore`. Use each record's `ended_at or started_at` epoch timestamp and remove records older
+than `(now() - timedelta(days=retention_days)).timestamp()`. Add a test mirroring the thread-store sweep
+test.
+
 In `src/ecommerce_agent/trace/mongo.py`: add `retention_days` to `__init__`/`from_settings`, set `expire_at = datetime.now(UTC) + timedelta(days=self._retention_days)` on the persisted doc in `save`, add `ensure_indexes` creating the `expire_at` TTL index, and strip `expire_at` when reconstructing the `TraceRecord`. (Mirror the thread-store edits; read the file first to match its exact `save`/`get` shape.)
 
 - [ ] **Step 5: Wire `ensure_indexes` in the app**
 
-In `src/ecommerce_agent/api/app.py` `lifespan`, after the stores are constructed, call `ensure_indexes()` on `thread_store` and `trace_store` if present (same `getattr`-callable guard used for the auth stores).
+In `src/ecommerce_agent/api/app.py` `lifespan`, after the stores are constructed, call `ensure_indexes()` on `thread_store` and `trace_store` if present (same `getattr`-callable guard used for the auth stores). In `_reap_loop`, after `registry.reap_idle()`, call `sweep_expired()` on `thread_store` and `trace_store` if present so the in-memory path is bounded too.
 
 - [ ] **Step 6: Run to verify pass**
 
@@ -2100,13 +2323,13 @@ Expected: PASS (update the existing Mongo store tests for the new constructor kw
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/ecommerce_agent/threads/mongo.py src/ecommerce_agent/trace/mongo.py src/ecommerce_agent/api/app.py tests/test_retention.py tests/test_mongo_thread_store.py tests/test_mongo_trace_store.py
+git add src/ecommerce_agent/threads/store.py src/ecommerce_agent/threads/mongo.py src/ecommerce_agent/trace/store.py src/ecommerce_agent/trace/mongo.py src/ecommerce_agent/api/app.py tests/test_retention.py tests/test_mongo_thread_store.py tests/test_mongo_trace_store.py
 git commit -m "feat(retention): expire_at TTL index on thread messages and traces"
 ```
 
 ---
 
-## Task 13: CLI `users add` seed command
+## Task 13: CLI `users add` seed command + legacy session backfill
 
 **Files:**
 - Modify: `src/ecommerce_agent/cli.py`
@@ -2126,6 +2349,14 @@ def test_users_add_parser():
     assert args.username == "alice"
     assert args.role == "operator"
     assert args.spring_user_id == 7
+
+
+def test_sessions_backfill_owner_parser():
+    parser = build_parser()
+    args = parser.parse_args(["sessions", "backfill-owner", "--owner-id", "seed-operator"])
+    assert args.command == "sessions"
+    assert args.sessions_command == "backfill-owner"
+    assert args.owner_id == "seed-operator"
 
 
 def test_users_add_creates_user(monkeypatch):
@@ -2158,12 +2389,38 @@ def test_users_add_creates_user(monkeypatch):
     assert created["user"].role == "operator"
     assert created["user"].spring_user_id == 7
     assert created["user"].password_hash.startswith("$argon2")
+
+
+def test_sessions_backfill_owner_updates_ownerless_sessions(monkeypatch):
+    import ecommerce_agent.cli as cli
+
+    called = {}
+
+    class _Store:
+        @classmethod
+        def from_settings(cls, settings):
+            return cls()
+
+        async def backfill_ownerless(self, *, owner_id):
+            called["owner_id"] = owner_id
+            return 3
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cli, "MongoSessionStore", _Store, raising=False)
+
+    parser = build_parser()
+    args = parser.parse_args(["sessions", "backfill-owner", "--owner-id", "seed-operator"])
+    args.func(args)
+
+    assert called == {"owner_id": "seed-operator"}
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `uv run pytest tests/test_cli.py -k users -v`
-Expected: FAIL (no `users` subcommand).
+Run: `uv run pytest tests/test_cli.py -k "users or sessions_backfill" -v`
+Expected: FAIL (no `users` / `sessions backfill-owner` subcommands).
 
 - [ ] **Step 3: Implement**
 
@@ -2176,6 +2433,7 @@ import uuid
 from datetime import UTC, datetime
 
 from ecommerce_agent.auth.users_store import MongoUserStore
+from ecommerce_agent.sessions.store import MongoSessionStore
 ```
 
 In `build_parser`, after the `eval_parser` block:
@@ -2187,6 +2445,15 @@ In `build_parser`, after the `eval_parser` block:
     add_parser.add_argument("--role", required=True, choices=["viewer", "operator"])
     add_parser.add_argument("--spring-user-id", dest="spring_user_id", type=int, required=True)
     add_parser.set_defaults(func=run_users_command)
+
+    sessions_parser = subparsers.add_parser("sessions", help="Manage conversation sessions")
+    sessions_sub = sessions_parser.add_subparsers(dest="sessions_command", required=True)
+    backfill_parser = sessions_sub.add_parser(
+        "backfill-owner",
+        help="Assign an owner to legacy sessions with no owner_id",
+    )
+    backfill_parser.add_argument("--owner-id", required=True)
+    backfill_parser.set_defaults(func=run_sessions_command)
 ```
 
 Add the command + helper:
@@ -2224,6 +2491,28 @@ def run_users_command(args: argparse.Namespace) -> None:
     print(f"created user {user.username} ({user.role})")
 ```
 
+Add the legacy backfill command:
+```python
+def run_sessions_command(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from ecommerce_agent.config import get_settings
+
+    if args.sessions_command != "backfill-owner":
+        raise ValueError(f"unsupported sessions command: {args.sessions_command}")
+
+    store = MongoSessionStore.from_settings(get_settings())
+
+    async def _run() -> int:
+        return await store.backfill_ownerless(owner_id=args.owner_id)
+
+    try:
+        count = asyncio.run(_run())
+    finally:
+        store.close()
+    print(f"backfilled {count} legacy sessions to owner {args.owner_id}")
+```
+
 - [ ] **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_cli.py -v`
@@ -2233,7 +2522,7 @@ Expected: PASS.
 
 ```bash
 git add src/ecommerce_agent/cli.py tests/test_cli.py
-git commit -m "feat(cli): users add seed command"
+git commit -m "feat(cli): users add and legacy session-owner backfill"
 ```
 
 ---
@@ -2243,7 +2532,7 @@ git commit -m "feat(cli): users add seed command"
 **Files:**
 - Modify: `frontend/src/api/client.ts`
 - Modify: `frontend/src/App.tsx` (+ a small `Login` component)
-- Test: `frontend/src/__tests__/auth.test.tsx` (path follows the existing frontend test convention)
+- Test: `frontend/src/App.auth.test.tsx` (co-located with the existing frontend tests)
 
 > **Before starting:** read `frontend/src/api/client.ts` and `frontend/src/App.tsx` to match the existing fetch helper, React Query setup, and test framework (Vitest/RTL vs. Jest). The snippets below are the required behavior; adapt to the established patterns rather than introducing new ones. Run the frontend suite with the project's existing command (check `frontend/package.json` `scripts.test`).
 
@@ -2285,9 +2574,9 @@ export async function logout(): Promise<void> {
 - [ ] **Step 2: Write the failing test**
 
 ```tsx
-// frontend/src/__tests__/auth.test.tsx  (adapt import paths/framework to the project)
+// frontend/src/App.auth.test.tsx
 import { render, screen, waitFor } from "@testing-library/react";
-import App from "../App";
+import { App } from "./App";
 
 beforeEach(() => {
   globalThis.fetch = vi.fn(async (url: string) => {
@@ -2319,7 +2608,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/api/client.ts frontend/src/App.tsx frontend/src/__tests__/auth.test.tsx
+git add frontend/src/api/client.ts frontend/src/App.tsx frontend/src/App.auth.test.tsx
 git commit -m "feat(frontend): minimal auth shell (login/logout/me, 401 recovery)"
 ```
 
@@ -2390,11 +2679,15 @@ git commit -m "test(m4): slice 5 full-suite verification fixups"
 ## Self-Review (completed during planning)
 
 **Spec coverage:**
-- §2.1 browser↔FastAPI auth → Tasks 1–6. §2.2/§5 per-actor `X-User-Id` (MCP + REST) → Tasks 8, 9. §2.3/§5.1 role-shaped runtime → Task 10. §3.1–3.5 models/passwords/stores/permissions → Tasks 1–3. §3.6 deps + router → Tasks 5–6. §3.7 frontend shell → Task 14. §4 isolation → Tasks 7–8. §6 audit API → Task 11. §7 retention → Task 12. §8 cross-repo → Task 15. §9 CLI → Task 13. §10 error handling (401/403/404, generic login) → Tasks 5, 6, 7, 9. §11 risks (migration/backfill) → seeding via Task 13; backfill noted below.
-- **Migration backfill (R-B):** seed an operator via `users add` (Task 13). Legacy ownerless sessions: not auto-migrated by a task — they simply won't match any owner and become inaccessible (the spec's accepted default alternative). If backfill-to-seed-owner is preferred at execution time, add a one-off script before go-live; flagged here so it isn't silently dropped.
+- §2.1 browser↔FastAPI auth → Tasks 1–6. §2.2/§5 per-actor `X-User-Id` (MCP + REST) → Tasks 8, 9. §2.3/§5.1 role-shaped runtime → Task 10. §3.1–3.5 models/passwords/stores/permissions → Tasks 1–3. §3.6 deps + router → Tasks 5–6. §3.7 frontend shell → Task 14. §4 isolation → Tasks 7–8. §6 audit API → Task 11. §7 retention → Task 12 (Mongo TTL + in-memory sweep). §8 cross-repo → Task 15. §9 CLI → Task 13. §10 error handling (401/403/404, generic login) → Tasks 5, 6, 7, 9. §11 risks (migration/backfill) → seed + backfill commands in Task 13.
+- **Migration backfill (R-B):** seed an operator via `users add` (Task 13), then run
+  `sessions backfill-owner --owner-id <seed-user-id>` to assign ownerless legacy sessions before auth gates
+  make them inaccessible. The store-level `backfill_ownerless()` hook lands with `owner_id` in Task 7.
 
 **Placeholder scan:** no TBD/TODO; code shown for every code step. Frontend (Task 14) and Java (Task 15) steps describe required behavior with concrete snippets but defer to the existing project patterns by design (their exact frameworks/helpers must be read first) — these are the two tasks an executor should open the target files for before writing.
 
 **Type consistency:** `RuntimeActor(user_id, spring_user_id, can_propose)`, `Actor(user_id, username, role, spring_user_id)`, `User(... spring_user_id, created_at)`, `AuditQuery(actor_id, approval_id, session_id, type, since, until, limit)`, `can(role, action)`, `_approval_client(request, session_id, actor)`, `make_approval_client(settings, *, session_id, user_id=None)`, `build_session_runtime(session_id, settings, actor)`, `SessionRegistry.create(actor)` / `get_or_create_runtime(session_id, actor, session_known)` are used consistently across tasks.
 
-**Known cross-task red:** `tests/test_session_isolation.py` (Task 7) depends on the registry/runtime signature from Task 8 and stays red until Task 8 lands — called out in Task 7 Step 6.
+**Atomic checkpoint:** `tests/test_session_isolation.py` (Task 7) depends on the registry/runtime signature
+from Task 8 and stays red while Tasks 7/8 are in progress. The plan explicitly forbids committing after
+Task 7; the first commit for that work happens after Task 8 verification passes.
