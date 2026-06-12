@@ -121,6 +121,8 @@ def fired_tools(record: TraceRecord) -> list[str]:
     for event in record.events:
         if event.event_type != "tool_call" or event.phase != "start" or not event.name:
             continue
+        # The report shows each fired tool once, in first-seen order; repeated calls
+        # should not make a failed strategy look larger than it is.
         if event.name not in names:
             names.append(event.name)
     return names

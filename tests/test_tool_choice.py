@@ -90,6 +90,21 @@ def test_score_case_marks_post_choice_and_pre_choice_errors() -> None:
     assert pre_choice.errored_before_choice is True
 
 
+def test_score_case_raised_with_expected_and_forbidden_is_plain_failure() -> None:
+    forecast = _case(STAGE_SALES_ANALYSIS_TOOL_NAME, [GET_STATISTICS_TOOL], ["forecast"])
+
+    result = score_case(
+        _record_with_tools(STAGE_SALES_ANALYSIS_TOOL_NAME, GET_STATISTICS_TOOL),
+        forecast,
+        raised=True,
+    )
+
+    assert result.passed is False
+    assert result.raised is True
+    assert result.post_choice_error is False
+    assert result.errored_before_choice is False
+
+
 def test_aggregate_reports_accuracy_and_authority_miss_rate() -> None:
     results = [
         score_case(
