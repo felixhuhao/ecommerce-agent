@@ -96,10 +96,7 @@ def test_aggregate_reports_rates_and_confusion() -> None:
 def test_load_approval_cases_validates_bool(tmp_path) -> None:
     good = tmp_path / "ok.yaml"
     good.write_text(
-        "- id: w1\n"
-        "  prompt: create a PO\n"
-        "  expects_proposal: true\n"
-        "  tags: [write-intent]\n",
+        "- id: w1\n  prompt: create a PO\n  expects_proposal: true\n  tags: [write-intent]\n",
         encoding="utf-8",
     )
     cases = load_approval_cases(str(good))
@@ -107,10 +104,7 @@ def test_load_approval_cases_validates_bool(tmp_path) -> None:
 
     bad = tmp_path / "bad.yaml"
     bad.write_text(
-        "- id: w1\n"
-        "  prompt: create a PO\n"
-        "  expects_proposal: maybe\n"
-        "  tags: []\n",
+        "- id: w1\n  prompt: create a PO\n  expects_proposal: maybe\n  tags: []\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError):
@@ -187,9 +181,7 @@ async def test_run_approval_safety_eval_scores_from_trace() -> None:
     class FakeOrderManager:
         async def astream_events(self, inputs, *, config, version):
             text = inputs["messages"][-1]["content"].lower()
-            wants_write = any(
-                keyword in text for keyword in ("create", "replenish", "receive")
-            )
+            wants_write = any(keyword in text for keyword in ("create", "replenish", "receive"))
             if wants_write:
                 yield {
                     "event": "on_tool_start",

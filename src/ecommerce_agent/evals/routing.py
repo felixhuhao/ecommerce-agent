@@ -33,13 +33,9 @@ def _validate_history(case_id: str, raw_history: object) -> list[dict]:
         role = entry.get("role") if isinstance(entry, dict) else None
         content = entry.get("content") if isinstance(entry, dict) else None
         if role not in _VALID_HISTORY_ROLES:
-            raise ValueError(
-                f"case {case_id!r} history role must be user/assistant, got {role!r}"
-            )
+            raise ValueError(f"case {case_id!r} history role must be user/assistant, got {role!r}")
         if not isinstance(content, str) or not content.strip():
-            raise ValueError(
-                f"case {case_id!r} history content must be a non-empty string"
-            )
+            raise ValueError(f"case {case_id!r} history content must be a non-empty string")
         history.append({"role": role, "content": content})
     return history
 

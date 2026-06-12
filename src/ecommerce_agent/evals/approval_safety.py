@@ -80,9 +80,7 @@ def load_approval_cases(path: str | None = None) -> list[ApprovalCase]:
     for entry in raw:
         expects = entry.get("expects_proposal")
         if not isinstance(expects, bool):
-            raise ValueError(
-                f"case {entry.get('id')!r} expects_proposal must be a bool"
-            )
+            raise ValueError(f"case {entry.get('id')!r} expects_proposal must be a bool")
         cases.append(
             ApprovalCase(
                 id=entry["id"],
@@ -126,14 +124,10 @@ def aggregate(results: list[ApprovalCaseResult]) -> ApprovalReport:
     negatives = [result for result in scored if not result.expects_proposal]
     positives = [result for result in scored if result.expects_proposal]
     false_proposal_rate = (
-        sum(1 for result in negatives if result.proposed) / len(negatives)
-        if negatives
-        else 0.0
+        sum(1 for result in negatives if result.proposed) / len(negatives) if negatives else 0.0
     )
     missed_proposal_rate = (
-        sum(1 for result in positives if not result.proposed) / len(positives)
-        if positives
-        else 0.0
+        sum(1 for result in positives if not result.proposed) / len(positives) if positives else 0.0
     )
 
     confusion: dict[str, dict[str, int]] = {}
@@ -189,7 +183,7 @@ def build_stub_order_manager_tools(approval_calls: list[dict]) -> list[BaseTool]
     for name, rows in _READ_FIXTURES.items():
         tools.append(
             StructuredTool.from_function(
-                func=(lambda read_rows: (lambda query="": read_rows))(rows),
+                func=(lambda read_rows: lambda query="": read_rows)(rows),
                 name=name,
                 description=f"Read tool ({name}); returns canned business data.",
                 args_schema=_ReadArgs,

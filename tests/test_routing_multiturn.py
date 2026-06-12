@@ -43,15 +43,11 @@ class _ContextAwareStub:
 
 @pytest.mark.asyncio
 async def test_context_aware_beats_latest_only_offline() -> None:
-    cases = [
-        c for c in load_routing_cases(_MT_PATH) if c.expected == "order-manager"
-    ]
+    cases = [c for c in load_routing_cases(_MT_PATH) if c.expected == "order-manager"]
     assert cases, "expected at least one order-manager multi-turn case"
     stub = _ContextAwareStub()
 
-    baseline = await run_routing_eval(
-        LatestMessageRouter(stub), cases, router_name="latest-only"
-    )
+    baseline = await run_routing_eval(LatestMessageRouter(stub), cases, router_name="latest-only")
     candidate = await run_routing_eval(stub, cases, router_name="context-aware")
     delta = compare(baseline, candidate)
 
