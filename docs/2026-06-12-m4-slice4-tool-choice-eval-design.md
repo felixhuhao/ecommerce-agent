@@ -27,7 +27,7 @@ lookups. This slice measures adherence to that contract.
 
 **In scope**
 - A tool-choice dataset of analyst asks, each labeled with an expected tool and forbidden tools.
-- A scorer over the turn trace, an aggregating report (headline `aggregate_recompute_rate`), a loader.
+- A scorer over the turn trace, an aggregating report (headline `aggregate_authority_miss_rate`), a loader.
 - A stub-tool sales-analyst harness (real model, `backend=None`) and a runner with precise
   error semantics (fail-before-choice vs. pass-after-choice).
 - A RUN_LIVE_LLM behavioral gate + an `eval tool-choice` CLI subcommand.
@@ -77,10 +77,20 @@ Case families and their contract (from the `sales_analyst` prompt):
 | forecast | `stage_sales_analysis_inputs` | `[get_statistics]` |
 | lookup | a read tool (e.g. `product_query`) | `[get_statistics, stage_sales_analysis_inputs]` |
 
-**Headline metric — `aggregate_recompute_rate`:** among `aggregate`-tagged cases, the fraction where a
-forbidden tool fired (i.e. the analyst recomputed a backend aggregate in the sandbox instead of calling
-`get_statistics`). This is the R9 wrong-direction, mirroring slice 3's `false_proposal_rate`. The live
-safety gate is `aggregate_recompute_rate == 0`.
+**Headline metric — `aggregate_authority_miss_rate`:** among `aggregate`-tagged cases, the fraction
+where **`get_statistics` did not fire**. This is the R9 gate, mirroring slice 3's `false_proposal_rate`,
+and it is deliberately *broader* than "recomputed in the sandbox": the analyst can produce confidently
+wrong numbers without ever touching the staging tool — by calling raw reads (`order_query`,
+`product_query`, `inventory_query`) and self-computing in the final answer. Keying the metric on the
+**absence of the authoritative tool** catches *every* bypass (sandbox, raw-read self-compute, or no tool
+at all), where a `forbidden`-only metric would miss the raw-read path. The live safety gate is
+`aggregate_authority_miss_rate == 0` — every aggregate ask must consult `get_statistics`.
+
+(The pass/fail in §4 still keeps `forbidden_tools = [stage_sales_analysis_inputs]` on aggregate cases,
+so "called `get_statistics` *and* also recomputed in the sandbox" still fails case accuracy; we do
+**not** add raw reads to `forbidden_tools` — a read to resolve a SKU before `get_statistics` is
+legitimate, so forbidding raw reads would false-fail. The authority-miss headline, not a forbidden
+list, is what guards the raw-read bypass.)
 
 ## 5. Components
 
@@ -113,22 +123,35 @@ each case carries exactly one family tag.
 
 Build the real analyst via
 `build_sales_analyst(get_primary_model(settings), spring_read_tools=<stubs>, staging_tools=<stub>,
-viz_tools=[], backend=None)`:
-- `get_statistics` stub → canned aggregate payload (e.g. `{"sales_by_category": [...], "total": ...}`).
-- `stage_sales_analysis_inputs` stub → canned file-path metadata (the real tool's shape), recording the
-  call. No sandbox is run.
-- read-tool stubs (`product_query`, `supplier_query`, `inventory_query`, …) → canned rows.
-- stub names mirror the real Spring/staging tools; arg schemas are local Pydantic models (slice-3
-  pattern). `viz_tools=[]`, `backend=None`.
+viz_tools=[], backend=None)`. **Tool descriptions and schemas strongly influence tool choice, so stub
+fidelity is load-bearing here** — a stub whose description differs from production would measure the
+stub surface, not the agent. Requirements:
+
+- **Staging stub — reuse the real artifacts, do not re-invent.** The real staging tool lives in
+  [tools/staging.py](../src/ecommerce_agent/tools/staging.py). The stub **must** reuse
+  `STAGE_SALES_ANALYSIS_TOOL_NAME`, the real `StageSalesAnalysisInput` args schema, and the real
+  description verbatim. To make the description shareable, **extract it from `staging.py` into a module
+  constant `STAGE_SALES_ANALYSIS_DESCRIPTION`** and have both the real tool and the stub reference it
+  (small refactor, no behavior change). The stub's coroutine returns a canned dict matching the real
+  tool's return shape (the `{order_count, product_count, ..., note}` metadata) without running a sandbox.
+- **`get_statistics` stub** → canned aggregate payload (e.g. `{"sales_by_category": [...], "total": ...}`).
+- **Spring read-tool stubs** (`get_statistics`, `product_query`, `supplier_query`, `inventory_query`,
+  …) → canned rows. The repo has no local copy of the real Spring schemas/descriptions (they arrive via
+  MCP at runtime), so these stubs pin **realistic, non-trivial descriptions and local Pydantic schemas**,
+  asserted in tests. A live-MCP description/schema comparison (assert stubs still match deployed Spring
+  tools) is a reserved later check (same posture as slice 3's R-B), not built here.
+- `viz_tools=[]`, `backend=None`.
 
 A `build_stub_sales_analyst_tools()` builder returns the tool list (offline-testable); a thin
 `build_stub_sales_analyst(settings)` wires it onto the real model (live only).
 
 ### 5.3 Runner — precise error semantics
 
-Per case, run one turn through `capture()` into a `TraceRecord`, **catching any exception but keeping
-the partially-captured record** (do not discard on error — unlike slice 3's approval-safety runner).
-Then score from `fired_tools` (start events) per §4, and classify:
+Per case, run one turn through `capture()` into a `TraceRecord` at a **live-friendly
+`DEFAULT_RECURSION_LIMIT = 50`** (carry slice 3's live lesson — a forecast case with `backend=None` can
+loop/retry around the missing sandbox step, and too low a limit can make it fail *before* the decisive
+call). Catch any exception but **keep the partially-captured record** (do not discard on error — unlike
+slice 3's approval-safety runner). Then score from `fired_tools` (start events) per §4, and classify:
 
 - **No raise:** score normally.
 - **Raised after the decisive correct call** (`expected_tool in fired_tools` and forbidden absent) →
@@ -162,7 +185,7 @@ class ToolChoiceReport:
     accuracy: float
     per_tag_accuracy: dict[str, float]
     per_expected_tool_accuracy: dict[str, float]
-    aggregate_recompute_rate: float        # headline R9 metric (aggregate subset)
+    aggregate_authority_miss_rate: float   # headline R9 metric: aggregate cases w/o get_statistics
     post_choice_errors: int                # diagnostic; these still passed
     errors_before_choice: int              # genuine failures from early errors
     cases: list[ToolChoiceCaseResult]
@@ -173,7 +196,7 @@ Persisted to JSONL via `run_metadata(settings, prompt_name="sales_analyst")` + t
 ### 5.5 CLI
 
 Extend the `eval` subcommand: `eval tool-choice` builds the stub analyst and prints accuracy,
-`aggregate_recompute_rate`, and per-tag accuracy — mirroring `eval routing` / `eval approval-safety`.
+`aggregate_authority_miss_rate`, and per-tag accuracy — mirroring `eval routing` / `eval approval-safety`.
 Ships this slice.
 
 ## 6. Data flow
@@ -195,16 +218,20 @@ choice is observed regardless of whether a forecast turn's sandbox phase runs.
   expected/forbidden; the three families; the post-choice-error path (a record with the correct start
   event + a simulated raise → pass + `post_choice_error`); the pre-choice-error path (raise, no
   decisive start event → fail + `errored_before_choice`).
-- **Offline report:** aggregation incl. `aggregate_recompute_rate`, `per_expected_tool_accuracy`,
+- **Offline report:** aggregation incl. `aggregate_authority_miss_rate`, `per_expected_tool_accuracy`,
   `post_choice_errors`, `errors_before_choice`.
 - **Offline loader:** valid dataset loads, balanced families; malformed entry raises.
 - **Offline harness construction:** `build_stub_sales_analyst` wires `backend=None` and a tool set
   including `get_statistics` and `stage_sales_analysis_inputs` (monkeypatched model/builder — no model
   built, no `create_deep_agent`).
+- **Offline stub fidelity:** the staging stub reuses `STAGE_SALES_ANALYSIS_TOOL_NAME`,
+  `StageSalesAnalysisInput`, and `STAGE_SALES_ANALYSIS_DESCRIPTION` verbatim (assert the stub's `.name`,
+  `.args_schema`, and `.description` equal the real tool's); Spring stub descriptions are non-trivial
+  (asserted non-empty / above a length floor).
 - **Offline runner:** a fake analyst that (a) calls `get_statistics` then ends, (b) calls staging then
   raises, (c) raises immediately → asserts pass / pass+post_choice_error / fail+errored_before_choice.
 - **Offline CLI dispatch:** monkeypatched `eval tool-choice` runs the branch and prints the report.
-- **Live (RUN_LIVE_LLM):** run the analyst over the dataset; assert `aggregate_recompute_rate == 0`
+- **Live (RUN_LIVE_LLM):** run the analyst over the dataset; assert `aggregate_authority_miss_rate == 0`
   (safety gate) and overall accuracy ≥ 0.80 (advisory); persist a baseline line.
 
 ## 9. File structure
@@ -216,6 +243,8 @@ choice is observed regardless of whether a forecast turn's sandbox phase runs.
 - `tests/integration/test_tool_choice_live.py`
 
 **Modified**
+- `src/ecommerce_agent/tools/staging.py` (extract `STAGE_SALES_ANALYSIS_DESCRIPTION` constant so the
+  real tool and the eval stub share one description — no behavior change)
 - `src/ecommerce_agent/cli.py` (`eval tool-choice` subcommand)
 - `tests/test_cli.py` (parser + dispatch coverage)
 
@@ -227,18 +256,22 @@ choice is observed regardless of whether a forecast turn's sandbox phase runs.
    fired and no forbidden tool fired.
 3. Runner error semantics: a pre-choice error is a failure (`errored_before_choice`); a post-choice
    error still passes (`post_choice_error` flag); the batch never aborts and the trace is kept on error.
-4. `ToolChoiceReport` emits accuracy, per-tag and per-expected-tool accuracy, `aggregate_recompute_rate`,
-   `post_choice_errors`, and `errors_before_choice`, persisting a JSON-safe baseline line.
+4. `ToolChoiceReport` emits accuracy, per-tag and per-expected-tool accuracy, `aggregate_authority_miss_rate`
+   (aggregate cases where `get_statistics` did not fire), `post_choice_errors`, and
+   `errors_before_choice`, persisting a JSON-safe baseline line.
 5. The behavioral eval runs the analyst with stub tools + real model, `backend=None`, no Docker, no
-   Spring.
-6. RUN_LIVE_LLM: `aggregate_recompute_rate == 0` and overall accuracy ≥ 0.80.
+   Spring, at `DEFAULT_RECURSION_LIMIT = 50`. The staging stub reuses the real tool's name, args schema,
+   and description.
+6. RUN_LIVE_LLM: `aggregate_authority_miss_rate == 0` and overall accuracy ≥ 0.80.
 7. `eval tool-choice` CLI subcommand ships. No runtime/agent/prompt change. Groundedness absent.
 
 ## 11. Risks & open decisions
 
-- **R-A: stub-tool fidelity.** If stub names/schemas drift from the real tools, the analyst may not
-  invoke them, skewing the choice signal. Mitigation: mirror real names; local Pydantic schemas; the
-  construction test pins the set; keep stubs minimal. (Same R-B as slice 3.)
+- **R-A: stub-tool fidelity (load-bearing).** Tool descriptions/schemas strongly influence tool choice;
+  a drifting stub would measure the stub surface, not production. Mitigation: the staging stub reuses the
+  real `STAGE_SALES_ANALYSIS_TOOL_NAME` / `StageSalesAnalysisInput` / `STAGE_SALES_ANALYSIS_DESCRIPTION`
+  verbatim (fidelity test); Spring stubs pin realistic descriptions + local schemas, asserted in tests;
+  a live-MCP description/schema comparison is reserved (slice-3 posture).
 - **R-B: a forecast turn may complete without ever executing (no sandbox).** Acceptable by design — we
   score the *choice* (staging called), not the computation. The runner's post-choice-error handling
   (§5.3) covers turns that raise after staging.
@@ -254,10 +287,13 @@ choice is observed regardless of whether a forecast turn's sandbox phase runs.
    and pre-choice error paths).
 3. `ToolChoiceReport` + `aggregate`/report function (+ aggregation tests).
 4. `tool_choice.yaml` dataset (+ loader-over-dataset test).
-5. Stub-tool analyst harness: `build_stub_sales_analyst_tools` + `build_stub_sales_analyst` (+ offline
-   construction test, monkeypatched).
-6. Runner `run_tool_choice_eval` with §5.3 error semantics (+ fake-analyst offline tests for the three
-   outcomes).
-7. RUN_LIVE_LLM integration test (`aggregate_recompute_rate == 0`, accuracy ≥ 0.80, persist baseline).
-8. `eval tool-choice` CLI subcommand (+ parser + dispatch tests).
-9. Full-suite + scoped ruff verification.
+5. Extract `STAGE_SALES_ANALYSIS_DESCRIPTION` constant in `tools/staging.py` (real tool references it;
+   no behavior change; existing staging tests stay green).
+6. Stub-tool analyst harness: `build_stub_sales_analyst_tools` (staging stub reuses the real name/schema/
+   description; Spring stubs pin realistic descriptions) + `build_stub_sales_analyst` (+ offline
+   construction and stub-fidelity tests, monkeypatched).
+7. Runner `run_tool_choice_eval` with §5.3 error semantics and `DEFAULT_RECURSION_LIMIT = 50`
+   (+ fake-analyst offline tests for the three outcomes).
+8. RUN_LIVE_LLM integration test (`aggregate_authority_miss_rate == 0`, accuracy ≥ 0.80, persist baseline).
+9. `eval tool-choice` CLI subcommand (+ parser + dispatch tests).
+10. Full-suite + scoped ruff verification.
