@@ -1,3 +1,5 @@
+import logging
+
 from ecommerce_agent.threads.history import (
     AGENT_HISTORY_MAX_EXCHANGES,
     ROUTER_HISTORY_MAX_EXCHANGES,
@@ -30,6 +32,7 @@ def test_maps_user_and_agent_messages_to_roles() -> None:
 def test_proposal_and_breadcrumbs_render_as_assistant_content_only() -> None:
     history = build_history(
         [
+            _msg("user", "please create the PO"),
             _msg("agent_proposal", "Proposed PO #4471."),
             _msg(
                 "approval_status",
@@ -42,6 +45,7 @@ def test_proposal_and_breadcrumbs_render_as_assistant_content_only() -> None:
     )
 
     assert history == [
+        {"role": "user", "content": "please create the PO"},
         {"role": "assistant", "content": "Proposed PO #4471."},
         {"role": "assistant", "content": "Approval 4471 approved."},
         {"role": "assistant", "content": "Approval 4471 executed."},
@@ -52,6 +56,36 @@ def test_skips_empty_content() -> None:
     assert build_history([_msg("agent_answer", "   "), _msg("user", "real")]) == [
         {"role": "user", "content": "real"}
     ]
+
+
+def test_skips_leading_assistant_messages_without_a_user_exchange() -> None:
+    history = build_history(
+        [
+            _msg("agent_answer", "orphan answer"),
+            _msg("user", "real question"),
+            _msg("agent_answer", "real answer"),
+        ]
+    )
+
+    assert history == [
+        {"role": "user", "content": "real question"},
+        {"role": "assistant", "content": "real answer"},
+    ]
+
+
+def test_unknown_message_type_is_skipped_with_warning(caplog) -> None:
+    unknown = ThreadMessage.model_construct(
+        session_id="s1",
+        type="system_note",
+        content="internal only",
+        turn_id=None,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        history = build_history([_msg("user", "real"), unknown])
+
+    assert history == [{"role": "user", "content": "real"}]
+    assert "skipping unsupported thread message type" in caplog.text
 
 
 def test_orders_by_input_order_not_created_at() -> None:
@@ -107,8 +141,36 @@ def test_token_budget_drops_oldest_exchanges_but_keeps_at_least_one() -> None:
     assert [m["content"] for m in history] == ["new", "short"]
 
 
+def test_token_budget_preserves_breadcrumb_heavy_newest_exchange() -> None:
+    big = "x" * 4000
+    msgs = [
+        _msg("user", "old"),
+        _msg("agent_answer", big),
+        _msg("user", "new"),
+        _msg("agent_answer", "answer"),
+        _msg("agent_proposal", "Proposed PO #4471."),
+        _msg("approval_status", "Approval 4471 approved."),
+        _msg("execution_result", "Approval 4471 executed."),
+    ]
+
+    history = build_history(msgs, max_exchanges=10, token_budget=300)
+
+    assert [m["content"] for m in history] == [
+        "new",
+        "answer",
+        "Proposed PO #4471.",
+        "Approval 4471 approved.",
+        "Approval 4471 executed.",
+    ]
+
+
 def test_empty_input_returns_empty() -> None:
     assert build_history([]) == []
+
+
+def test_zero_max_exchanges_returns_empty() -> None:
+    assert build_history([_msg("user", "hidden")], max_exchanges=0) == []
+    assert take_last_exchanges([{"role": "user", "content": "hidden"}], 0) == []
 
 
 def test_take_last_exchanges_trims_role_dict_list() -> None:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 from ecommerce_agent.threads.messages import ThreadMessage
+
+logger = logging.getLogger(__name__)
 
 # Bounds are counted in exchanges (one user turn plus the assistant/proposal/breadcrumb
 # messages that follow it), never in raw ThreadMessages, so breadcrumb-heavy turns do not
@@ -13,11 +16,19 @@ AGENT_HISTORY_TOKEN_BUDGET = 2000
 ROUTER_HISTORY_MAX_EXCHANGES = 3
 
 _CHARS_PER_TOKEN = 4
+_ROLE_BY_MESSAGE_TYPE = {
+    "user": "user",
+    "agent_answer": "assistant",
+    "agent_proposal": "assistant",
+    "approval_status": "assistant",
+    "execution_result": "assistant",
+}
 
 RoleMessage = dict[str, str]
 
 
 def _estimate_tokens(text: str) -> int:
+    # Cheap deterministic budget guard; real tokenizer precision is unnecessary here.
     return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
@@ -32,9 +43,11 @@ def _to_role_message(message: ThreadMessage) -> RoleMessage | None:
     content = (message.content or "").strip()
     if not content:
         return None
-    if message.type == "user":
-        return {"role": "user", "content": content}
-    return {"role": "assistant", "content": content}
+    role = _ROLE_BY_MESSAGE_TYPE.get(message.type)
+    if role is None:
+        logger.warning("skipping unsupported thread message type in history: %s", message.type)
+        return None
+    return {"role": role, "content": content}
 
 
 def _group_into_exchanges(messages: list[RoleMessage]) -> list[list[RoleMessage]]:
@@ -42,6 +55,8 @@ def _group_into_exchanges(messages: list[RoleMessage]) -> list[list[RoleMessage]
     groups: list[list[RoleMessage]] = []
     current: list[RoleMessage] = []
     for message in messages:
+        if message["role"] != "user" and not current:
+            continue
         if message["role"] == "user" and current:
             groups.append(current)
             current = []
