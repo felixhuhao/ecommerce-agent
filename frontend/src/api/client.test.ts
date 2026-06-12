@@ -4,9 +4,12 @@ import {
   approveApproval,
   createSession,
   getArtifacts,
+  getMe,
   getMcpHealth,
   getTrace,
   listSessions,
+  login,
+  logout,
   postMessage,
   shouldRetryTrace,
   traceExportUrl,
@@ -25,6 +28,43 @@ function mockFetch(status: number, body: unknown) {
 }
 
 describe("api client", () => {
+  it("getMe returns null on unauthenticated responses", async () => {
+    mockFetch(401, { detail: "not authenticated" });
+    expect(await getMe()).toBeNull();
+  });
+
+  it("login posts credentials with cookies enabled", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ username: "alice", role: "operator" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await login("alice", "pw");
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "pw" }),
+      credentials: "include",
+    });
+  });
+
+  it("logout posts with cookies enabled", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await logout();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    });
+  });
+
   it("createSession returns the session id", async () => {
     mockFetch(201, { session_id: "abc" });
     expect(await createSession()).toEqual({ session_id: "abc" });
@@ -80,7 +120,7 @@ describe("api client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await getMcpHealth()).toEqual({ status: "ok", servers: { spring: { status: "ok" } } });
-    expect(fetchMock).toHaveBeenCalledWith("/health/mcp");
+    expect(fetchMock).toHaveBeenCalledWith("/health/mcp", { credentials: "include" });
   });
 
   it("getTrace returns the timeline", async () => {

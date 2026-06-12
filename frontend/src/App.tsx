@@ -9,13 +9,18 @@ import { RightRail, type RailTab } from "./components/RightRail";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { TracePanel } from "./components/TracePanel";
 import {
+  ApiError,
+  type Me,
   approveApproval,
   createSession,
   getArtifacts,
   getHealth,
+  getMe,
   getMcpHealth,
   getThread,
   getTrace,
+  login,
+  logout,
   listSessions,
   postMessage,
   rejectApproval,
@@ -32,10 +37,132 @@ const EMPTY_SESSIONS: SessionSummary[] = [];
 const EMPTY_ARTIFACTS: ArtifactSummary[] = [];
 
 function isNotFound(error: unknown) {
-  return error instanceof Error && error.message === "404";
+  return isApiStatus(error, 404);
+}
+
+function isUnauthorized(error: unknown) {
+  return isApiStatus(error, 401);
+}
+
+function isApiStatus(error: unknown, status: number) {
+  return (
+    (error instanceof ApiError && error.status === status) ||
+    (error instanceof Error && error.message === String(status))
+  );
 }
 
 export function App() {
+  const queryClient = useQueryClient();
+  const meQuery = useQuery({ queryKey: ["auth", "me"], queryFn: getMe, retry: false });
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const loginMutation = useMutation({
+    mutationFn: ({ username, password }: { username: string; password: string }) =>
+      login(username, password),
+    onSuccess: (me) => {
+      queryClient.clear();
+      queryClient.setQueryData(["auth", "me"], me);
+      setLoginError(null);
+    },
+    onError: (error) => {
+      setLoginError(error instanceof Error ? error.message : "Login failed");
+    },
+  });
+
+  const handleLogout = useCallback(async () => {
+    await logout();
+    queryClient.clear();
+    queryClient.setQueryData(["auth", "me"], null);
+  }, [queryClient]);
+
+  const handleUnauthorized = useCallback(() => {
+    queryClient.clear();
+    queryClient.setQueryData(["auth", "me"], null);
+  }, [queryClient]);
+
+  if (meQuery.isLoading) {
+    return <div className="auth-loading" role="status">Loading</div>;
+  }
+
+  if (!meQuery.data) {
+    return (
+      <LoginForm
+        error={loginError}
+        isSubmitting={loginMutation.isPending}
+        onSubmit={(username, password) => loginMutation.mutate({ username, password })}
+      />
+    );
+  }
+
+  return (
+    <OperatorConsole
+      actor={meQuery.data}
+      onLogout={handleLogout}
+      onUnauthorized={handleUnauthorized}
+    />
+  );
+}
+
+function LoginForm({
+  error,
+  isSubmitting,
+  onSubmit,
+}: {
+  error: string | null;
+  isSubmitting: boolean;
+  onSubmit: (username: string, password: string) => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  return (
+    <main className="login-shell">
+      <form
+        className="login-panel"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(username, password);
+        }}
+      >
+        <p className="eyebrow">Operator Console</p>
+        <h1>Sign in</h1>
+        <label>
+          Username
+          <input
+            autoComplete="username"
+            name="username"
+            onChange={(event) => setUsername(event.target.value)}
+            value={username}
+          />
+        </label>
+        <label>
+          Password
+          <input
+            autoComplete="current-password"
+            name="password"
+            onChange={(event) => setPassword(event.target.value)}
+            type="password"
+            value={password}
+          />
+        </label>
+        {error ? <p className="auth-error">{error}</p> : null}
+        <button className="login-button" disabled={isSubmitting} type="submit">
+          Sign in
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function OperatorConsole({
+  actor,
+  onLogout,
+  onUnauthorized,
+}: {
+  actor: Me;
+  onLogout: () => Promise<void>;
+  onUnauthorized: () => void;
+}) {
   const queryClient = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
@@ -57,6 +184,7 @@ export function App() {
     queryKey: ["sessions"],
     queryFn: listSessions,
     refetchInterval: 5000,
+    retry: false,
   });
   const healthQuery = useQuery({
     queryKey: ["health"],
@@ -74,6 +202,7 @@ export function App() {
     queryKey: ["artifacts", activeId],
     queryFn: () => getArtifacts(activeId as string),
     enabled: !!activeId,
+    retry: false,
   });
   const traceQuery = useQuery({
     queryKey: ["trace", activeId, inspectedTurnId],
@@ -91,6 +220,13 @@ export function App() {
 
   const { state, streamStatus, markTurnStarted, applyThread } = useSessionStream(activeId);
   const approvals = useMemo(() => foldApprovals(state.messages), [state.messages]);
+
+  const handleAuthExpired = useCallback(() => {
+    applyThread([]);
+    setActiveId(null);
+    setActionError(null);
+    onUnauthorized();
+  }, [applyThread, onUnauthorized]);
 
   useEffect(() => {
     setInspectedTurnId(null);
@@ -134,6 +270,22 @@ export function App() {
     },
   });
 
+  useEffect(() => {
+    const errors = [
+      sessionsQuery.error,
+      artifactsQuery.error,
+      traceQuery.error,
+      createMutation.error,
+    ];
+    if (errors.some(isUnauthorized)) handleAuthExpired();
+  }, [
+    artifactsQuery.error,
+    createMutation.error,
+    handleAuthExpired,
+    sessionsQuery.error,
+    traceQuery.error,
+  ]);
+
   const reconcileThread = useCallback(async (sessionId: string | null = activeIdRef.current) => {
     if (!sessionId) return;
     try {
@@ -142,13 +294,17 @@ export function App() {
       applyThread(messages);
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
     } catch (error) {
+      if (isUnauthorized(error)) {
+        handleAuthExpired();
+        return;
+      }
       if (isNotFound(error)) {
         await handleMissingSession(sessionId);
         return;
       }
       throw error;
     }
-  }, [applyThread, handleMissingSession, queryClient]);
+  }, [applyThread, handleAuthExpired, handleMissingSession, queryClient]);
 
   const handleSend = useCallback(
     async (message: string) => {
@@ -170,6 +326,10 @@ export function App() {
         }
         await queryClient.invalidateQueries({ queryKey: ["sessions"] });
       } catch (error) {
+        if (isUnauthorized(error)) {
+          handleAuthExpired();
+          return;
+        }
         if (isNotFound(error)) {
           await handleMissingSession(sessionId);
           return;
@@ -182,7 +342,7 @@ export function App() {
         }
       }
     },
-    [clearBusyNoteTimeout, handleMissingSession, markTurnStarted, queryClient],
+    [clearBusyNoteTimeout, handleAuthExpired, handleMissingSession, markTurnStarted, queryClient],
   );
 
   const handleApprove = useCallback(
@@ -196,12 +356,16 @@ export function App() {
           reconcileThread(sessionId),
         );
       } catch (error) {
+        if (isUnauthorized(error)) {
+          handleAuthExpired();
+          return;
+        }
         setActionError(error instanceof Error ? error.message : "Approval failed");
       } finally {
         setPendingApprovalId(null);
       }
     },
-    [activeId, reconcileThread],
+    [activeId, handleAuthExpired, reconcileThread],
   );
 
   const handleReject = useCallback(
@@ -215,12 +379,16 @@ export function App() {
           reconcileThread(sessionId),
         );
       } catch (error) {
+        if (isUnauthorized(error)) {
+          handleAuthExpired();
+          return;
+        }
         setActionError(error instanceof Error ? error.message : "Reject failed");
       } finally {
         setPendingApprovalId(null);
       }
     },
-    [activeId, reconcileThread],
+    [activeId, handleAuthExpired, reconcileThread],
   );
 
   const handleSelectSession = useCallback((sessionId: string) => {
@@ -264,13 +432,24 @@ export function App() {
   return (
     <AppShell
       sidebar={
-        <SessionSidebar
-          sessions={sessions}
-          activeId={activeId}
-          isCreating={createMutation.isPending}
-          onSelect={handleSelectSession}
-          onNew={handleNewSession}
-        />
+        <div className="sidebar-auth-shell">
+          <div className="auth-strip">
+            <div className="auth-user">
+              <span>{actor.username}</span>
+              <small>{actor.role}</small>
+            </div>
+            <button className="auth-logout" type="button" onClick={onLogout}>
+              Log out
+            </button>
+          </div>
+          <SessionSidebar
+            sessions={sessions}
+            activeId={activeId}
+            isCreating={createMutation.isPending}
+            onSelect={handleSelectSession}
+            onNew={handleNewSession}
+          />
+        </div>
       }
       conversation={
         <ConversationView
