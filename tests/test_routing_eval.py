@@ -2,6 +2,7 @@ import pytest
 
 from ecommerce_agent.evals.routing import (
     EvalReport,
+    LatestMessageRouter,
     RoutingCase,
     compare,
     load_routing_cases,
@@ -32,10 +33,91 @@ class StubRouter:
         self._mapping = mapping
         self._errors = set(errors)
 
-    async def route(self, message: str) -> RouteDecision:
+    async def route(self, message: str, *, history=()) -> RouteDecision:
         if message in self._errors:
             raise RuntimeError("boom")
         return RouteDecision(self._mapping[message], "classifier", "r")
+
+
+def test_routing_case_defaults_history_to_empty() -> None:
+    case = RoutingCase(id="x", prompt="hi", expected="sales-analyst")
+    assert case.history == []
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_case_history_to_router() -> None:
+    class HistoryCapturingRouter:
+        def __init__(self) -> None:
+            self.seen: list[list[dict]] = []
+
+        async def route(self, message: str, *, history=()) -> RouteDecision:
+            self.seen.append(list(history))
+            return RouteDecision("sales-analyst", "classifier", "r")
+
+    cases = [
+        RoutingCase(
+            id="c1",
+            prompt="and the same for audio?",
+            expected="sales-analyst",
+            tags=["multi-turn"],
+            history=[{"role": "user", "content": "how did electronics sell?"}],
+        )
+    ]
+    router = HistoryCapturingRouter()
+
+    await run_routing_eval(router, cases, router_name="ctx")
+
+    assert router.seen == [[{"role": "user", "content": "how did electronics sell?"}]]
+
+
+def test_loader_rejects_malformed_history_entry(tmp_path) -> None:
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "- id: c1\n"
+        "  prompt: go ahead\n"
+        "  expected: order-manager\n"
+        "  history:\n"
+        "    - role: assitant\n"
+        "      content: ok\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_routing_cases(str(bad))
+
+
+def test_loader_rejects_empty_history_content(tmp_path) -> None:
+    bad = tmp_path / "bad2.yaml"
+    bad.write_text(
+        "- id: c1\n"
+        "  prompt: go ahead\n"
+        "  expected: order-manager\n"
+        "  history:\n"
+        "    - role: user\n"
+        "      content: '   '\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_routing_cases(str(bad))
+
+
+@pytest.mark.asyncio
+async def test_latest_message_router_drops_history() -> None:
+    class Inner:
+        def __init__(self) -> None:
+            self.seen: list[list[dict]] = []
+
+        async def route(self, message: str, *, history=()) -> RouteDecision:
+            self.seen.append(list(history))
+            return RouteDecision("sales-analyst", "classifier", "r")
+
+    inner = Inner()
+    adapter = LatestMessageRouter(inner)
+
+    await adapter.route("do it", history=[{"role": "user", "content": "prior"}])
+
+    assert inner.seen == [[]]
 
 
 @pytest.mark.asyncio

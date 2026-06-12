@@ -10,6 +10,7 @@ from ecommerce_agent.routing.router import RouteDecision, Router
 
 _DATASET_PATH = Path(__file__).parent / "datasets" / "routing.yaml"
 ERROR_PREDICTION = "<error>"
+_VALID_HISTORY_ROLES = {"user", "assistant"}
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,29 @@ class RoutingCase:
     prompt: str
     expected: str
     tags: list[str] = field(default_factory=list)
+    history: list[dict] = field(default_factory=list)
+
+
+def _validate_history(case_id: str, raw_history: object) -> list[dict]:
+    if raw_history is None:
+        return []
+    if not isinstance(raw_history, list):
+        raise ValueError(f"case {case_id!r} history must be a list")
+
+    history: list[dict] = []
+    for entry in raw_history:
+        role = entry.get("role") if isinstance(entry, dict) else None
+        content = entry.get("content") if isinstance(entry, dict) else None
+        if role not in _VALID_HISTORY_ROLES:
+            raise ValueError(
+                f"case {case_id!r} history role must be user/assistant, got {role!r}"
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(
+                f"case {case_id!r} history content must be a non-empty string"
+            )
+        history.append({"role": role, "content": content})
+    return history
 
 
 def load_routing_cases(
@@ -35,6 +59,7 @@ def load_routing_cases(
             prompt=entry["prompt"],
             expected=entry["expected"],
             tags=list(entry.get("tags", [])),
+            history=_validate_history(entry["id"], entry.get("history")),
         )
         if not registry.is_registered(case.expected):
             raise ValueError(f"case {case.id!r} has unknown specialist {case.expected!r}")
@@ -84,7 +109,7 @@ async def run_routing_eval(
     results: list[CaseResult] = []
     for case in cases:
         try:
-            decision = await router.route(case.prompt)
+            decision = await router.route(case.prompt, history=case.history)
             results.append(score_case(decision, case))
         except Exception:  # noqa: BLE001 - one bad case must not abort the batch.
             results.append(
@@ -151,3 +176,13 @@ def compare(baseline: EvalReport, candidate: EvalReport) -> dict[str, object]:
         "regressions": regressions,
         "flips": improvements + regressions,
     }
+
+
+class LatestMessageRouter:
+    """Adapter that runs an inner router on the latest message only."""
+
+    def __init__(self, inner: Router) -> None:
+        self._inner = inner
+
+    async def route(self, message: str, *, history=()) -> RouteDecision:
+        return await self._inner.route(message)
