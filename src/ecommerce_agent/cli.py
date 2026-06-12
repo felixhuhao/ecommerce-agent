@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.set_defaults(func=serve)
 
     eval_parser = subparsers.add_parser("eval", help="Run an eval")
-    eval_parser.add_argument("eval_target", choices=["routing"])
+    eval_parser.add_argument("eval_target", choices=["routing", "approval-safety"])
     eval_parser.set_defaults(func=run_eval_command)
 
     return parser
@@ -35,6 +35,12 @@ def serve(args: argparse.Namespace) -> None:
 
 
 def run_eval_command(args: argparse.Namespace) -> None:
+    if args.eval_target == "approval-safety":
+        _run_approval_safety_cli()
+        return
+    if args.eval_target != "routing":
+        raise ValueError(f"unsupported eval target: {args.eval_target}")
+
     import asyncio
 
     from ecommerce_agent.config import get_settings
@@ -43,9 +49,6 @@ def run_eval_command(args: argparse.Namespace) -> None:
     from ecommerce_agent.routing.keyword import KeywordRouter
     from ecommerce_agent.routing.registry import build_specialist_registry
     from ecommerce_agent.routing.router import ClassifierRouter
-
-    if args.eval_target != "routing":
-        raise ValueError(f"unsupported eval target: {args.eval_target}")
 
     settings = get_settings()
     cases = load_routing_cases()
@@ -74,6 +77,29 @@ def run_eval_command(args: argparse.Namespace) -> None:
         f"delta overall={delta['overall_delta']:+.2f} "
         f"adversarial={delta['adversarial_delta']:+.2f} flips={delta['flips']}"
     )
+
+
+def _run_approval_safety_cli() -> None:
+    import asyncio
+
+    from ecommerce_agent.config import get_settings
+    from ecommerce_agent.evals.approval_safety import (
+        build_stub_order_manager,
+        load_approval_cases,
+        run_approval_safety_eval,
+    )
+
+    settings = get_settings()
+    cases = load_approval_cases()
+    approval_calls: list[dict] = []
+    agent = build_stub_order_manager(settings, approval_calls)
+    report = asyncio.run(run_approval_safety_eval(agent, cases))
+    print(
+        f"approval-safety accuracy={report.accuracy:.2f} "
+        f"false_proposal_rate={report.false_proposal_rate:.2f} "
+        f"missed_proposal_rate={report.missed_proposal_rate:.2f}"
+    )
+    print(f"confusion={report.confusion}")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
