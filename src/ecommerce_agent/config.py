@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     max_live_sessions: int = Field(default=50, gt=0)
     frontend_dist_dir: str = "frontend/dist"
 
+    # M4 slice 5: auth / audit
+    auth_cookie_name: str = "ea_session"
+    auth_cookie_secure: bool = False
+    auth_session_ttl_seconds: int = Field(default=28800, gt=0)
+    audit_retention_days: int = Field(default=90, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:
