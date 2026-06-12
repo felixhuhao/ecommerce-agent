@@ -758,9 +758,36 @@ Add to `tests/test_approval_safety.py`:
 
 ```python
 from ecommerce_agent.evals.approval_safety import (
+    build_stub_order_manager,
     build_stub_order_manager_tools,
     run_approval_safety_eval,
 )
+
+
+def test_build_stub_order_manager_wires_backend_none_and_stub_tools(monkeypatch):
+    # Exercise the real construction path OFFLINE: monkeypatch the function-local imports at
+    # their source modules so no model is built and create_deep_agent is never called.
+    import ecommerce_agent.agents as agents_module
+    import ecommerce_agent.models as models_module
+
+    captured: dict = {}
+
+    def fake_build_order_manager(model, *, order_manager_tools, backend):
+        captured["model"] = model
+        captured["tools"] = order_manager_tools
+        captured["backend"] = backend
+        return "AGENT"
+
+    monkeypatch.setattr(models_module, "get_primary_model", lambda settings: "MODEL")
+    monkeypatch.setattr(agents_module, "build_order_manager", fake_build_order_manager)
+
+    calls: list[dict] = []
+    agent = build_stub_order_manager(object(), calls)
+
+    assert agent == "AGENT"
+    assert captured["model"] == "MODEL"
+    assert captured["backend"] is None  # the backend=None decision is wired
+    assert "request_approval" in {tool.name for tool in captured["tools"]}
 
 
 def test_stub_tools_expose_request_approval_and_reads():
@@ -938,8 +965,9 @@ async def run_approval_safety_eval(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_approval_safety.py -q`
-Expected: PASS — note the harness construction test exercises only the stub tools and a fake agent; it
-does not build the deep agent or call a model.
+Expected: PASS — the construction test exercises the real `build_stub_order_manager` wiring (asserting
+`backend=None` and the stub tool set) via monkeypatched function-local imports, so no model is built
+and `create_deep_agent` is never called; the runner test uses a fake agent.
 
 - [ ] **Step 5: Commit**
 
@@ -1098,12 +1126,15 @@ git commit -m "test(evals): live multi-turn routing and approval-safety gates"
 
 Add to `tests/test_cli.py`:
 
+The file already does `from ecommerce_agent import cli` and uses the `cli.` prefix — match that style.
+Add:
+
 ```python
-from ecommerce_agent.cli import build_parser
+import argparse
 
 
 def test_parser_accepts_eval_approval_safety():
-    parser = build_parser()
+    parser = cli.build_parser()
     args = parser.parse_args(["eval", "approval-safety"])
     assert args.command == "eval"
     assert args.eval_target == "approval-safety"
@@ -1111,9 +1142,43 @@ def test_parser_accepts_eval_approval_safety():
 
 
 def test_parser_still_accepts_eval_routing():
-    parser = build_parser()
+    parser = cli.build_parser()
     args = parser.parse_args(["eval", "routing"])
     assert args.eval_target == "routing"
+
+
+def test_eval_approval_safety_dispatch_runs_branch(monkeypatch, capsys):
+    # Smoke the actual dispatch (branch + imports + print), not just argparse. Monkeypatch the
+    # function-local imports at their source modules so no model is built.
+    import ecommerce_agent.config as config_module
+    import ecommerce_agent.evals.approval_safety as aps
+    from ecommerce_agent.evals.approval_safety import ApprovalReport
+
+    monkeypatch.setattr(config_module, "get_settings", lambda: object())
+    monkeypatch.setattr(aps, "load_approval_cases", lambda: ["case"])
+    monkeypatch.setattr(aps, "build_stub_order_manager", lambda settings, calls: "AGENT")
+
+    async def fake_run(agent, cases, **kwargs):
+        assert agent == "AGENT"
+        return ApprovalReport(
+            n=1,
+            passed=1,
+            errors=0,
+            accuracy=1.0,
+            per_tag_accuracy={},
+            false_proposal_rate=0.0,
+            missed_proposal_rate=0.0,
+            confusion={"proposed": {"proposed": 1}},
+            cases=[],
+        )
+
+    monkeypatch.setattr(aps, "run_approval_safety_eval", fake_run)
+
+    cli.run_eval_command(argparse.Namespace(eval_target="approval-safety"))
+
+    out = capsys.readouterr().out
+    assert "approval-safety accuracy=1.00" in out
+    assert "false_proposal_rate=0.00" in out
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
