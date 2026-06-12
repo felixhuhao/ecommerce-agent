@@ -181,4 +181,4 @@ class LatestMessageRouter:
         self._inner = inner
 
     async def route(self, message: str, *, history=()) -> RouteDecision:
-        return await self._inner.route(message)
+        return await self._inner.route(message, history=())
