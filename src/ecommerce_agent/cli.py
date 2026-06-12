@@ -1,7 +1,13 @@
 import argparse
+import getpass
+import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import uvicorn
+
+from ecommerce_agent.auth.users_store import MongoUserStore
+from ecommerce_agent.sessions.store import MongoSessionStore
 
 APP_FACTORY = "ecommerce_agent.api.app:create_app"
 
@@ -20,6 +26,26 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser = subparsers.add_parser("eval", help="Run an eval")
     eval_parser.add_argument("eval_target", choices=["routing", "approval-safety", "tool-choice"])
     eval_parser.set_defaults(func=run_eval_command)
+
+    users_parser = subparsers.add_parser("users", help="Manage users")
+    users_subparsers = users_parser.add_subparsers(dest="users_command", required=True)
+    add_user_parser = users_subparsers.add_parser("add", help="Create a user")
+    add_user_parser.add_argument("--username", required=True)
+    add_user_parser.add_argument("--role", required=True, choices=["viewer", "operator"])
+    add_user_parser.add_argument("--spring-user-id", dest="spring_user_id", type=int, required=True)
+    add_user_parser.set_defaults(func=run_users_command)
+
+    sessions_parser = subparsers.add_parser("sessions", help="Manage conversation sessions")
+    sessions_subparsers = sessions_parser.add_subparsers(
+        dest="sessions_command",
+        required=True,
+    )
+    backfill_parser = sessions_subparsers.add_parser(
+        "backfill-owner",
+        help="Assign an owner to legacy sessions with no owner_id",
+    )
+    backfill_parser.add_argument("--owner-id", required=True)
+    backfill_parser.set_defaults(func=run_sessions_command)
 
     return parser
 
@@ -124,6 +150,59 @@ def _run_tool_choice_cli() -> None:
         f"aggregate_authority_miss_rate={report.aggregate_authority_miss_rate:.2f}"
     )
     print(f"per_tag_accuracy={report.per_tag_accuracy}")
+
+
+def _prompt_password() -> str:
+    return getpass.getpass("Password: ")
+
+
+def run_users_command(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from ecommerce_agent.auth.models import Role, User
+    from ecommerce_agent.auth.passwords import hash_password
+    from ecommerce_agent.config import get_settings
+
+    password = _prompt_password()
+    user = User(
+        user_id=uuid.uuid4().hex,
+        username=args.username,
+        password_hash=hash_password(password),
+        role=Role(args.role),
+        spring_user_id=args.spring_user_id,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    store = MongoUserStore.from_settings(get_settings())
+
+    async def _run() -> None:
+        await store.ensure_indexes()
+        await store.create(user)
+
+    try:
+        asyncio.run(_run())
+    finally:
+        store.close()
+    print(f"created user {user.username} ({user.role})")
+
+
+def run_sessions_command(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from ecommerce_agent.config import get_settings
+
+    if args.sessions_command != "backfill-owner":
+        raise ValueError(f"unsupported sessions command: {args.sessions_command}")
+
+    store = MongoSessionStore.from_settings(get_settings())
+
+    async def _run() -> int:
+        return await store.backfill_ownerless(owner_id=args.owner_id)
+
+    try:
+        count = asyncio.run(_run())
+    finally:
+        store.close()
+    print(f"backfilled {count} legacy sessions to owner {args.owner_id}")
 
 
 def main(argv: Sequence[str] | None = None) -> None:

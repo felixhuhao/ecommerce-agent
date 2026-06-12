@@ -81,6 +81,88 @@ def test_parser_still_accepts_eval_routing() -> None:
     assert args.eval_target == "routing"
 
 
+def test_users_add_parser() -> None:
+    parser = cli.build_parser()
+
+    args = parser.parse_args(
+        ["users", "add", "--username", "alice", "--role", "operator", "--spring-user-id", "7"]
+    )
+
+    assert args.command == "users"
+    assert args.users_command == "add"
+    assert args.username == "alice"
+    assert args.role == "operator"
+    assert args.spring_user_id == 7
+
+
+def test_sessions_backfill_owner_parser() -> None:
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["sessions", "backfill-owner", "--owner-id", "seed-operator"])
+
+    assert args.command == "sessions"
+    assert args.sessions_command == "backfill-owner"
+    assert args.owner_id == "seed-operator"
+
+
+def test_users_add_creates_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    created = {}
+
+    class Store:
+        @classmethod
+        def from_settings(cls, settings):  # noqa: ANN001
+            return cls()
+
+        async def ensure_indexes(self) -> None:
+            pass
+
+        async def create(self, user) -> None:  # noqa: ANN001
+            created["user"] = user
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(cli, "MongoUserStore", Store)
+    monkeypatch.setattr(cli, "_prompt_password", lambda: "pw")
+
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        ["users", "add", "--username", "alice", "--role", "operator", "--spring-user-id", "7"]
+    )
+    args.func(args)
+
+    assert created["user"].username == "alice"
+    assert created["user"].role == "operator"
+    assert created["user"].spring_user_id == 7
+    assert created["user"].password_hash.startswith("$argon2")
+
+
+def test_sessions_backfill_owner_updates_ownerless_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = {}
+
+    class Store:
+        @classmethod
+        def from_settings(cls, settings):  # noqa: ANN001
+            return cls()
+
+        async def backfill_ownerless(self, *, owner_id: str) -> int:
+            called["owner_id"] = owner_id
+            return 3
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(cli, "MongoSessionStore", Store)
+
+    parser = cli.build_parser()
+    args = parser.parse_args(["sessions", "backfill-owner", "--owner-id", "seed-operator"])
+    args.func(args)
+
+    assert called == {"owner_id": "seed-operator"}
+
+
 def test_eval_approval_safety_dispatch_runs_branch(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
