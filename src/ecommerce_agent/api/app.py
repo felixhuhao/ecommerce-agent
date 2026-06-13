@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from ecommerce_agent.api import health as health_module
 from ecommerce_agent.api.audit import router as audit_router
@@ -45,28 +46,94 @@ def make_runtime_builder(settings: Settings):
     return build_runtime
 
 
+def _mongo_db(app: FastAPI, settings: Settings) -> Any:
+    client = getattr(app.state, "mongo_client", None)
+    if client is None:
+        client = AsyncIOMotorClient(settings.mongo_url)
+        app.state.mongo_client = client
+    return client[settings.mongo_db]
+
+
+def _configure_default_mongo_stores(app: FastAPI, settings: Settings) -> None:
+    db: Any | None = None
+
+    def get_db() -> Any:
+        nonlocal db
+        if db is None:
+            db = _mongo_db(app, settings)
+        return db
+
+    if getattr(app.state, "thread_store", None) is None:
+        mongo_db = get_db()
+        app.state.thread_store = MongoThreadStore(
+            messages=mongo_db["thread_messages"],
+            counters=mongo_db["thread_counters"],
+            client=app.state.mongo_client,
+            retention_days=settings.audit_retention_days,
+        )
+    if getattr(app.state, "session_store", None) is None:
+        mongo_db = get_db()
+        app.state.session_store = MongoSessionStore(
+            sessions=mongo_db["sessions"],
+            client=app.state.mongo_client,
+        )
+    if getattr(app.state, "trace_store", None) is None:
+        mongo_db = get_db()
+        app.state.trace_store = MongoTraceStore(
+            traces=mongo_db["traces"],
+            client=app.state.mongo_client,
+            retention_days=settings.audit_retention_days,
+        )
+    if getattr(app.state, "user_store", None) is None:
+        mongo_db = get_db()
+        app.state.user_store = MongoUserStore(
+            users=mongo_db["users"],
+            client=app.state.mongo_client,
+        )
+    if getattr(app.state, "login_session_store", None) is None:
+        mongo_db = get_db()
+        app.state.login_session_store = MongoLoginSessionStore(
+            sessions=mongo_db["auth_sessions"],
+            client=app.state.mongo_client,
+        )
+    if getattr(app.state, "audit_store", None) is None:
+        mongo_db = get_db()
+        app.state.audit_store = MongoAuditStore(
+            messages=mongo_db["thread_messages"],
+            client=app.state.mongo_client,
+        )
+
+
+def _close_resource(resource: Any) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
+
+
+def _close_mongo_resources(app: FastAPI) -> None:
+    shared_client = getattr(app.state, "mongo_client", None)
+    for name in (
+        "thread_store",
+        "session_store",
+        "trace_store",
+        "user_store",
+        "login_session_store",
+        "audit_store",
+    ):
+        store = getattr(app.state, name, None)
+        if store is None:
+            continue
+        if shared_client is not None and getattr(store, "_client", None) is shared_client:
+            continue
+        _close_resource(store)
+    _close_resource(shared_client)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     app.state.mcp_client = getattr(app.state, "mcp_client", None) or build_mcp_client(settings)
-    app.state.thread_store = getattr(
-        app.state, "thread_store", None
-    ) or MongoThreadStore.from_settings(settings)
-    app.state.session_store = getattr(
-        app.state, "session_store", None
-    ) or MongoSessionStore.from_settings(settings)
-    app.state.trace_store = getattr(
-        app.state, "trace_store", None
-    ) or MongoTraceStore.from_settings(settings)
-    app.state.user_store = getattr(app.state, "user_store", None) or MongoUserStore.from_settings(
-        settings
-    )
-    app.state.login_session_store = getattr(
-        app.state, "login_session_store", None
-    ) or MongoLoginSessionStore.from_settings(settings)
-    app.state.audit_store = getattr(
-        app.state, "audit_store", None
-    ) or MongoAuditStore.from_settings(settings)
+    _configure_default_mongo_stores(app, settings)
     for store in (
         app.state.thread_store,
         app.state.trace_store,
@@ -101,23 +168,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.gather(*pending_background_tasks, return_exceptions=True)
             app.state.background_tasks.clear()
         await app.state.session_registry.close_all()
-        thread_store_close = getattr(app.state.thread_store, "close", None)
-        if callable(thread_store_close):
-            thread_store_close()
-        session_store_close = getattr(app.state.session_store, "close", None)
-        if callable(session_store_close):
-            session_store_close()
-        trace_store_close = getattr(app.state.trace_store, "close", None)
-        if callable(trace_store_close):
-            trace_store_close()
-        for store in (
-            getattr(app.state, "user_store", None),
-            getattr(app.state, "login_session_store", None),
-            getattr(app.state, "audit_store", None),
-        ):
-            close = getattr(store, "close", None)
-            if callable(close):
-                close()
+        _close_mongo_resources(app)
         await _close_approval_clients(getattr(app.state, "approval_clients", {}))
 
 
@@ -138,7 +189,7 @@ async def _reap_loop(app: FastAPI) -> None:
         pass
 
 
-async def _close_approval_clients(clients: dict[str, Any]) -> None:
+async def _close_approval_clients(clients: dict[Any, Any]) -> None:
     for client in clients.values():
         close = getattr(client, "aclose", None) or getattr(client, "close", None)
         if callable(close):
@@ -215,6 +266,7 @@ def create_app(
     app.state.thread_store = None
     app.state.session_store = None
     app.state.trace_store = None
+    app.state.mongo_client = None
     app.state.session_bus = None
     app.state.session_registry = None
     app.state.background_tasks = None

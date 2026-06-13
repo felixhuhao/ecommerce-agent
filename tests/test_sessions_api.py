@@ -233,6 +233,42 @@ def test_approval_client_uses_actor_spring_user_id(monkeypatch: pytest.MonkeyPat
     assert captured == {"session_id": "sess-1", "user_id": "42"}
 
 
+def test_approval_client_cache_is_keyed_by_actor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made: list[dict[str, object]] = []
+
+    def fake_make(settings: Settings, *, session_id: str, user_id: str | None = None) -> object:
+        client = object()
+        made.append({"session_id": session_id, "user_id": user_id, "client": client})
+        return client
+
+    monkeypatch.setattr("ecommerce_agent.api.sessions.make_approval_client", fake_make)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=Settings(_env_file=None),
+                approval_clients={},
+                approval_client_factory=None,
+            )
+        )
+    )
+    alice = Actor(user_id="alice", username="alice", role=Role.OPERATOR, spring_user_id=42)
+    bob = Actor(user_id="bob", username="bob", role=Role.OPERATOR, spring_user_id=43)
+
+    alice_client = _approval_client(request, "sess-1", alice)  # type: ignore[arg-type]
+    bob_client = _approval_client(request, "sess-1", bob)  # type: ignore[arg-type]
+    alice_again = _approval_client(request, "sess-1", alice)  # type: ignore[arg-type]
+
+    assert alice_client is alice_again
+    assert bob_client is not alice_client
+    assert [(item["session_id"], item["user_id"]) for item in made] == [
+        ("sess-1", "42"),
+        ("sess-1", "43"),
+    ]
+    assert set(request.app.state.approval_clients) == {("sess-1", "alice"), ("sess-1", "bob")}
+
+
 def test_viewer_cannot_approve_or_reject() -> None:
     app = build_test_app()
     viewer = Actor(user_id="viewer", username="viewer", role=Role.VIEWER, spring_user_id=8)

@@ -276,6 +276,73 @@ def test_lifespan_closes_cached_approval_clients() -> None:
     assert app.state.approval_clients == {}
 
 
+def test_lifespan_shares_default_mongo_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.app as app_module
+
+    class FakeCollection:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.indexes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def create_index(self, *args: object, **kwargs: object) -> str:
+            self.indexes.append((args, kwargs))
+            return f"{self.name}_idx"
+
+    class FakeDatabase:
+        def __init__(self) -> None:
+            self.collections: dict[str, FakeCollection] = {}
+
+        def __getitem__(self, name: str) -> FakeCollection:
+            if name not in self.collections:
+                self.collections[name] = FakeCollection(name)
+            return self.collections[name]
+
+    class FakeMongoClient:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.closed_count = 0
+            self.databases: dict[str, FakeDatabase] = {}
+            self.admin = SimpleNamespace(command=self.command)
+
+        def __getitem__(self, name: str) -> FakeDatabase:
+            if name not in self.databases:
+                self.databases[name] = FakeDatabase()
+            return self.databases[name]
+
+        async def command(self, name: str) -> dict[str, int]:
+            assert name == "ping"
+            return {"ok": 1}
+
+        def close(self) -> None:
+            self.closed_count += 1
+
+    clients: list[FakeMongoClient] = []
+
+    def fake_client(url: str) -> FakeMongoClient:
+        client = FakeMongoClient(url)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(app_module, "AsyncIOMotorClient", fake_client)
+    app = create_app(
+        settings=make_settings(mongo_url="mongodb://mongo"),
+        mcp_client=HealthyFakeMcpClient(),
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/health/mcp").status_code == 200
+        shared = clients[0]
+        assert app.state.thread_store._client is shared
+        assert app.state.session_store._client is shared
+        assert app.state.trace_store._client is shared
+        assert app.state.user_store._client is shared
+        assert app.state.login_session_store._client is shared
+        assert app.state.audit_store._client is shared
+
+    assert len(clients) == 1
+    assert clients[0].closed_count == 1
+
+
 def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.app as app_module
     from ecommerce_agent.sessions.registry import SessionRuntime

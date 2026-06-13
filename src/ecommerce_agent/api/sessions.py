@@ -48,14 +48,15 @@ def _approval_client(request: Request, session_id: str, actor: Actor) -> Any:
     user_id = str(actor.spring_user_id)
     clients = getattr(request.app.state, "approval_clients", None)
     if isinstance(clients, dict):
-        client = clients.get(session_id)
+        cache_key = (session_id, actor.user_id)
+        client = clients.get(cache_key)
         if client is None:
             client = make_approval_client(
                 request.app.state.settings,
                 session_id=session_id,
                 user_id=user_id,
             )
-            clients[session_id] = client
+            clients[cache_key] = client
         return client
     return make_approval_client(
         request.app.state.settings,
