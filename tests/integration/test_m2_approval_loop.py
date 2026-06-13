@@ -151,7 +151,7 @@ async def _preflight(settings: Settings) -> None:
 async def _create_session_record(settings: Settings, session_id: str) -> None:
     store = MongoSessionStore.from_settings(settings)
     try:
-        await store.create(session_id)
+        await store.create(session_id, owner_id=str(settings.spring_mcp_user_id))
     finally:
         store.close()
 

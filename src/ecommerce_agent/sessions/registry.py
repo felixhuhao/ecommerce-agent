@@ -11,12 +11,21 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class RuntimeActor:
+    user_id: str
+    spring_user_id: int
+    can_propose: bool
+
+
 @dataclass
 class SessionRuntime:
     session_id: str
     agent: Any
     mcp_client: Any
     sandbox: Any
+    owner_id: str | None = None
+    spring_user_id: int | None = None
     created_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
 
@@ -32,7 +41,7 @@ class SessionRuntime:
             close()
 
 
-BuildRuntime = Callable[[str], Awaitable[SessionRuntime]]
+BuildRuntime = Callable[[str, RuntimeActor], Awaitable[SessionRuntime]]
 
 
 class SessionRegistry:
@@ -52,11 +61,11 @@ class SessionRegistry:
         self._active_turns: set[str] = set()
         self._lock = asyncio.Lock()
 
-    async def create(self) -> str:
+    async def create(self, actor: RuntimeActor) -> str:
         session_id = uuid.uuid4().hex
         evicted: list[SessionRuntime] = []
         try:
-            runtime = await self._build_runtime(session_id)
+            runtime = await self._build_runtime(session_id, actor)
         except Exception:
             await self._close_evicted(evicted)
             raise
@@ -81,23 +90,26 @@ class SessionRegistry:
     async def get_or_create_runtime(
         self,
         session_id: str,
+        actor: RuntimeActor,
         session_known: Callable[[str], Awaitable[bool]],
     ) -> SessionRuntime:
         async with self._lock:
             cached = self._runtimes.get(session_id)
             if cached is not None:
+                self._ensure_actor_matches(cached, actor)
                 cached.touch()
                 return cached
 
         if not await session_known(session_id):
             raise KeyError(session_id)
 
-        runtime = await self._build_runtime(session_id)
+        runtime = await self._build_runtime(session_id, actor)
         evicted: list[SessionRuntime] = []
         loser: SessionRuntime | None = None
         async with self._lock:
             winner = self._runtimes.get(session_id)
             if winner is not None:
+                self._ensure_actor_matches(winner, actor)
                 loser = runtime
                 winner.touch()
             else:
@@ -159,3 +171,10 @@ class SessionRegistry:
             del self._runtimes[oldest.session_id]
             evicted.append(oldest)
         return evicted
+
+    @staticmethod
+    def _ensure_actor_matches(runtime: SessionRuntime, actor: RuntimeActor) -> None:
+        if runtime.owner_id is not None and runtime.owner_id != actor.user_id:
+            raise PermissionError("runtime owner mismatch")
+        if runtime.spring_user_id is not None and runtime.spring_user_id != actor.spring_user_id:
+            raise PermissionError("runtime spring user mismatch")

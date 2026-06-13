@@ -5,6 +5,7 @@ from typing import Any
 
 from ecommerce_agent.approvals import approval_card
 from ecommerce_agent.sessions.bus import SessionBus
+from ecommerce_agent.threads.history import build_history
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import ThreadStore, append_and_publish
 from ecommerce_agent.trace.capture import capture
@@ -174,7 +175,17 @@ async def run_turn(
 ) -> TraceRecord:
     """Run one agent turn: stream live frames, append the answer, then mark done."""
     record = TraceRecord(session_id=session_id, turn_id=turn_id)
-    inputs = {"messages": [{"role": "user", "content": message}]}
+    history: list[dict] = []
+    try:
+        prior = await store.list_messages(session_id)
+        history = build_history(prior, exclude_turn_id=turn_id)
+    except Exception:  # noqa: BLE001 - a memory failure must never abort the turn.
+        logger.warning(
+            "history load failed for session %s; continuing single-message",
+            session_id,
+            exc_info=True,
+        )
+    inputs = {"messages": [*history, {"role": "user", "content": message}]}
     config = {"recursion_limit": recursion_limit}
     raw_events = agent.astream_events(inputs, config=config, version="v2")
     try:

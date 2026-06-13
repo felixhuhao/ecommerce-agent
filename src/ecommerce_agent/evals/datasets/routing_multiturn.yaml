@@ -1,0 +1,45 @@
+- id: mt-confirm-po-500
+  prompt: "yes, do that for 500 units"
+  expected: order-manager
+  tags: [multi-turn, follow-up-confirm]
+  history:
+    - role: user
+      content: "should we restock SKU-12? it looks low"
+    - role: assistant
+      content: "SKU-12 is low. I can propose a purchase order to replenish it."
+- id: mt-confirm-submit
+  prompt: "go ahead and submit it"
+  expected: order-manager
+  tags: [multi-turn, follow-up-confirm]
+  history:
+    - role: user
+      content: "draft a purchase order for SKU-9"
+    - role: assistant
+      content: "Proposed purchase order PO #4471 for SKU-9."
+- id: mt-replenish-same
+  prompt: "do the same for SKU-7"
+  expected: order-manager
+  tags: [multi-turn, follow-up-reference]
+  history:
+    - role: user
+      content: "replenish SKU-3 from supplier 12"
+    - role: assistant
+      content: "Proposed a replenishment purchase order for SKU-3."
+- id: mt-analysis-followup
+  prompt: "and the same for the audio category?"
+  expected: sales-analyst
+  tags: [multi-turn, follow-up-analysis]
+  history:
+    - role: user
+      content: "how did electronics sell last month?"
+    - role: assistant
+      content: "Electronics were down 12% versus the prior month."
+- id: mt-switch-back-to-analysis
+  prompt: "actually hold off - pull its 6-month sales trend first"
+  expected: sales-analyst
+  tags: [multi-turn, follow-up-analysis]
+  history:
+    - role: user
+      content: "draft a purchase order for SKU-9"
+    - role: assistant
+      content: "Proposed purchase order PO #4471 for SKU-9."

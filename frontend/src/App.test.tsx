@@ -73,6 +73,13 @@ function threadMessage(overrides: Partial<ThreadMessage> = {}): ThreadMessage {
   };
 }
 
+const AUTH_ME = {
+  user_id: "alice",
+  username: "alice",
+  role: "operator",
+  spring_user_id: 7,
+};
+
 function renderApp() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -90,6 +97,7 @@ describe("App", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
+        if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
         if (url === "/api/sessions") {
           return new Response(JSON.stringify({ sessions: [] }), {
             status: 200,
@@ -155,6 +163,7 @@ describe("App", () => {
     const sendResponse = deferred<Response>();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: threads.s1 });
       if (url === "/api/sessions/s2/thread") return jsonResponse({ messages: threads.s2 });
@@ -234,6 +243,7 @@ describe("App", () => {
     const getThreadResponse = deferred<Response>();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/approvals/approval-1/approve" && init?.method === "POST") {
         return jsonResponse({ detail: "stale" }, 409);
@@ -282,7 +292,9 @@ describe("App", () => {
       ),
     );
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/thread"),
+      expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/thread", {
+        credentials: "include",
+      }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Session Two/i }));
@@ -304,6 +316,7 @@ describe("App", () => {
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
       if (url === "/api/sessions/s1/artifacts") {
@@ -393,6 +406,7 @@ describe("App", () => {
     let artifactFetches = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
       if (url === "/api/sessions/s1/artifacts") {

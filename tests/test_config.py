@@ -51,3 +51,12 @@ def test_settings_expose_m2_session_defaults() -> None:
 def test_settings_expose_frontend_dist_dir() -> None:
     assert Settings(_env_file=None).frontend_dist_dir == "frontend/dist"
     assert Settings(_env_file=None, frontend_dist_dir="/tmp/x").frontend_dist_dir == "/tmp/x"
+
+
+def test_auth_and_audit_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.auth_cookie_name == "ea_session"
+    assert settings.auth_cookie_secure is False
+    assert settings.auth_session_ttl_seconds == 28800
+    assert settings.audit_retention_days == 90

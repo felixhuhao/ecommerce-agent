@@ -1,0 +1,48 @@
+- id: trend-restock-analysis
+  prompt: analyze why we keep needing to restock electronics
+  expected: sales-analyst
+  tags: [adversarial, keyword-false-positive]
+- id: po-volume-report
+  prompt: show me a report on purchase order volume last quarter
+  expected: sales-analyst
+  tags: [adversarial, keyword-false-positive]
+- id: buy-more-units
+  prompt: we should buy 500 more units of SKU-12 from the cheapest supplier
+  expected: order-manager
+  tags: [adversarial, keyword-false-negative]
+- id: low-stock-reorder
+  prompt: stock is low on blue widgets, can you set up a reorder?
+  expected: order-manager
+  tags: [adversarial, keyword-false-negative]
+- id: sales-by-category
+  prompt: what were total sales by category last month?
+  expected: sales-analyst
+  tags: [straightforward]
+- id: forecast-next-month
+  prompt: forecast next month's sales and chart it
+  expected: sales-analyst
+  tags: [straightforward]
+- id: top-sellers
+  prompt: which products are my top sellers this year?
+  expected: sales-analyst
+  tags: [straightforward]
+- id: inventory-snapshot
+  prompt: how much inventory do we have on hand right now?
+  expected: sales-analyst
+  tags: [straightforward]
+- id: create-po
+  prompt: create a purchase order for 200 units of SKU-9
+  expected: order-manager
+  tags: [straightforward]
+- id: receive-po
+  prompt: receive purchase order 4471
+  expected: order-manager
+  tags: [straightforward]
+- id: update-order-status
+  prompt: mark order 8812 as shipped
+  expected: order-manager
+  tags: [straightforward]
+- id: replenish-supplier
+  prompt: replenish our stock of SKU-3 from supplier 12
+  expected: order-manager
+  tags: [straightforward]

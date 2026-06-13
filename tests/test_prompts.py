@@ -64,6 +64,13 @@ def test_get_coordinator_prompt_is_active_router() -> None:
     assert "approval proposal" in prompt
 
 
+def test_router_classifier_prompt_has_specialists_slot() -> None:
+    prompt = get_prompt("router_classifier")
+
+    assert "{specialists}" in prompt
+    assert "unsure" in prompt
+
+
 def test_get_prompt_unknown_key_raises() -> None:
     with pytest.raises(KeyError, match="not found"):
         get_prompt("does_not_exist")

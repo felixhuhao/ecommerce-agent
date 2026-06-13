@@ -101,7 +101,7 @@ async def test_capture_records_model_call_timing_and_tokens() -> None:
             "run_id": "model-run",
             "data": {
                 "output": SimpleNamespace(
-                    usage_metadata={"input_tokens": 123, "output_tokens": 45}
+                    usage_metadata={"input_tokens": 123, "output_tokens": 45},
                 )
             },
         }
@@ -128,7 +128,7 @@ async def test_capture_extracts_model_tokens_from_response_metadata() -> None:
             "data": {
                 "output": SimpleNamespace(
                     response_metadata={
-                        "token_usage": {"prompt_tokens": 12, "completion_tokens": 7}
+                        "token_usage": {"prompt_tokens": 12, "completion_tokens": 7},
                     }
                 )
             },
@@ -238,3 +238,53 @@ async def test_capture_extracts_chart_artifact_from_wrapped_tool_message() -> No
 
     assert yielded[0].artifact_id == "chart-1"
     assert yielded[0].artifact["src"] == image_src
+
+
+async def test_capture_maps_route_decision_event() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_route_decision",
+            "run_id": "route-run",
+            "data": {
+                "specialist": "order-manager",
+                "source": "classifier",
+                "reason": "po",
+            },
+        }
+
+    record = TraceRecord()
+
+    async for _ in capture(raw_events(), record):
+        pass
+
+    routes = [event for event in record.events if event.event_type == "route_decision"]
+    assert len(routes) == 1
+    assert routes[0].name == "order-manager"
+    assert routes[0].run_id == "route-run"
+    assert routes[0].phase == "end"
+    assert routes[0].result_summary is not None
+    assert "classifier" in routes[0].result_summary
+    assert "po" in routes[0].result_summary
+
+
+async def test_capture_assigns_route_decision_run_id_when_missing() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_route_decision",
+            "data": {"specialist": "sales-analyst", "source": "fallback", "reason": "x"},
+        }
+        yield {
+            "event": "on_route_decision",
+            "data": {"specialist": "order-manager", "source": "classifier", "reason": "y"},
+        }
+
+    record = TraceRecord(trace_id="trace-1")
+
+    async for _ in capture(raw_events(), record):
+        pass
+
+    routes = [event for event in record.events if event.event_type == "route_decision"]
+    assert [event.run_id for event in routes] == [
+        "trace-1:route_decision:1",
+        "trace-1:route_decision:2",
+    ]

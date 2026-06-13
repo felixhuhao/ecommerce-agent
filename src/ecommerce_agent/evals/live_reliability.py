@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
-import importlib.metadata
 import os
 import signal
-import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -14,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from ecommerce_agent.config import Settings
+from ecommerce_agent.evals.metadata import run_metadata
 from ecommerce_agent.mcp_client import VIZ_TOOLS, WRITE_OR_APPROVAL_SPRING_TOOLS
 from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.jsonl import dump_trace
@@ -168,48 +166,6 @@ def _failure_result(
     return result
 
 
-def _prompt_hash() -> str:
-    from ecommerce_agent.prompts.loader import get_prompt
-
-    return hashlib.sha256(get_prompt("sales_analyst").encode("utf-8")).hexdigest()[:16]
-
-
-def _dependency_versions() -> dict[str, str | None]:
-    versions: dict[str, str | None] = {}
-    for package in ("deepagents", "langgraph", "langchain-mcp-adapters", "langchain-openai"):
-        try:
-            versions[package] = importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError:
-            versions[package] = None
-    return versions
-
-
-def _git_commit() -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-    except Exception:
-        return None
-    return result.stdout.strip() or None
-
-
-def _run_metadata(settings: Settings) -> dict:
-    return {
-        "git_commit": _git_commit(),
-        "prompt_hash": _prompt_hash(),
-        "dependency_versions": _dependency_versions(),
-        "model": {
-            "name": settings.llm_model,
-            "base_url": settings.llm_base_url,
-            "temperature": settings.llm_temperature,
-        },
-    }
-
-
 def _wait_for_session_answer(client: object, session_id: str) -> tuple[str, dict]:
     while True:
         response = client.get(f"/api/sessions/{session_id}/thread")
@@ -353,7 +309,7 @@ def run_reliability(
     return {
         "timestamp": time.time(),
         "prompt": prompt,
-        **_run_metadata(settings),
+        **run_metadata(settings, prompt_name="sales_analyst"),
         "n": n,
         "passed": passed,
         "pass_rate": passed / n if n else 0.0,

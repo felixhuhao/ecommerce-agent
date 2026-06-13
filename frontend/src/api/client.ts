@@ -15,27 +15,58 @@ export class ApiError extends Error {
   }
 }
 
+export interface Me {
+  user_id: string;
+  username: string;
+  role: "viewer" | "operator";
+  spring_user_id: number;
+}
+
+function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, { ...init, credentials: "include" });
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new ApiError(res.status);
   return (await res.json()) as T;
 }
 
+export async function getMe(): Promise<Me | null> {
+  const res = await apiFetch("/api/auth/me");
+  if (res.status === 401) return null;
+  return json<Me>(res);
+}
+
+export async function login(username: string, password: string): Promise<Me> {
+  const res = await apiFetch("/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (res.status === 401) throw new Error("invalid credentials");
+  return json<Me>(res);
+}
+
+export async function logout(): Promise<void> {
+  await apiFetch("/api/auth/logout", { method: "POST" });
+}
+
 export async function createSession(): Promise<{ session_id: string }> {
-  return json(await fetch("/api/sessions", { method: "POST" }));
+  return json(await apiFetch("/api/sessions", { method: "POST" }));
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const body = await json<{ sessions: SessionSummary[] }>(await fetch("/api/sessions"));
+  const body = await json<{ sessions: SessionSummary[] }>(await apiFetch("/api/sessions"));
   return body.sessions;
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
-  return json(await fetch(`/api/sessions/${sessionId}`));
+  return json(await apiFetch(`/api/sessions/${sessionId}`));
 }
 
 export async function getThread(sessionId: string): Promise<ThreadMessage[]> {
   const body = await json<{ messages: ThreadMessage[] }>(
-    await fetch(`/api/sessions/${sessionId}/thread`),
+    await apiFetch(`/api/sessions/${sessionId}/thread`),
   );
   return body.messages;
 }
@@ -43,7 +74,7 @@ export async function getThread(sessionId: string): Promise<ThreadMessage[]> {
 export type SendResult = { turnInProgress: true } | { turnInProgress: false; turnId: string };
 
 export async function postMessage(sessionId: string, message: string): Promise<SendResult> {
-  const res = await fetch(`/api/sessions/${sessionId}/messages`, {
+  const res = await apiFetch(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ message }),
@@ -57,7 +88,7 @@ export async function postMessage(sessionId: string, message: string): Promise<S
 export type ApprovalActionResult = { conflict: boolean; body: unknown };
 
 async function approvalAction(url: string, init: RequestInit): Promise<ApprovalActionResult> {
-  const res = await fetch(url, init);
+  const res = await apiFetch(url, init);
   const body = await res.json().catch(() => null);
   if (res.status === 409) return { conflict: true, body };
   if (!res.ok) throw new ApiError(res.status);
@@ -86,20 +117,20 @@ export async function rejectApproval(
 }
 
 export async function getHealth(): Promise<HealthStatus> {
-  return json(await fetch("/health"));
+  return json(await apiFetch("/health"));
 }
 
 export async function getMcpHealth(): Promise<McpHealth> {
-  return json(await fetch("/health/mcp"));
+  return json(await apiFetch("/health/mcp"));
 }
 
 export async function getTrace(sessionId: string, turnId: string): Promise<TraceTimeline> {
-  return json(await fetch(`/api/sessions/${sessionId}/turns/${turnId}/trace`));
+  return json(await apiFetch(`/api/sessions/${sessionId}/turns/${turnId}/trace`));
 }
 
 export async function getArtifacts(sessionId: string): Promise<ArtifactSummary[]> {
   const body = await json<{ artifacts: ArtifactSummary[] }>(
-    await fetch(`/api/sessions/${sessionId}/artifacts`),
+    await apiFetch(`/api/sessions/${sessionId}/artifacts`),
   );
   return body.artifacts;
 }

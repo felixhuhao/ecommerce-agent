@@ -114,8 +114,13 @@ class ApprovalClient:
         return payload
 
 
-def make_approval_client(settings: Settings, *, session_id: str) -> ApprovalClient:
-    return ApprovalClient.from_settings(settings, session_id=session_id)
+def make_approval_client(
+    settings: Settings,
+    *,
+    session_id: str,
+    user_id: str | None = None,
+) -> ApprovalClient:
+    return ApprovalClient.from_settings(settings, session_id=session_id, user_id=user_id)
 
 
 def approval_card(approval: dict[str, Any]) -> dict[str, Any]:

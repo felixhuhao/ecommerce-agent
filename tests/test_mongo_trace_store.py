@@ -9,8 +9,8 @@ class FakeTraces:
         self.docs: dict[tuple[str, str], dict] = {}
         self.indexes: list[tuple] = []
 
-    async def create_index(self, keys, unique=False):  # noqa: ANN001
-        self.indexes.append((tuple(keys), unique))
+    async def create_index(self, *args, **kwargs):  # noqa: ANN001
+        self.indexes.append((args, kwargs))
 
     async def update_one(self, filt, update, upsert=False):  # noqa: ANN001
         key = (filt["session_id"], filt["turn_id"])
@@ -57,7 +57,10 @@ async def test_first_save_creates_unique_compound_index_once() -> None:
     await store.save(TraceRecord(session_id="s1", turn_id="t1"))
     await store.save(TraceRecord(session_id="s1", turn_id="t2"))
 
-    assert traces.indexes == [((("session_id", 1), ("turn_id", 1)), True)]
+    assert traces.indexes == [
+        (([("session_id", 1), ("turn_id", 1)],), {"unique": True}),
+        (("expire_at",), {"expireAfterSeconds": 0}),
+    ]
 
 
 def test_close_closes_client() -> None:

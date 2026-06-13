@@ -3,8 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions.bus import SessionBus
+from ecommerce_agent.sessions.factory import POLICY_DENIED_MESSAGE, RoutedSessionAgent
 from ecommerce_agent.sessions.turn import run_turn
+from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
 
 
@@ -112,6 +115,19 @@ class ChartAgent:
         }
 
 
+class RecordingAgent:
+    def __init__(self) -> None:
+        self.seen_inputs: dict | None = None
+
+    async def astream_events(self, inputs, config, version):
+        self.seen_inputs = inputs
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="answer")},
+        }
+
+
 @pytest.mark.asyncio
 async def test_run_turn_publishes_events_and_appends_answer() -> None:
     store = InMemoryThreadStore()
@@ -142,6 +158,193 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_prepends_prior_thread_history() -> None:
+    store = InMemoryThreadStore()
+    await store.append(ThreadMessage(session_id="s1", type="user", content="prior q", turn_id="t0"))
+    await store.append(
+        ThreadMessage(session_id="s1", type="agent_answer", content="prior a", turn_id="t0")
+    )
+    agent = RecordingAgent()
+
+    await run_turn(
+        agent=agent,
+        message="follow up",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert agent.seen_inputs is not None
+    contents = [m["content"] for m in agent.seen_inputs["messages"]]
+    assert contents == ["prior q", "prior a", "follow up"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_excludes_in_flight_user_message_by_turn_id() -> None:
+    store = InMemoryThreadStore()
+    await store.append(
+        ThreadMessage(session_id="s1", type="user", content="same text", turn_id="t1")
+    )
+    agent = RecordingAgent()
+
+    await run_turn(
+        agent=agent,
+        message="same text",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert agent.seen_inputs is not None
+    contents = [m["content"] for m in agent.seen_inputs["messages"]]
+    assert contents == ["same text"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_degrades_to_single_message_when_history_load_fails() -> None:
+    class FailingListStore(InMemoryThreadStore):
+        async def list_messages(self, session_id: str):
+            raise RuntimeError("mongo down")
+
+    store = FailingListStore()
+    agent = RecordingAgent()
+
+    record = await run_turn(
+        agent=agent,
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert agent.seen_inputs is not None
+    assert [m["content"] for m in agent.seen_inputs["messages"]] == ["hello"]
+    assert record.answer == "answer"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_records_route_decision_event() -> None:
+    class StubRouter:
+        async def route(self, message: str, *, history=()) -> RouteDecision:
+            assert message == "what were sales last month?"
+            return RouteDecision("sales-analyst", "classifier", "analytics")
+
+    class LeafAgent:
+        async def astream_events(
+            self,
+            inputs: dict,
+            config: dict,
+            version: str,
+        ) -> AsyncIterator[dict]:
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "final",
+                "data": {"chunk": SimpleNamespace(content="hi")},
+            }
+
+    agent = RoutedSessionAgent(
+        router=StubRouter(),
+        agents={"sales-analyst": LeafAgent(), "order-manager": LeafAgent()},
+        default_specialist="sales-analyst",
+    )
+
+    record = await run_turn(
+        agent=agent,
+        message="what were sales last month?",
+        session_id="s1",
+        turn_id="t1",
+        store=InMemoryThreadStore(),
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    kinds = [(event.event_type, event.name) for event in record.events]
+    assert ("route_decision", "sales-analyst") in kinds
+
+
+@pytest.mark.asyncio
+async def test_run_turn_records_policy_denial_event_and_answer() -> None:
+    class StubRouter:
+        async def route(self, message: str, *, history=()) -> RouteDecision:
+            return RouteDecision("order-manager", "classifier", "write intent")
+
+    agent = RoutedSessionAgent(
+        router=StubRouter(),
+        agents={"sales-analyst": RecordingAgent()},
+        default_specialist="sales-analyst",
+    )
+    store = InMemoryThreadStore()
+
+    record = await run_turn(
+        agent=agent,
+        message="create a purchase order",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].content == POLICY_DENIED_MESSAGE
+    assert any(
+        event.event_type == "policy_denial"
+        and event.name == "order-manager"
+        and event.status == "denied"
+        for event in record.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_cross_agent_memory_order_manager_sees_prior_analyst_answer() -> None:
+    store = InMemoryThreadStore()
+    await store.append(
+        ThreadMessage(session_id="s1", type="user", content="how are electronics?", turn_id="t0")
+    )
+    await store.append(
+        ThreadMessage(
+            session_id="s1",
+            type="agent_answer",
+            content="Electronics are the worst performer.",
+            turn_id="t0",
+        )
+    )
+
+    order_manager = RecordingAgent()
+
+    class StickyRouter:
+        async def route(self, message: str, *, history=()) -> RouteDecision:
+            return RouteDecision("order-manager", "classifier", "write intent")
+
+    agent = RoutedSessionAgent(
+        router=StickyRouter(),
+        agents={"sales-analyst": RecordingAgent(), "order-manager": order_manager},
+        default_specialist="sales-analyst",
+    )
+
+    await run_turn(
+        agent=agent,
+        message="restock the worst performer",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=5,
+    )
+
+    assert order_manager.seen_inputs is not None
+    contents = [m["content"] for m in order_manager.seen_inputs["messages"]]
+    assert "Electronics are the worst performer." in contents
+    assert contents[-1] == "restock the worst performer"
 
 
 @pytest.mark.asyncio

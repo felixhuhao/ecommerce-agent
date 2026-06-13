@@ -240,10 +240,49 @@ def _to_trace_event(
             artifact_id=artifact.get("id") if artifact else None,
             artifact=artifact,
             approval_id=(
-                extract_approval_id(output)
-                if raw.get("name") == "request_approval"
-                else None
+                extract_approval_id(output) if raw.get("name") == "request_approval" else None
             ),
+        )
+
+    if event_type == "on_route_decision":
+        info = data if isinstance(data, dict) else {}
+        specialist = info.get("specialist")
+        source = info.get("source")
+        reason = info.get("reason", "")
+        route_count = sum(1 for event in record.events if event.event_type == "route_decision")
+        route_run_id = (
+            str(run_id)
+            if run_id is not None
+            else f"{record.trace_id}:route_decision:{route_count + 1}"
+        )
+        return TraceEvent(
+            event_type="route_decision",
+            name=specialist,
+            phase="end",
+            status="ok",
+            trace_id=record.trace_id,
+            run_id=route_run_id,
+            result_summary=f"{source}: {reason}",
+        )
+
+    if event_type == "on_policy_denied":
+        info = data if isinstance(data, dict) else {}
+        specialist = info.get("specialist")
+        reason = info.get("reason", "role_not_permitted")
+        denial_count = sum(1 for event in record.events if event.event_type == "policy_denial")
+        denial_run_id = (
+            str(run_id)
+            if run_id is not None
+            else f"{record.trace_id}:policy_denied:{denial_count + 1}"
+        )
+        return TraceEvent(
+            event_type="policy_denial",
+            name=specialist,
+            phase="end",
+            status="denied",
+            trace_id=record.trace_id,
+            run_id=denial_run_id,
+            result_summary=str(reason),
         )
 
     return None

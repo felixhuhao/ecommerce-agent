@@ -8,17 +8,38 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ecommerce_agent.api.sessions import _session_events, approve_approval
+from ecommerce_agent.api.auth import router as auth_router
+from ecommerce_agent.api.sessions import _approval_client, _session_events, approve_approval
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.approvals import ApprovalApiError
+from ecommerce_agent.auth.dependencies import current_actor
+from ecommerce_agent.auth.login_sessions import InMemoryLoginSessionStore
+from ecommerce_agent.auth.models import Actor, Role, User
+from ecommerce_agent.auth.passwords import hash_password
+from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
 from ecommerce_agent.sessions.bus import SessionBus
-from ecommerce_agent.sessions.registry import SessionRegistry, SessionRuntime
+from ecommerce_agent.sessions.registry import RuntimeActor, SessionRegistry, SessionRuntime
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 from ecommerce_agent.trace.store import InMemoryTraceStore
+
+TEST_USER = User(
+    user_id="alice",
+    username="alice",
+    password_hash=hash_password("pw"),
+    role=Role.OPERATOR,
+    spring_user_id=7,
+    created_at="2026-06-13T00:00:00+00:00",
+)
+TEST_ACTOR = Actor.from_user(TEST_USER)
+TEST_RUNTIME_ACTOR = RuntimeActor(
+    user_id=TEST_ACTOR.user_id,
+    spring_user_id=TEST_ACTOR.spring_user_id,
+    can_propose=True,
+)
 
 
 class FakeAgent:
@@ -100,6 +121,10 @@ class FakeApprovalClient:
 def build_test_app() -> FastAPI:
     app = FastAPI()
     app.state.settings = Settings(_env_file=None)
+    app.state.user_store = InMemoryUserStore()
+    app.state.user_store._by_id[TEST_USER.user_id] = TEST_USER
+    app.state.user_store._by_username[TEST_USER.username] = TEST_USER.user_id
+    app.state.login_session_store = InMemoryLoginSessionStore()
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = InMemorySessionStore()
     app.state.session_bus = SessionBus()
@@ -108,12 +133,14 @@ def build_test_app() -> FastAPI:
     app.state.trace_store = InMemoryTraceStore()
     app.state.approval_clients = {}
 
-    async def build_runtime(session_id: str) -> SessionRuntime:
+    async def build_runtime(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         return SessionRuntime(
             session_id=session_id,
             agent=FakeAgent(),
             mcp_client=object(),
             sandbox=object(),
+            owner_id=actor.user_id,
+            spring_user_id=actor.spring_user_id,
         )
 
     app.state.session_registry = SessionRegistry(
@@ -122,8 +149,15 @@ def build_test_app() -> FastAPI:
         max_live_sessions=50,
     )
     app.state.approval_client_factory = lambda session_id: FakeApprovalClient()
+    app.dependency_overrides[current_actor] = lambda: TEST_ACTOR
+    app.include_router(auth_router)
     app.include_router(sessions_router)
     return app
+
+
+def _login(client: TestClient) -> None:
+    response = client.post("/api/auth/login", json={"username": "alice", "password": "pw"})
+    assert response.status_code == 200
 
 
 def test_create_session_returns_id() -> None:
@@ -144,7 +178,7 @@ def test_message_runs_turn_and_thread_reload_shows_it() -> None:
         thread = _wait_for_thread(client, session_id, expected_types=["user", "agent_answer"])
         types = [message["type"] for message in thread["messages"]]
         assert types == ["user", "agent_answer"]
-        assert thread["messages"][0]["turn_id"] is None
+        assert thread["messages"][0]["turn_id"] == turn_id
         assert thread["messages"][0]["seq"] == 1
         assert thread["messages"][1]["seq"] == 2
         assert _wait_for_trace(client.app, session_id, turn_id).answer == "Hi there."
@@ -170,6 +204,82 @@ def test_create_writes_record_and_list_returns_summary() -> None:
 def test_get_unknown_session_404() -> None:
     with TestClient(build_test_app()) as client:
         assert client.get("/api/sessions/ghost").status_code == 404
+
+
+def test_approval_client_uses_actor_spring_user_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+    made = object()
+
+    def fake_make(settings: Settings, *, session_id: str, user_id: str | None = None) -> object:
+        captured["session_id"] = session_id
+        captured["user_id"] = user_id
+        return made
+
+    monkeypatch.setattr("ecommerce_agent.api.sessions.make_approval_client", fake_make)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=Settings(_env_file=None),
+                approval_clients={},
+                approval_client_factory=None,
+            )
+        )
+    )
+    actor = Actor(user_id="alice", username="alice", role=Role.OPERATOR, spring_user_id=42)
+
+    client = _approval_client(request, "sess-1", actor)  # type: ignore[arg-type]
+
+    assert client is made
+    assert captured == {"session_id": "sess-1", "user_id": "42"}
+
+
+def test_approval_client_cache_is_keyed_by_actor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made: list[dict[str, object]] = []
+
+    def fake_make(settings: Settings, *, session_id: str, user_id: str | None = None) -> object:
+        client = object()
+        made.append({"session_id": session_id, "user_id": user_id, "client": client})
+        return client
+
+    monkeypatch.setattr("ecommerce_agent.api.sessions.make_approval_client", fake_make)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=Settings(_env_file=None),
+                approval_clients={},
+                approval_client_factory=None,
+            )
+        )
+    )
+    alice = Actor(user_id="alice", username="alice", role=Role.OPERATOR, spring_user_id=42)
+    bob = Actor(user_id="bob", username="bob", role=Role.OPERATOR, spring_user_id=43)
+
+    alice_client = _approval_client(request, "sess-1", alice)  # type: ignore[arg-type]
+    bob_client = _approval_client(request, "sess-1", bob)  # type: ignore[arg-type]
+    alice_again = _approval_client(request, "sess-1", alice)  # type: ignore[arg-type]
+
+    assert alice_client is alice_again
+    assert bob_client is not alice_client
+    assert [(item["session_id"], item["user_id"]) for item in made] == [
+        ("sess-1", "42"),
+        ("sess-1", "43"),
+    ]
+    assert set(request.app.state.approval_clients) == {("sess-1", "alice"), ("sess-1", "bob")}
+
+
+def test_viewer_cannot_approve_or_reject() -> None:
+    app = build_test_app()
+    viewer = Actor(user_id="viewer", username="viewer", role=Role.VIEWER, spring_user_id=8)
+    app.dependency_overrides[current_actor] = lambda: viewer
+
+    with TestClient(app) as client:
+        approve = client.post("/api/sessions/s1/approvals/a1/approve")
+        reject = client.post("/api/sessions/s1/approvals/a1/reject")
+
+    assert approve.status_code == 403
+    assert reject.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -286,8 +396,8 @@ async def test_second_concurrent_send_409_is_side_effect_free() -> None:
     from ecommerce_agent.api.sessions import MessageRequest, post_message
 
     app = build_test_app()
-    session_id = await app.state.session_registry.create()
-    await app.state.session_store.create(session_id)
+    session_id = await app.state.session_registry.create(TEST_RUNTIME_ACTOR)
+    await app.state.session_store.create(session_id, owner_id=TEST_ACTOR.user_id)
     assert await app.state.session_registry.try_begin_turn(session_id) is True
 
     with pytest.raises(HTTPException) as exc:
@@ -295,6 +405,7 @@ async def test_second_concurrent_send_409_is_side_effect_free() -> None:
             session_id,
             MessageRequest(message="hi"),
             SimpleNamespace(app=app),  # type: ignore[arg-type]
+            TEST_ACTOR,
         )
 
     assert exc.value.status_code == 409
@@ -307,14 +418,15 @@ async def test_message_to_reaped_session_rehydrates() -> None:
     from ecommerce_agent.api.sessions import MessageRequest, post_message
 
     app = build_test_app()
-    session_id = await app.state.session_registry.create()
-    await app.state.session_store.create(session_id)
+    session_id = await app.state.session_registry.create(TEST_RUNTIME_ACTOR)
+    await app.state.session_store.create(session_id, owner_id=TEST_ACTOR.user_id)
     await app.state.session_registry.close_all()
 
     result = await post_message(
         session_id,
         MessageRequest(message="hi"),
         SimpleNamespace(app=app),  # type: ignore[arg-type]
+        TEST_ACTOR,
     )
     assert "turn_id" in result
     await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
@@ -351,12 +463,13 @@ async def test_approve_endpoint_publishes_execution_result_to_session_bus() -> N
     approval_client = FakeApprovalClient()
     app.state.approval_client_factory = lambda session_id: approval_client
 
-    await app.state.session_store.create("s1")
+    await app.state.session_store.create("s1", owner_id=TEST_ACTOR.user_id)
     async with app.state.session_bus.subscription("s1") as sub:
         result = await approve_approval(
             "s1",
             "a1",
             SimpleNamespace(app=app),  # type: ignore[arg-type]
+            TEST_ACTOR,
         )
         approval_event = await asyncio.wait_for(sub.queue.get(), timeout=1)
         execution_event = await asyncio.wait_for(sub.queue.get(), timeout=1)
@@ -485,11 +598,11 @@ async def test_turn_persists_trace_to_store() -> None:
     from ecommerce_agent.api.sessions import MessageRequest, post_message
 
     app = build_test_app()
-    session_id = await app.state.session_registry.create()
-    await app.state.session_store.create(session_id)
+    session_id = await app.state.session_registry.create(TEST_RUNTIME_ACTOR)
+    await app.state.session_store.create(session_id, owner_id=TEST_ACTOR.user_id)
 
     result = await post_message(
-        session_id, MessageRequest(message="hello"), SimpleNamespace(app=app)
+        session_id, MessageRequest(message="hello"), SimpleNamespace(app=app), TEST_ACTOR
     )
     turn_id = result["turn_id"]
     await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
@@ -509,11 +622,14 @@ async def test_trace_save_failure_is_contained() -> None:
             raise RuntimeError("mongo down")
 
     app.state.trace_store = FailingTraceStore()
-    session_id = await app.state.session_registry.create()
-    await app.state.session_store.create(session_id)
+    session_id = await app.state.session_registry.create(TEST_RUNTIME_ACTOR)
+    await app.state.session_store.create(session_id, owner_id=TEST_ACTOR.user_id)
 
     result = await post_message(
-        session_id, MessageRequest(message="hi"), SimpleNamespace(app=app)
+        session_id,
+        MessageRequest(message="hi"),
+        SimpleNamespace(app=app),
+        TEST_ACTOR,
     )
     turn_id = result["turn_id"]
     await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
@@ -608,10 +724,10 @@ async def test_list_artifacts_projects_from_messages_newest_first() -> None:
     from ecommerce_agent.api.sessions import list_artifacts
 
     app = build_test_app()
-    session_id = await app.state.session_registry.create()
-    await app.state.session_store.create(session_id)
+    session_id = await app.state.session_registry.create(TEST_RUNTIME_ACTOR)
+    await app.state.session_store.create(session_id, owner_id=TEST_ACTOR.user_id)
 
-    empty = await list_artifacts(session_id, SimpleNamespace(app=app))
+    empty = await list_artifacts(session_id, SimpleNamespace(app=app), TEST_ACTOR)
     assert empty["artifacts"] == []
 
     await app.state.thread_store.append(
@@ -653,7 +769,7 @@ async def test_list_artifacts_projects_from_messages_newest_first() -> None:
         )
     )
 
-    body = await list_artifacts(session_id, SimpleNamespace(app=app))
+    body = await list_artifacts(session_id, SimpleNamespace(app=app), TEST_ACTOR)
     artifacts = body["artifacts"]
     assert [artifact["id"] for artifact in artifacts] == ["c1", "c0"]
     assert artifacts[0]["turn_id"] == "t2"

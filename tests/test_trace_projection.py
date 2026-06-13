@@ -93,3 +93,25 @@ def test_project_timeline_ignores_answer_chunk_and_unknown_events() -> None:
 
     assert timeline["spans"] == []
     assert timeline["span_count"] == 0
+
+
+def test_project_timeline_includes_route_decision() -> None:
+    record = TraceRecord(session_id="s1", turn_id="t1")
+    record.events.append(
+        TraceEvent(
+            event_type="route_decision",
+            name="order-manager",
+            phase="end",
+            status="ok",
+            result_summary="classifier: po",
+            ts=0.5,
+        )
+    )
+
+    timeline = project_timeline(record)
+
+    assert timeline["span_count"] == 1
+    span = timeline["spans"][0]
+    assert span["kind"] == "route_decision"
+    assert span["name"] == "order-manager"
+    assert span["result_summary"] == "classifier: po"

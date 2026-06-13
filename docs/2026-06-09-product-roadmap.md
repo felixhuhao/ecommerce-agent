@@ -181,9 +181,20 @@ Capabilities:
 - Audit search and retention policy.
 - Prompt/model/tool versioning.
 - Evaluation suite for routing, tool choice, approval safety, and answer groundedness.
-- Model/provider fallback and operational alerts.
+- ~~Model/provider fallback and operational alerts.~~ **Deprioritized 2026-06-12.** Near-zero
+  portfolio value and ongoing cost (a second provider kept in sync *and* eval'd, since a different
+  model is different behavior). The demo-reliability R7 cares about is better served by the existing
+  pattern — a known-good fallback query + health-gating before demos (the viz seam is the model).
+  Revisit only for a real production deployment with a real second provider.
 - Deployment packaging.
-- Optional memory/preferences once permission and audit foundations are in place.
+- ~~Optional memory/preferences once permission and audit foundations are in place.~~ **Cross-session
+  memory cut 2026-06-12.** This product's authoritative business state lives in MySQL/Spring and is
+  re-queried fresh every turn, so an agent that *remembers* business facts across sessions memorizes a
+  stale copy of the source of truth — low value and an R9-style correctness/staleness risk. The
+  appealing "what changed since last login" demo is a query over the audit/thread store, not agent
+  memory. Within-session memory (M4 slice 2) was the valuable piece. If anything resurfaces here it is
+  a small **explicit operator-preferences** record (default period, categories, units) — never
+  auto-learned — and only after RBAC/audit land.
 
 Acceptance:
 - A future agent/tool/model change can be reviewed against regression tests and audit expectations.
@@ -217,7 +228,11 @@ Acceptance:
 
 - `customer-insight`, `procurement-planner`, `catalog-manager` agents.
 - A2A peer-agent integrations.
-- Skills/memory auto-learning.
+- ~~Skills/memory auto-learning.~~ **Cut 2026-06-12** (see M4): auto-learned cross-session memory is
+  redundant against authoritative MySQL/Spring data and an R9-style staleness risk; at most an explicit
+  operator-preferences record later.
+- ~~Model/provider fallback.~~ **Deprioritized 2026-06-12** (see M4): known-good fallback query +
+  health-gating cover the demo-reliability risk; a second LLM provider is production-only.
 - WebSocket full-chain monitoring beyond SSE tool events.
 - PDF export.
 - Batch/delete operations.

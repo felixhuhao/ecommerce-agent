@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from ecommerce_agent.threads.messages import ThreadMessage
@@ -11,6 +13,11 @@ if TYPE_CHECKING:
     from ecommerce_agent.sessions.bus import SessionBus
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_iso(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 class ThreadStore(Protocol):
@@ -38,9 +45,16 @@ class ThreadStore(Protocol):
 class InMemoryThreadStore:
     """Async, test-only ThreadStore. Mongo is the prod source of truth."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        retention_days: int = 90,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._messages: dict[str, list[ThreadMessage]] = defaultdict(list)
         self._lock = asyncio.Lock()
+        self._retention_days = retention_days
+        self._now = now
 
     async def append(self, message: ThreadMessage) -> ThreadMessage:
         async with self._lock:
@@ -64,6 +78,21 @@ class InMemoryThreadStore:
 
     async def ping(self) -> bool:
         return True
+
+    async def sweep_expired(self) -> int:
+        cutoff = self._now() - timedelta(days=self._retention_days)
+        removed = 0
+        async with self._lock:
+            for session_id, messages in list(self._messages.items()):
+                kept = [
+                    message for message in messages if _parse_iso(message.created_at) >= cutoff
+                ]
+                removed += len(messages) - len(kept)
+                if kept:
+                    self._messages[session_id] = kept
+                else:
+                    self._messages.pop(session_id, None)
+        return removed
 
 
 async def append_and_publish(

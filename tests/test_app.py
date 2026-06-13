@@ -5,8 +5,15 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from ecommerce_agent.api.app import create_app
+from ecommerce_agent.api.app import _evict_approval_clients_for_sessions, create_app
+from ecommerce_agent.audit.query import InMemoryAuditStore
+from ecommerce_agent.auth.dependencies import current_actor
+from ecommerce_agent.auth.login_sessions import InMemoryLoginSessionStore
+from ecommerce_agent.auth.models import Actor, Role, User
+from ecommerce_agent.auth.passwords import hash_password
+from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
+from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.store import InMemoryThreadStore
 from ecommerce_agent.trace.store import InMemoryTraceStore
@@ -82,10 +89,31 @@ def make_settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **overrides)
 
 
+TEST_USER = User(
+    user_id="alice",
+    username="alice",
+    password_hash=hash_password("pw"),
+    role=Role.OPERATOR,
+    spring_user_id=7,
+    created_at="2026-06-13T00:00:00+00:00",
+)
+TEST_ACTOR = Actor.from_user(TEST_USER)
+
+
 def use_in_memory_stores(app) -> None:  # noqa: ANN001
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = InMemorySessionStore()
     app.state.trace_store = InMemoryTraceStore()
+    use_in_memory_auth_stores(app)
+
+
+def use_in_memory_auth_stores(app) -> None:  # noqa: ANN001
+    app.state.user_store = InMemoryUserStore()
+    app.state.user_store._by_id[TEST_USER.user_id] = TEST_USER
+    app.state.user_store._by_username[TEST_USER.username] = TEST_USER.user_id
+    app.state.login_session_store = InMemoryLoginSessionStore()
+    app.state.audit_store = InMemoryAuditStore()
+    app.dependency_overrides[current_actor] = lambda: TEST_ACTOR
 
 
 def wait_for_thread_types(client: TestClient, session_id: str, expected_types: list[str]) -> dict:
@@ -116,6 +144,7 @@ def test_health_reports_external_mcp_configuration() -> None:
 
 def test_mcp_health_reports_spring_tool_visibility() -> None:
     app = create_app(settings=make_settings(), mcp_client=HealthyFakeMcpClient())
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -153,6 +182,7 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
         settings=make_settings(modelscope_mcp_url="http://modelscope.example/mcp"),
         mcp_client=HealthySpringAndModelscopeFakeMcpClient(),
     )
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -174,6 +204,7 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
 
 def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
     app = create_app(settings=make_settings(), mcp_client=FailingFakeMcpClient())
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         response = client.get("/health/mcp")
@@ -197,6 +228,7 @@ def test_lifespan_closes_thread_store() -> None:
     app = create_app(settings=make_settings())
     app.state.thread_store = store
     app.state.session_store = InMemorySessionStore()
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -216,6 +248,7 @@ def test_lifespan_closes_session_store() -> None:
     app = create_app(settings=make_settings())
     app.state.thread_store = InMemoryThreadStore()
     app.state.session_store = store
+    use_in_memory_auth_stores(app)
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -234,7 +267,7 @@ def test_lifespan_closes_cached_approval_clients() -> None:
     approval_client = FakeApprovalClient()
     app = create_app(settings=make_settings())
     use_in_memory_stores(app)
-    app.state.approval_clients = {"s1": approval_client}
+    app.state.approval_clients = {("s1", "alice"): approval_client}
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -243,16 +276,111 @@ def test_lifespan_closes_cached_approval_clients() -> None:
     assert app.state.approval_clients == {}
 
 
+@pytest.mark.asyncio
+async def test_evicts_approval_clients_for_reaped_sessions() -> None:
+    class FakeApprovalClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stale_alice = FakeApprovalClient()
+    stale_bob = FakeApprovalClient()
+    active = FakeApprovalClient()
+    clients = {
+        ("stale", "alice"): stale_alice,
+        ("stale", "bob"): stale_bob,
+        ("active", "alice"): active,
+    }
+
+    await _evict_approval_clients_for_sessions(clients, ["stale"])
+
+    assert clients == {("active", "alice"): active}
+    assert stale_alice.closed is True
+    assert stale_bob.closed is True
+    assert active.closed is False
+
+
+def test_lifespan_shares_default_mongo_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.app as app_module
+
+    class FakeCollection:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.indexes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def create_index(self, *args: object, **kwargs: object) -> str:
+            self.indexes.append((args, kwargs))
+            return f"{self.name}_idx"
+
+    class FakeDatabase:
+        def __init__(self) -> None:
+            self.collections: dict[str, FakeCollection] = {}
+
+        def __getitem__(self, name: str) -> FakeCollection:
+            if name not in self.collections:
+                self.collections[name] = FakeCollection(name)
+            return self.collections[name]
+
+    class FakeMongoClient:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.closed_count = 0
+            self.databases: dict[str, FakeDatabase] = {}
+            self.admin = SimpleNamespace(command=self.command)
+
+        def __getitem__(self, name: str) -> FakeDatabase:
+            if name not in self.databases:
+                self.databases[name] = FakeDatabase()
+            return self.databases[name]
+
+        async def command(self, name: str) -> dict[str, int]:
+            assert name == "ping"
+            return {"ok": 1}
+
+        def close(self) -> None:
+            self.closed_count += 1
+
+    clients: list[FakeMongoClient] = []
+
+    def fake_client(url: str) -> FakeMongoClient:
+        client = FakeMongoClient(url)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(app_module, "AsyncIOMotorClient", fake_client)
+    app = create_app(
+        settings=make_settings(mongo_url="mongodb://mongo"),
+        mcp_client=HealthyFakeMcpClient(),
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/health/mcp").status_code == 200
+        shared = clients[0]
+        assert app.state.thread_store._client is shared
+        assert app.state.session_store._client is shared
+        assert app.state.trace_store._client is shared
+        assert app.state.user_store._client is shared
+        assert app.state.login_session_store._client is shared
+        assert app.state.audit_store._client is shared
+
+    assert len(clients) == 1
+    assert clients[0].closed_count == 1
+
+
 def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.app as app_module
     from ecommerce_agent.sessions.registry import SessionRuntime
 
-    async def fake_build_runtime(session_id: str) -> SessionRuntime:
+    async def fake_build_runtime(session_id: str, actor: RuntimeActor) -> SessionRuntime:
         return SessionRuntime(
             session_id=session_id,
             agent=FakeAgent(),
             mcp_client=object(),
             sandbox=object(),
+            owner_id=actor.user_id,
+            spring_user_id=actor.spring_user_id,
         )
 
     monkeypatch.setattr(app_module, "make_runtime_builder", lambda settings: fake_build_runtime)
