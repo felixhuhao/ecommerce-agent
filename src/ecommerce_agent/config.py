@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     auth_session_ttl_seconds: int = Field(default=28800, gt=0)
     audit_retention_days: int = Field(default=90, gt=0)
 
+    # M4 slice 6: answer grounding
+    grounding_evidence_max_chars: int = Field(default=2000, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

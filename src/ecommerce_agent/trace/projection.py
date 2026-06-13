@@ -16,6 +16,7 @@ def _new_span(event: TraceEvent, span_id: str) -> dict[str, Any]:
         "duration_ms": event.duration_ms,
         "args_summary": None,
         "result_summary": None,
+        "evidence": None,
         "tokens_in": None,
         "tokens_out": None,
         "span_id": span_id,
@@ -33,6 +34,7 @@ def _merge(span: dict[str, Any], event: TraceEvent) -> None:
         span["status"] = event.status
         span["duration_ms"] = event.duration_ms
         span["result_summary"] = event.result_summary or span["result_summary"]
+        span["evidence"] = event.evidence or span["evidence"]
         span["tokens_in"] = event.tokens_in
         span["tokens_out"] = event.tokens_out
         span["error_message"] = event.error_message

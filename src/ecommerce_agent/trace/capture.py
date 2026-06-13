@@ -6,6 +6,7 @@ from typing import Any
 from ecommerce_agent.approvals import extract_approval_id
 from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
+from ecommerce_agent.trace.tools import is_data_bearing
 
 _SUMMARY_LIMIT = 500
 _IMAGE_DATA_URI_PREFIX = "data:image/"
@@ -17,6 +18,13 @@ def _summarize(value: Any) -> str | None:
     text = value if isinstance(value, str) else repr(value)
     suffix = "..." if len(text) > _SUMMARY_LIMIT else ""
     return f"{text[:_SUMMARY_LIMIT]}{suffix}"
+
+
+def _evidence(value: Any, *, cap: int) -> str | None:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else repr(value)
+    return text[:cap]
 
 
 def _text_from_chunk(chunk: Any) -> str:
@@ -161,6 +169,7 @@ def _to_trace_event(
     raw: dict,
     record: TraceRecord,
     model_chunks: dict[str, str],
+    evidence_max_chars: int,
 ) -> TraceEvent | None:
     event_type = raw.get("event")
     run_id = raw.get("run_id")
@@ -228,6 +237,9 @@ def _to_trace_event(
             if raw.get("name") in VIZ_TOOLS
             else None
         )
+        evidence = (
+            _evidence(output, cap=evidence_max_chars) if is_data_bearing(raw.get("name")) else None
+        )
         return TraceEvent(
             event_type="tool_call",
             name=raw.get("name"),
@@ -236,6 +248,7 @@ def _to_trace_event(
             run_id=run_id,
             parent_span_id=_parent_span(raw),
             result_summary=_summarize(output),
+            evidence=evidence,
             tool_call_id=run_id,
             artifact_id=artifact.get("id") if artifact else None,
             artifact=artifact,
@@ -291,12 +304,14 @@ def _to_trace_event(
 async def capture(
     raw_events: AsyncIterator[dict],
     record: TraceRecord,
+    *,
+    evidence_max_chars: int = 2000,
 ) -> AsyncIterator[TraceEvent]:
     """Map raw LangChain events into TraceEvents and accumulate one turn record."""
     model_chunks: dict[str, str] = {}
     span_starts: dict[tuple[str, str], TraceEvent] = {}
     async for raw in raw_events:
-        event = _to_trace_event(raw, record, model_chunks)
+        event = _to_trace_event(raw, record, model_chunks, evidence_max_chars)
         if event is None:
             continue
         span_key = None

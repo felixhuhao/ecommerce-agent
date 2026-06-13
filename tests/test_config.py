@@ -60,3 +60,7 @@ def test_auth_and_audit_defaults() -> None:
     assert settings.auth_cookie_secure is False
     assert settings.auth_session_ttl_seconds == 28800
     assert settings.audit_retention_days == 90
+
+
+def test_grounding_evidence_default() -> None:
+    assert Settings(_env_file=None).grounding_evidence_max_chars == 2000
