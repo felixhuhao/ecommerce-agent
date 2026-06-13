@@ -267,7 +267,7 @@ def build_stub_sales_analyst_tools() -> list[BaseTool]:
     return tools
 
 
-def build_stub_sales_analyst(settings: Any) -> Any:
+def build_stub_sales_analyst(settings: Any, *, backend: Any | None = None) -> Any:
     from ecommerce_agent.agents import build_sales_analyst
     from ecommerce_agent.models import get_primary_model
 
@@ -279,7 +279,7 @@ def build_stub_sales_analyst(settings: Any) -> Any:
         spring_read_tools=spring_read_tools,
         staging_tools=staging_tools,
         viz_tools=[],
-        backend=None,
+        backend=backend,
     )
 
 

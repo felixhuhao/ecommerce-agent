@@ -2,9 +2,12 @@ from ecommerce_agent.evals.groundedness import (
     ClaimVerdict,
     GroundednessCaseResult,
     aggregate,
+    evidence_for,
     load_groundedness_cases,
+    parse_judge_response,
     score_answer,
 )
+from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 
 def fake_judge_factory(verdicts):
@@ -77,3 +80,49 @@ def test_dataset_loads_with_family_tags() -> None:
 
     assert len(cases) >= 6
     assert all(case.prompt and case.tags for case in cases)
+
+
+def test_parse_judge_response_extracts_verdicts() -> None:
+    raw = '{"claims": [{"verdict": "supported"}, {"verdict": "unsupported"}]}'
+
+    verdicts = parse_judge_response(raw)
+
+    assert [verdict.verdict for verdict in verdicts] == ["supported", "unsupported"]
+
+
+def test_parse_judge_response_rejects_unknown_verdict() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="invalid verdict"):
+        parse_judge_response('{"claims": [{"verdict": "maybe"}]}')
+
+
+def test_evidence_for_joins_data_bearing_spans_only() -> None:
+    record = TraceRecord(
+        events=[
+            TraceEvent(
+                event_type="tool_call",
+                name="get_statistics",
+                phase="end",
+                evidence="stats evidence",
+            ),
+            TraceEvent(
+                event_type="tool_call",
+                name="write_file",
+                phase="end",
+                evidence="file evidence",
+            ),
+            TraceEvent(
+                event_type="tool_call",
+                name="execute",
+                phase="end",
+                result_summary="forecast evidence",
+            ),
+        ]
+    )
+
+    evidence = evidence_for(record)
+
+    assert "[get_statistics] stats evidence" in evidence
+    assert "[execute] forecast evidence" in evidence
+    assert "write_file" not in evidence
