@@ -220,7 +220,11 @@ async def run_groundedness_eval(settings: Any) -> GroundednessReport:
             config={"recursion_limit": 15},
             version="v2",
         )
-        async for _ in capture(raw, record, evidence_max_chars=settings.grounding_evidence_max_chars):
+        async for _ in capture(
+            raw,
+            record,
+            evidence_max_chars=settings.grounding_evidence_max_chars,
+        ):
             pass
         record.finish()
         grounding = build_grounding(record)
