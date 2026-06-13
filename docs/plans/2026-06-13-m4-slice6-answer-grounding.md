@@ -45,7 +45,7 @@
 
 **Modified tests:** `tests/test_tool_choice.py` (import move), `tests/test_config.py`, `tests/test_cli.py`, `tests/test_trace_projection.py`.
 
-**Frontend (Task 9):** confidence-badge + Sources-expander components + tests (match existing patterns).
+**Frontend (Task 9):** `frontend/src/types.ts` DTO updates, confidence-badge + Sources-expander components + tests (match existing patterns).
 
 ---
 
@@ -97,9 +97,25 @@ def test_data_bearing_allowlist():
     assert not is_data_bearing("request_approval")
 
 
-def test_sandbox_evidence_fired_needs_execute_end():
+def test_sandbox_evidence_fired_needs_execute_end_with_output():
     assert not sandbox_evidence_fired(_rec(_start("execute")))
-    assert sandbox_evidence_fired(_rec(_start("execute"), _end("execute")))
+    assert not sandbox_evidence_fired(
+        _rec(
+            _start("execute"),
+            TraceEvent(event_type="tool_call", name="execute", phase="end"),
+        )
+    )
+    assert sandbox_evidence_fired(
+        _rec(
+            _start("execute"),
+            TraceEvent(
+                event_type="tool_call",
+                name="execute",
+                phase="end",
+                result_summary="forecast=1250",
+            ),
+        )
+    )
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -144,9 +160,13 @@ def is_data_bearing(tool_name: str | None) -> bool:
 
 
 def sandbox_evidence_fired(record: TraceRecord) -> bool:
-    """True if a sandbox code-execution (`execute`) span completed."""
+    """True if a sandbox code-execution (`execute`) span completed with output."""
     return any(
-        event.event_type == "tool_call" and event.phase == "end" and event.name == EXECUTE_TOOL
+        event.event_type == "tool_call"
+        and event.phase == "end"
+        and event.name == EXECUTE_TOOL
+        and event.status == "ok"
+        and bool(event.evidence or event.result_summary)
         for event in record.events
     )
 ```
@@ -470,8 +490,15 @@ def test_authoritative_when_get_statistics_fired():
 def test_derived_when_execute_evidence_and_no_statistics():
     rec = _rec("Forecast is 1,250 units.",
                _start("stage_sales_analysis_inputs"), _end("stage_sales_analysis_inputs"),
-               _start("execute"), _end("execute", result="forecast=1250"))
+               _start("execute"), _end("execute", result="forecast=1250", evidence="forecast=1250"))
     assert build_grounding(rec).authority == Authority.DERIVED
+
+
+def test_execute_without_output_is_not_derived():
+    rec = _rec("Forecast is 1,250 units.",
+               _start("stage_sales_analysis_inputs"), _end("stage_sales_analysis_inputs"),
+               _start("execute"), _end("execute", result=None, evidence=None))
+    assert build_grounding(rec).authority == Authority.UNVERIFIED
 
 
 def test_unverified_when_numeric_claim_but_no_authority_tool():
@@ -1047,22 +1074,35 @@ RUN_LIVE = os.getenv("RUN_LIVE_LLM") == "1"
 
 
 @pytest.mark.skipif(not RUN_LIVE, reason="RUN_LIVE_LLM not set")
-async def test_groundedness_live_gate():
+async def test_groundedness_live_gate(tmp_path):
     from ecommerce_agent.config import get_settings
+    from ecommerce_agent.evals.metadata import run_metadata
     from ecommerce_agent.evals.groundedness import run_groundedness_eval
+    from ecommerce_agent.trace.jsonl import append_eval_baseline
 
-    report = await run_groundedness_eval(get_settings())
+    settings = get_settings()
+    report = await run_groundedness_eval(settings)
+    append_eval_baseline(
+        {
+            **run_metadata(settings, prompt_name="sales_analyst"),
+            "eval": "groundedness",
+            "unsupported_claim_rate": report.unsupported_claim_rate,
+            "partial_rate": report.partial_rate,
+            "total_claims": report.total_claims,
+            "per_authority": report.per_authority,
+        },
+        str(tmp_path / "groundedness-baseline.jsonl"),
+    )
     assert report.unsupported_claim_rate == 0.0  # safety gate
     assert report.n >= 6
 ```
 
 - [ ] **Step 6: Implement `run_groundedness_eval` (live wiring)**
 
-Add to `src/ecommerce_agent/evals/groundedness.py`. It builds the real analyst over stub Spring tools + a NoOp sandbox backend whose `execute` returns canned analysis stdout (so forecast/`derived` cases produce an `execute` evidence span without Docker), runs each case through `capture`, computes grounding + evidence, judges, and aggregates + persists a baseline line.
+Add to `src/ecommerce_agent/evals/groundedness.py`. It builds the real analyst over stub Spring tools + a NoOp sandbox backend whose `execute` returns canned analysis stdout (so forecast/`derived` cases produce an `execute` evidence span without Docker), runs each case through `capture`, computes grounding + evidence, judges, and returns an aggregate report. The live integration test writes the JSONL baseline, matching the existing eval convention.
 
 ```python
 async def run_groundedness_eval(settings: Any) -> GroundednessReport:
-    from ecommerce_agent.evals.metadata import run_metadata
     from ecommerce_agent.evals.tool_choice import build_stub_sales_analyst  # stub Spring tools + real model
     from ecommerce_agent.grounding.build import build_grounding
     from ecommerce_agent.models import get_primary_model
@@ -1092,12 +1132,10 @@ async def run_groundedness_eval(settings: Any) -> GroundednessReport:
                 authority=grounding.authority.value,
             )
         )
-    report = aggregate(results)
-    _persist_baseline(settings, report)  # run_metadata(...) + report fields, JSONL append
-    return report
+    return aggregate(results)
 ```
 
-> **Executor note (read before writing):** `build_stub_sales_analyst` in `evals/tool_choice.py` builds the analyst with stub Spring tools and `backend=None`. For groundedness, forecast cases need an `execute` evidence span, so add a `backend` parameter (or a sibling `build_stub_grounding_analyst`) that wires a small `NoOpSandbox` returning canned `execute` stdout. Reuse the slice-4 stub-fidelity machinery; do not re-invent the staging stub. Confirm the `BaseSandbox` method surface in `sandbox/backend.py` (`id`, `execute`, `upload_files`, `download_files`, `close`, `idle_seconds`) when writing the NoOp backend. Implement `_persist_baseline` mirroring slice-4's JSONL writer with `run_metadata(settings, prompt_name="sales_analyst")`.
+> **Executor note (read before writing):** `build_stub_sales_analyst` in `evals/tool_choice.py` builds the analyst with stub Spring tools and `backend=None`. For groundedness, forecast cases need an `execute` evidence span, so add a `backend` parameter (or a sibling `build_stub_grounding_analyst`) that wires a small `NoOpSandbox` returning canned `execute` stdout. Reuse the slice-4 stub-fidelity machinery; do not re-invent the staging stub. Confirm the `BaseSandbox` method surface in `sandbox/backend.py` (`id`, `execute`, `upload_files`, `download_files`, `close`, `idle_seconds`) when writing the NoOp backend. Baseline JSONL writing stays in the live integration test with `append_eval_baseline(..., tmp_path / "groundedness-baseline.jsonl")`, matching the existing routing/approval/tool-choice eval convention; `run_groundedness_eval` should just return a report.
 
 - [ ] **Step 7: Run offline suite (live test skips without RUN_LIVE_LLM)**
 
@@ -1188,10 +1226,10 @@ git commit -m "feat(cli): eval groundedness subcommand"
 ## Task 9: Frontend — confidence badge + Sources expander
 
 **Files:**
-- Modify: `frontend/src/api/client.ts` (types), answer/thread components
+- Modify: `frontend/src/types.ts` (DTOs), `frontend/src/api/client.ts` if the trace fetch helper needs adjustment, answer/thread components
 - Create: a confidence-badge component + a Sources-expander component + tests
 
-> **Before starting:** read the existing answer/thread rendering and the trace panel in `frontend/src/`
+> **Before starting:** read `frontend/src/types.ts`, the existing answer/thread rendering, and the trace panel in `frontend/src/`
 > to match the framework (Vitest/RTL), styling, and how the trace timeline (`/turns/{turn_id}/trace`)
 > is already fetched/rendered. The Sources expander reuses that trace data. Run the frontend suite with
 > the command in `frontend/package.json`.
