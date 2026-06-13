@@ -210,10 +210,13 @@ export function ApprovalWorkspace({
 
   useEffect(() => {
     if (!focusApprovalId) return;
-    document
-      .querySelector(`[data-approval-id="${focusApprovalId}"]`)
-      ?.scrollIntoView({ block: "center" });
-    onFocusApprovalHandled?.();
+    const timeoutId = window.setTimeout(() => {
+      document
+        .querySelector(`[data-approval-id="${focusApprovalId}"]`)
+        ?.scrollIntoView?.({ block: "center" });
+      onFocusApprovalHandled?.();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [focusApprovalId, onFocusApprovalHandled]);
 
   return (

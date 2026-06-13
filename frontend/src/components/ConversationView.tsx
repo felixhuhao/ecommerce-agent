@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Activity, RefreshCw, Send, Wrench } from "lucide-react";
+import { Activity, Check, RefreshCw, Send, Wrench, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
@@ -16,6 +16,9 @@ interface ConversationViewProps {
   busyNote: string | null;
   error: string | null;
   onSend: (message: string) => Promise<void> | void;
+  onApprove?: (approvalId: string) => Promise<void> | void;
+  onReject?: (approvalId: string, reason: string | undefined) => Promise<void> | void;
+  pendingApprovalId?: string | null;
   onInspect?: (turnId: string) => void;
   traceTimeline?: TraceTimeline;
   inspectedTurnId?: string | null;
@@ -80,6 +83,109 @@ function imageArtifacts(result: Record<string, unknown> | null): ImageArtifact[]
   });
 }
 
+interface ApprovalState {
+  status: string | null;
+  reason: string | null;
+}
+
+function approvalStates(messages: ThreadMessage[]): Map<string, ApprovalState> {
+  const states = new Map<string, ApprovalState>();
+  for (const message of messages) {
+    if (!message.approval_id) continue;
+    const current = states.get(message.approval_id) ?? { status: null, reason: null };
+    states.set(message.approval_id, {
+      status: message.status ?? current.status,
+      reason: message.reason ?? current.reason,
+    });
+  }
+  return states;
+}
+
+function inlineCardTitle(message: ThreadMessage) {
+  const title = message.card?.title;
+  if (typeof title === "string" && title.trim()) return title;
+  return message.tool_name ?? "Approval";
+}
+
+function headerStatus(message: ThreadMessage) {
+  if (message.type === "agent_proposal" && message.approval_id && message.card) {
+    return null;
+  }
+  return message.status;
+}
+
+function InlineApprovalCard({
+  message,
+  state,
+  pendingApprovalId,
+  onApprove,
+  onReject,
+}: {
+  message: ThreadMessage;
+  state: ApprovalState | null;
+  pendingApprovalId: string | null;
+  onApprove?: (approvalId: string) => Promise<void> | void;
+  onReject?: (approvalId: string, reason: string | undefined) => Promise<void> | void;
+}) {
+  const [reason, setReason] = useState("");
+  if (message.type !== "agent_proposal" || !message.approval_id || !message.card) {
+    return null;
+  }
+
+  const status = state?.status ?? message.status ?? "pending";
+  const isPending = status === "pending";
+  const isBusy = pendingApprovalId === message.approval_id;
+
+  return (
+    <section className="inline-approval" aria-label="Approval card">
+      <div className="inline-approval-head">
+        <div>
+          <span className="inline-approval-kicker">Approval card</span>
+          <strong>{inlineCardTitle(message)}</strong>
+          <code>{message.approval_id}</code>
+        </div>
+        <span className={`status-pill status-${status}`}>{status}</span>
+      </div>
+      {state?.reason ? (
+        <p className="inline-approval-note">
+          <span>Reason</span>
+          {state.reason}
+        </p>
+      ) : null}
+      {isPending && onApprove && onReject ? (
+        <div className="inline-approval-actions">
+          <input
+            aria-label={`Reject reason for ${message.approval_id}`}
+            value={reason}
+            onChange={(event) => setReason(event.currentTarget.value)}
+            disabled={isBusy}
+          />
+          <button
+            className="icon-button danger"
+            type="button"
+            onClick={() => onReject(message.approval_id as string, reason.trim() || undefined)}
+            disabled={isBusy}
+            title="Reject"
+          >
+            <X size={17} aria-hidden="true" />
+            <span className="sr-only">Reject</span>
+          </button>
+          <button
+            className="icon-button success"
+            type="button"
+            onClick={() => onApprove(message.approval_id as string)}
+            disabled={isBusy}
+            title="Approve"
+          >
+            <Check size={17} aria-hidden="true" />
+            <span className="sr-only">Approve</span>
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function ConversationView({
   messages,
   provisionalAnswer,
@@ -89,6 +195,9 @@ export function ConversationView({
   busyNote,
   error,
   onSend,
+  onApprove,
+  onReject,
+  pendingApprovalId = null,
   onInspect,
   traceTimeline,
   inspectedTurnId = null,
@@ -97,6 +206,7 @@ export function ConversationView({
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const approvals = approvalStates(messages);
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
@@ -145,6 +255,7 @@ export function ConversationView({
         ) : null}
         {messages.map((message) => {
           const artifacts = imageArtifacts(message.result);
+          const status = headerStatus(message);
           return (
             <article
               className={messageClass(message.type)}
@@ -154,11 +265,11 @@ export function ConversationView({
               <header>
                 <div className="message-header-left">
                   <span>{LABELS[message.type]}</span>
-                  {message.grounding ? (
+                  {message.type !== "agent_proposal" && message.grounding ? (
                     <ConfidenceBadge authority={message.grounding.authority} />
                   ) : null}
                 </div>
-                {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
+                {status ? <span className={`status-pill status-${status}`}>{status}</span> : null}
                 {onInspect && message.turn_id && (message.type === "agent_answer" || message.type === "agent_proposal") ? (
                   <button
                     type="button"
@@ -170,6 +281,13 @@ export function ConversationView({
                 ) : null}
               </header>
               <MessageBody type={message.type} content={message.content} />
+              <InlineApprovalCard
+                message={message}
+                state={message.approval_id ? approvals.get(message.approval_id) ?? null : null}
+                pendingApprovalId={pendingApprovalId}
+                onApprove={onApprove}
+                onReject={onReject}
+              />
               {message.grounding ? (
                 <SourcesExpander
                   grounding={message.grounding}

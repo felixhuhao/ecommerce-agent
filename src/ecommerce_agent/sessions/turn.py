@@ -48,9 +48,20 @@ def _chart_artifacts(record: TraceRecord) -> list[dict[str, Any]]:
     return artifacts
 
 
-def _grounding_payload(record: TraceRecord) -> dict[str, Any] | None:
+def _grounding_payload(
+    record: TraceRecord,
+    *,
+    suppress_unverified_without_sources: bool = False,
+) -> dict[str, Any] | None:
     grounding = build_grounding(record)
     if grounding.authority == Authority.NOT_APPLICABLE and not grounding.diagnostic:
+        return None
+    if (
+        suppress_unverified_without_sources
+        and grounding.authority == Authority.UNVERIFIED
+        and not grounding.sources
+        and not grounding.diagnostic
+    ):
         return None
     return grounding.to_dict()
 
@@ -107,8 +118,8 @@ async def _append_turn_result(
     approval_client: Any | None,
 ) -> None:
     approval_events = _request_approval_events(record)
-    grounding = _grounding_payload(record)
     if not approval_events:
+        grounding = _grounding_payload(record)
         artifacts = _chart_artifacts(record)
         await append_and_publish(
             store,
@@ -125,6 +136,8 @@ async def _append_turn_result(
             ),
         )
         return
+
+    grounding = _grounding_payload(record, suppress_unverified_without_sources=True)
 
     approval_id = next((event.approval_id for event in reversed(approval_events)), None)
     if not approval_id or approval_client is None:

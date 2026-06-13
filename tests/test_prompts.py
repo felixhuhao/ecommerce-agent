@@ -43,6 +43,8 @@ def test_get_order_manager_prompt_is_nonempty_and_approval_only() -> None:
     assert "Java canonicalizes unitCost" in prompt
     assert "purchase order totalCost" in prompt
     assert "retail price" in prompt
+    assert "Do not call request_approval until" in prompt
+    assert "confirm the relevant facts with read tools first" in prompt
 
 
 def test_get_coordinator_prompt_is_active_router() -> None:

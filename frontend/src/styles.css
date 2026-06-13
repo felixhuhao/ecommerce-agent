@@ -987,6 +987,82 @@ button:disabled {
   color: var(--emerald-deep);
 }
 
+.inline-approval {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.inline-approval-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inline-approval-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.inline-approval-kicker {
+  color: var(--gold-deep);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.inline-approval strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.inline-approval code {
+  width: max-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 2px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper-sunken);
+  color: var(--emerald-deep);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+.inline-approval-note {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+}
+
+.inline-approval-note span {
+  margin-right: 7px;
+  color: var(--gold-deep);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.inline-approval-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px 38px;
+  gap: 8px;
+}
+
+.inline-approval-actions input {
+  min-width: 0;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper-inset);
+  padding: 8px 10px;
+}
+
 /* ---------- Chips / pills -------------------------------------------------- */
 
 .tool-chip,

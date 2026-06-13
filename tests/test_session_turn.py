@@ -108,6 +108,35 @@ class ApprovalWithDataAgent:
         }
 
 
+class NumericApprovalWithoutDataAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "request_approval",
+            "data": {
+                "input": {
+                    "toolName": "purchase_order_create",
+                    "operationType": "create",
+                }
+            },
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "data": {"output": {"approvalId": "approval-1"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Proposed restock of 25 units.")},
+        }
+
+
 class MultiStepAgent:
     async def astream_events(
         self,
@@ -228,6 +257,15 @@ def test_grounding_payload_for_authoritative_answer() -> None:
 
 def test_grounding_payload_none_for_not_applicable() -> None:
     assert _grounding_payload(TraceRecord(answer="Hi there.")) is None
+
+
+def test_grounding_payload_can_suppress_source_less_proposal_noise() -> None:
+    record = TraceRecord(answer="Proposed restock of 25 units.")
+
+    assert _grounding_payload(record) is not None
+    assert (
+        _grounding_payload(record, suppress_unverified_without_sources=True) is None
+    )
 
 
 @pytest.mark.asyncio
@@ -593,6 +631,26 @@ async def test_run_turn_attaches_grounding_to_agent_proposal() -> None:
     assert [source["tool_name"] for source in messages[0].grounding["sources"]] == [
         "inventory_query"
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_suppresses_source_less_proposal_grounding() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=NumericApprovalWithoutDataAgent(),
+        message="restock product 1",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+        approval_client=FakeApprovalClient(),
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].type == "agent_proposal"
+    assert messages[0].grounding is None
 
 
 @pytest.mark.asyncio

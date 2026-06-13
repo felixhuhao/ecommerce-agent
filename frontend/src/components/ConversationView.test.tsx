@@ -236,6 +236,94 @@ describe("ConversationView", () => {
     expect(onInspect).toHaveBeenCalledWith("proposal-turn");
   });
 
+  it("keeps proposal header label while still showing grounding sources", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        messages={[
+          message({
+            type: "agent_proposal",
+            grounding: {
+              authority: "unverified",
+              diagnostic: null,
+              sources: [
+                {
+                  span_id: "span-1",
+                  tool_name: "inventory_query",
+                  args_summary: '{"sku":"SKU-9"}',
+                  result_summary: "stock rows",
+                },
+              ],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Proposal")).toBeInTheDocument();
+    expect(screen.queryByText("Unverified")).toBeNull();
+    expect(screen.getByText("Sources (1)")).toBeInTheDocument();
+  });
+
+  it("renders inline approval controls for proposal messages with cards", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(
+      <ConversationView
+        {...baseProps()}
+        onApprove={onApprove}
+        onReject={onReject}
+        messages={[
+          message({
+            type: "agent_proposal",
+            approval_id: "approval-1",
+            card: { title: "Create purchase order" },
+            status: "pending",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Approval card")).toBeInTheDocument();
+    expect(screen.getByText("Create purchase order")).toBeInTheDocument();
+    expect(screen.getByText("approval-1")).toBeInTheDocument();
+    expect(screen.getAllByText("pending")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onApprove).toHaveBeenCalledWith("approval-1");
+  });
+
+  it("hides inline approval actions after a proposal is rejected", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        messages={[
+          message({
+            seq: 1,
+            type: "agent_proposal",
+            approval_id: "approval-1",
+            card: { title: "Create purchase order" },
+            status: "pending",
+          }),
+          message({
+            seq: 2,
+            type: "approval_status",
+            approval_id: "approval-1",
+            status: "rejected",
+            reason: "too costly",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Approval card")).toBeInTheDocument();
+    expect(screen.getAllByText("rejected").length).toBeGreaterThan(0);
+    expect(screen.queryByText("pending")).toBeNull();
+    expect(screen.getByText("too costly")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
   it("shows no Inspect control on operator messages", () => {
     render(
       <ConversationView

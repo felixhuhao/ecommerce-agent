@@ -283,9 +283,9 @@ describe("App", () => {
       (source) => source.url === "/api/sessions/s1/stream",
     );
     act(() => firstStream?.emit("thread.append", { message: staleProposal }));
-    expect(await screen.findByText("approval-1")).toBeInTheDocument();
+    expect(await screen.findAllByText("approval-1")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0]);
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/sessions/s1/approvals/approval-1/approve",
@@ -392,6 +392,82 @@ describe("App", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Inspect/i }));
     expect(await screen.findByText("order_query")).toBeInTheDocument();
+  });
+
+  it("opens the approvals rail when a pending proposal arrives", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const sessions: SessionSummary[] = [
+      {
+        session_id: "s1",
+        title: "S1",
+        created_at: "2026-06-10T00:00:00Z",
+        last_message_preview: null,
+        message_count: 0,
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
+      if (url === "/api/sessions") return jsonResponse({ sessions });
+      if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
+      if (url === "/api/sessions/s1/artifacts") {
+        return jsonResponse({ session_id: "s1", artifacts: [] });
+      }
+      if (url === "/health") {
+        return jsonResponse({
+          status: "ok",
+          app: "a",
+          environment: "t",
+          configured_mcp_servers: ["spring"],
+          agent_ready: true,
+          components: { mongo: { status: "ok" }, sandbox: { status: "ok" }, model: { status: "ok" } },
+        });
+      }
+      if (url === "/health/mcp") {
+        return jsonResponse({ status: "ok", servers: { spring: { status: "ok", tool_count: 1 } } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+
+    await waitFor(() =>
+      expect(FakeEventSource.sources.some((source) => source.url === "/api/sessions/s1/stream")).toBe(
+        true,
+      ),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Trace" }));
+    expect(screen.getByRole("tab", { name: "Trace" })).toHaveAttribute("aria-selected", "true");
+
+    const stream = FakeEventSource.sources.find((source) => source.url === "/api/sessions/s1/stream");
+    act(() =>
+      stream?.emit("thread.append", {
+        message: threadMessage({
+          message_id: "proposal-1",
+          seq: 2,
+          type: "agent_proposal",
+          content: "Create a purchase order",
+          approval_id: "approval-1",
+          card: { title: "Create purchase order", totalCost: 9000 },
+          tool_name: "purchase_order_create",
+          status: "pending",
+        }),
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /Approvals/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(screen.getAllByText("Create purchase order").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("approval-1").length).toBeGreaterThanOrEqual(2);
   });
 
   it("refetches artifacts when a running turn finishes", async () => {
