@@ -73,6 +73,16 @@ def test_parser_accepts_eval_tool_choice() -> None:
     assert callable(args.func)
 
 
+def test_parser_accepts_eval_groundedness() -> None:
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["eval", "groundedness"])
+
+    assert args.command == "eval"
+    assert args.eval_target == "groundedness"
+    assert callable(args.func)
+
+
 def test_parser_still_accepts_eval_routing() -> None:
     parser = cli.build_parser()
 
@@ -233,3 +243,32 @@ def test_eval_tool_choice_dispatch_runs_branch(
     out = capsys.readouterr().out
     assert "tool-choice accuracy=1.00" in out
     assert "aggregate_authority_miss_rate=0.00" in out
+
+
+def test_eval_groundedness_dispatch_runs_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import ecommerce_agent.config as config_module
+    import ecommerce_agent.evals.groundedness as gd
+    from ecommerce_agent.evals.groundedness import GroundednessReport
+
+    monkeypatch.setattr(config_module, "get_settings", lambda: object())
+
+    async def fake_run(settings):
+        return GroundednessReport(
+            n=8,
+            unsupported_claim_rate=0.0,
+            partial_rate=0.1,
+            total_claims=20,
+            per_authority={"authoritative": {"supported": 18, "partial": 2, "unsupported": 0}},
+            cases=[],
+        )
+
+    monkeypatch.setattr(gd, "run_groundedness_eval", fake_run)
+
+    cli.run_eval_command(argparse.Namespace(eval_target="groundedness"))
+
+    out = capsys.readouterr().out
+    assert "groundedness n=8" in out
+    assert "unsupported_claim_rate=0.000" in out
