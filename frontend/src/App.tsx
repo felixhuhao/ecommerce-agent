@@ -69,16 +69,20 @@ export function App() {
     },
   });
 
-  const handleLogout = useCallback(async () => {
-    await logout();
-    queryClient.clear();
+  const resetAuthenticatedState = useCallback(() => {
     queryClient.setQueryData(["auth", "me"], null);
   }, [queryClient]);
 
+  const handleLogout = useCallback(() => {
+    resetAuthenticatedState();
+    queryClient.removeQueries({ predicate: ({ queryKey }) => queryKey[0] !== "auth" });
+    void logout().catch(() => undefined);
+  }, [queryClient, resetAuthenticatedState]);
+
   const handleUnauthorized = useCallback(() => {
-    queryClient.clear();
-    queryClient.setQueryData(["auth", "me"], null);
-  }, [queryClient]);
+    resetAuthenticatedState();
+    queryClient.removeQueries({ predicate: ({ queryKey }) => queryKey[0] !== "auth" });
+  }, [queryClient, resetAuthenticatedState]);
 
   if (meQuery.isLoading) {
     return <div className="auth-loading" role="status">Loading</div>;
@@ -160,7 +164,7 @@ function OperatorConsole({
   onUnauthorized,
 }: {
   actor: Me;
-  onLogout: () => Promise<void>;
+  onLogout: () => void;
   onUnauthorized: () => void;
 }) {
   const queryClient = useQueryClient();
