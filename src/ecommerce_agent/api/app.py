@@ -38,6 +38,8 @@ from ecommerce_agent.sessions.store import MongoSessionStore
 from ecommerce_agent.threads.mongo import MongoThreadStore
 from ecommerce_agent.trace.mongo import MongoTraceStore
 
+ApprovalClientCache = dict[tuple[str, str], Any]
+
 
 def make_runtime_builder(settings: Settings):
     async def build_runtime(session_id: str, actor):
@@ -177,7 +179,11 @@ async def _reap_loop(app: FastAPI) -> None:
     try:
         while True:
             await asyncio.sleep(60)
-            await registry.reap_idle()
+            reaped_session_ids = await registry.reap_idle()
+            await _evict_approval_clients_for_sessions(
+                getattr(app.state, "approval_clients", {}),
+                reaped_session_ids,
+            )
             for store in (
                 getattr(app.state, "thread_store", None),
                 getattr(app.state, "trace_store", None),
@@ -189,14 +195,30 @@ async def _reap_loop(app: FastAPI) -> None:
         pass
 
 
-async def _close_approval_clients(clients: dict[Any, Any]) -> None:
+async def _close_approval_client(client: Any) -> None:
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+
+
+async def _close_approval_clients(clients: ApprovalClientCache) -> None:
     for client in clients.values():
-        close = getattr(client, "aclose", None) or getattr(client, "close", None)
-        if callable(close):
-            result = close()
-            if inspect.isawaitable(result):
-                await result
+        await _close_approval_client(client)
     clients.clear()
+
+
+async def _evict_approval_clients_for_sessions(
+    clients: ApprovalClientCache,
+    session_ids: list[str],
+) -> None:
+    if not session_ids:
+        return
+    reaped = set(session_ids)
+    stale_keys = [key for key in clients if key[0] in reaped]
+    for key in stale_keys:
+        await _close_approval_client(clients.pop(key))
 
 
 def configured_mcp_servers(settings: Settings) -> list[str]:

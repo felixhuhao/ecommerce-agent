@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from ecommerce_agent.api.app import create_app
+from ecommerce_agent.api.app import _evict_approval_clients_for_sessions, create_app
 from ecommerce_agent.audit.query import InMemoryAuditStore
 from ecommerce_agent.auth.dependencies import current_actor
 from ecommerce_agent.auth.login_sessions import InMemoryLoginSessionStore
@@ -267,13 +267,39 @@ def test_lifespan_closes_cached_approval_clients() -> None:
     approval_client = FakeApprovalClient()
     app = create_app(settings=make_settings())
     use_in_memory_stores(app)
-    app.state.approval_clients = {"s1": approval_client}
+    app.state.approval_clients = {("s1", "alice"): approval_client}
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
 
     assert approval_client.closed is True
     assert app.state.approval_clients == {}
+
+
+@pytest.mark.asyncio
+async def test_evicts_approval_clients_for_reaped_sessions() -> None:
+    class FakeApprovalClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stale_alice = FakeApprovalClient()
+    stale_bob = FakeApprovalClient()
+    active = FakeApprovalClient()
+    clients = {
+        ("stale", "alice"): stale_alice,
+        ("stale", "bob"): stale_bob,
+        ("active", "alice"): active,
+    }
+
+    await _evict_approval_clients_for_sessions(clients, ["stale"])
+
+    assert clients == {("active", "alice"): active}
+    assert stale_alice.closed is True
+    assert stale_bob.closed is True
+    assert active.closed is False
 
 
 def test_lifespan_shares_default_mongo_client(monkeypatch: pytest.MonkeyPatch) -> None:
