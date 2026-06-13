@@ -1,0 +1,25 @@
+cases:
+  - id: gd-sales-by-category
+    prompt: "what were total sales by category last month?"
+    tags: [aggregate]
+  - id: gd-top-sellers
+    prompt: "which products are my top sellers this year?"
+    tags: [aggregate]
+  - id: gd-order-count
+    prompt: "how many orders did we get last week?"
+    tags: [aggregate]
+  - id: gd-forecast-sales
+    prompt: "forecast next month's sales"
+    tags: [forecast]
+  - id: gd-category-trends
+    prompt: "which categories are trending up or down over the last 6 months?"
+    tags: [forecast]
+  - id: gd-price-correlation
+    prompt: "is there a correlation between price and units sold?"
+    tags: [forecast]
+  - id: gd-product-cost
+    prompt: "what's the unit cost of SKU-9?"
+    tags: [lookup]
+  - id: gd-supplier
+    prompt: "who supplies SKU-3?"
+    tags: [lookup]
