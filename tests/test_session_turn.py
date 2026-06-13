@@ -6,9 +6,10 @@ import pytest
 from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.factory import POLICY_DENIED_MESSAGE, RoutedSessionAgent
-from ecommerce_agent.sessions.turn import run_turn
+from ecommerce_agent.sessions.turn import _grounding_payload, run_turn
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
+from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 
 class FakeAgent:
@@ -66,6 +67,47 @@ class ApprovalAgent:
         }
 
 
+class ApprovalWithDataAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "inventory_query",
+            "run_id": "inventory",
+            "data": {"input": {"sku": "SKU-9"}},
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "inventory_query",
+            "run_id": "inventory",
+            "data": {"output": [{"sku": "SKU-9", "onHand": 2}]},
+        }
+        yield {
+            "event": "on_tool_start",
+            "name": "request_approval",
+            "data": {
+                "input": {
+                    "toolName": "purchase_order_create",
+                    "operationType": "create",
+                }
+            },
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "data": {"output": {"approvalId": "approval-1"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Proposed restock of 25 units.")},
+        }
+
+
 class MultiStepAgent:
     async def astream_events(
         self,
@@ -115,6 +157,32 @@ class ChartAgent:
         }
 
 
+class BigEvidenceAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "get_statistics",
+            "run_id": "stats",
+            "data": {"input": {"metric": "sales"}},
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "get_statistics",
+            "run_id": "stats",
+            "data": {"output": "abcdef"},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Total was $12.")},
+        }
+
+
 class RecordingAgent:
     def __init__(self) -> None:
         self.seen_inputs: dict | None = None
@@ -126,6 +194,40 @@ class RecordingAgent:
             "run_id": "final",
             "data": {"chunk": SimpleNamespace(content="answer")},
         }
+
+
+def test_grounding_payload_for_authoritative_answer() -> None:
+    record = TraceRecord(
+        answer="Total was $42,180.",
+        events=[
+            TraceEvent(
+                event_type="tool_call",
+                name="get_statistics",
+                phase="start",
+                tool_call_id="g1",
+            ),
+            TraceEvent(
+                event_type="tool_call",
+                name="get_statistics",
+                phase="end",
+                tool_call_id="g1",
+                result_summary="rows",
+                evidence="rows",
+                args_summary="{}",
+            ),
+        ],
+    )
+
+    payload = _grounding_payload(record)
+
+    assert payload is not None
+    assert payload["authority"] == "authoritative"
+    assert payload["sources"][0]["span_id"] == "g1"
+    assert "evidence" not in payload["sources"][0]
+
+
+def test_grounding_payload_none_for_not_applicable() -> None:
+    assert _grounding_payload(TraceRecord(answer="Hi there.")) is None
 
 
 @pytest.mark.asyncio
@@ -158,6 +260,47 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+    assert messages[0].grounding is None
+
+
+@pytest.mark.asyncio
+async def test_run_turn_attaches_grounding_to_agent_answer() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=BigEvidenceAgent(),
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].grounding is not None
+    assert messages[0].grounding["authority"] == "authoritative"
+    assert messages[0].grounding["sources"][0]["tool_name"] == "get_statistics"
+    assert "evidence" not in messages[0].grounding["sources"][0]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_passes_evidence_cap_to_capture() -> None:
+    record = await run_turn(
+        agent=BigEvidenceAgent(),
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=InMemoryThreadStore(),
+        bus=SessionBus(),
+        recursion_limit=80,
+        evidence_max_chars=3,
+    )
+
+    stats = next(
+        event for event in record.events if event.name == "get_statistics" and event.phase == "end"
+    )
+    assert stats.evidence == "abc"
 
 
 @pytest.mark.asyncio
@@ -426,6 +569,30 @@ async def test_run_turn_appends_agent_proposal_for_request_approval() -> None:
     assert messages[0].content == "Proposed restock."
     assert messages[0].card is not None
     assert messages[0].card["title"] == "Create purchase order"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_attaches_grounding_to_agent_proposal() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=ApprovalWithDataAgent(),
+        message="restock product 1",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+        approval_client=FakeApprovalClient(),
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].type == "agent_proposal"
+    assert messages[0].grounding is not None
+    assert messages[0].grounding["authority"] == "unverified"
+    assert [source["tool_name"] for source in messages[0].grounding["sources"]] == [
+        "inventory_query"
+    ]
 
 
 @pytest.mark.asyncio

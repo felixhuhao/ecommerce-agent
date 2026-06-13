@@ -381,6 +381,7 @@ async def post_message(
                 bus=bus,
                 recursion_limit=settings.agent_recursion_limit,
                 approval_client=approval_client,
+                evidence_max_chars=settings.grounding_evidence_max_chars,
             )
             trace_records = app_state.trace_records
             trace_records.setdefault(session_id, {})[turn_id] = record

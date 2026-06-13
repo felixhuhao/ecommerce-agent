@@ -4,6 +4,8 @@ import logging
 from typing import Any
 
 from ecommerce_agent.approvals import approval_card
+from ecommerce_agent.grounding.build import build_grounding
+from ecommerce_agent.grounding.model import Authority
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.threads.history import build_history
 from ecommerce_agent.threads.messages import ThreadMessage
@@ -44,6 +46,13 @@ def _chart_artifacts(record: TraceRecord) -> list[dict[str, Any]]:
             }
         )
     return artifacts
+
+
+def _grounding_payload(record: TraceRecord) -> dict[str, Any] | None:
+    grounding = build_grounding(record)
+    if grounding.authority == Authority.NOT_APPLICABLE and not grounding.diagnostic:
+        return None
+    return grounding.to_dict()
 
 
 def _proposal_failure_message(
@@ -98,6 +107,7 @@ async def _append_turn_result(
     approval_client: Any | None,
 ) -> None:
     approval_events = _request_approval_events(record)
+    grounding = _grounding_payload(record)
     if not approval_events:
         artifacts = _chart_artifacts(record)
         await append_and_publish(
@@ -111,6 +121,7 @@ async def _append_turn_result(
                 trace_id=record.trace_id,
                 actor_id="agent",
                 result={"artifacts": artifacts} if artifacts else None,
+                grounding=grounding,
             ),
         )
         return
@@ -158,6 +169,7 @@ async def _append_turn_result(
             card=approval_card(approval),
             tool_name=approval.get("toolName"),
             status=approval.get("status") or "pending",
+            grounding=grounding,
         ),
     )
 
@@ -172,6 +184,7 @@ async def run_turn(
     bus: SessionBus,
     recursion_limit: int,
     approval_client: Any | None = None,
+    evidence_max_chars: int = 2000,
 ) -> TraceRecord:
     """Run one agent turn: stream live frames, append the answer, then mark done."""
     record = TraceRecord(session_id=session_id, turn_id=turn_id)
@@ -189,7 +202,7 @@ async def run_turn(
     config = {"recursion_limit": recursion_limit}
     raw_events = agent.astream_events(inputs, config=config, version="v2")
     try:
-        async for event in capture(raw_events, record):
+        async for event in capture(raw_events, record, evidence_max_chars=evidence_max_chars):
             frame = _trace_event_to_frame(event)
             if frame is not None:
                 bus.publish(session_id, frame)
