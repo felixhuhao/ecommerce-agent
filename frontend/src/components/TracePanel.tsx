@@ -28,7 +28,7 @@ function SpanRow({
 }) {
   const Icon = span.kind === "tool_call" ? Wrench : Cpu;
   return (
-    <details className="trace-span">
+    <details className="trace-span" data-trace-span-id={span.span_id}>
       <summary>
         <Icon size={14} aria-hidden="true" />
         <span className="trace-span-name">{span.name ?? span.kind}</span>
@@ -46,6 +46,11 @@ function SpanRow({
         {span.result_summary ? (
           <p>
             <span className="label">result</span> {span.result_summary}
+          </p>
+        ) : null}
+        {span.evidence ? (
+          <p>
+            <span className="label">evidence</span> {span.evidence}
           </p>
         ) : null}
         {span.tokens_in != null || span.tokens_out != null ? (

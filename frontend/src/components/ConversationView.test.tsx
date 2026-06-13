@@ -36,6 +36,7 @@ function message(overrides: Partial<ThreadMessage> = {}): ThreadMessage {
     tool_name: null,
     status: "ok",
     result: null,
+    grounding: null,
     reason: null,
     ...overrides,
   };
@@ -131,6 +132,94 @@ describe("ConversationView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Inspect/i }));
     expect(onInspect).toHaveBeenCalledWith("turn-9");
+  });
+
+  it("renders a confidence badge and Sources expander", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        messages={[
+          message({
+            grounding: {
+              authority: "authoritative",
+              diagnostic: null,
+              sources: [
+                {
+                  span_id: "span-1",
+                  tool_name: "get_statistics",
+                  args_summary: '{"metric":"sales"}',
+                  result_summary: "sales rows",
+                },
+              ],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Authoritative")).toBeInTheDocument();
+    expect(screen.getByText("Sources (1)")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Sources (1)"));
+    expect(screen.getByText("get_statistics")).toBeInTheDocument();
+    expect(screen.getByText(/sales rows/)).toBeInTheDocument();
+  });
+
+  it("shows trace evidence in Sources when the inspected timeline is loaded", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        inspectedTurnId="t1"
+        messages={[
+          message({
+            turn_id: "t1",
+            grounding: {
+              authority: "derived",
+              diagnostic: null,
+              sources: [
+                {
+                  span_id: "span-1",
+                  tool_name: "execute",
+                  args_summary: null,
+                  result_summary: "forecast summary",
+                },
+              ],
+            },
+          }),
+        ]}
+        traceTimeline={{
+          trace_id: "tr",
+          session_id: "s1",
+          turn_id: "t1",
+          started_at: 1,
+          ended_at: 2,
+          duration_ms: 10,
+          tokens_in_total: null,
+          tokens_out_total: null,
+          span_count: 1,
+          spans: [
+            {
+              kind: "tool_call",
+              name: "execute",
+              status: "ok",
+              ts: 1,
+              duration_ms: 3,
+              args_summary: null,
+              result_summary: "forecast summary",
+              evidence: "full forecast evidence",
+              tokens_in: null,
+              tokens_out: null,
+              span_id: "span-1",
+              artifact_id: null,
+              approval_id: null,
+              error_message: null,
+            },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Sources (1)"));
+    expect(screen.getByText(/full forecast evidence/)).toBeInTheDocument();
   });
 
   it("shows an Inspect control on agent proposals", () => {

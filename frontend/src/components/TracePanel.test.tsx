@@ -23,6 +23,7 @@ function timeline(overrides: Partial<TraceTimeline> = {}): TraceTimeline {
         duration_ms: 12,
         args_summary: "series",
         result_summary: "data:image/...",
+        evidence: null,
         tokens_in: null,
         tokens_out: null,
         span_id: "x1",
@@ -70,6 +71,7 @@ describe("TracePanel", () => {
               duration_ms: 80,
               args_summary: null,
               result_summary: "answer chunk",
+              evidence: null,
               tokens_in: 12,
               tokens_out: 8,
               span_id: "model-1",
@@ -111,6 +113,7 @@ describe("TracePanel", () => {
               duration_ms: 5,
               args_summary: null,
               result_summary: null,
+              evidence: null,
               tokens_in: null,
               tokens_out: null,
               span_id: "rq",
@@ -124,6 +127,37 @@ describe("TracePanel", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /View approval/i }));
     expect(onViewApproval).toHaveBeenCalledWith("appr-7");
+  });
+
+  it("renders full evidence when a span carries it", () => {
+    render(
+      <TracePanel
+        {...base}
+        timeline={timeline({
+          spans: [
+            {
+              kind: "tool_call",
+              name: "get_statistics",
+              status: "ok",
+              ts: 1,
+              duration_ms: 5,
+              args_summary: null,
+              result_summary: "summary",
+              evidence: "full evidence payload",
+              tokens_in: null,
+              tokens_out: null,
+              span_id: "stats",
+              artifact_id: null,
+              approval_id: null,
+              error_message: null,
+            },
+          ],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("get_statistics"));
+    expect(screen.getByText(/full evidence payload/)).toBeInTheDocument();
   });
 
   it("prompts to select a turn when none is inspected", () => {

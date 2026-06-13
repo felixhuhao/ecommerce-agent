@@ -3,7 +3,9 @@ import { Activity, RefreshCw, Send, Wrench } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
-import type { ThreadMessage } from "../types";
+import type { ThreadMessage, TraceTimeline } from "../types";
+import { ConfidenceBadge } from "./ConfidenceBadge";
+import { SourcesExpander } from "./SourcesExpander";
 
 interface ConversationViewProps {
   messages: ThreadMessage[];
@@ -15,6 +17,8 @@ interface ConversationViewProps {
   error: string | null;
   onSend: (message: string) => Promise<void> | void;
   onInspect?: (turnId: string) => void;
+  traceTimeline?: TraceTimeline;
+  inspectedTurnId?: string | null;
   focusMessageId?: string | null;
   onFocusMessageHandled?: () => void;
 }
@@ -86,6 +90,8 @@ export function ConversationView({
   error,
   onSend,
   onInspect,
+  traceTimeline,
+  inspectedTurnId = null,
   focusMessageId,
   onFocusMessageHandled,
 }: ConversationViewProps) {
@@ -146,7 +152,12 @@ export function ConversationView({
               data-message-id={message.message_id}
             >
               <header>
-                <span>{LABELS[message.type]}</span>
+                <div className="message-header-left">
+                  <span>{LABELS[message.type]}</span>
+                  {message.grounding ? (
+                    <ConfidenceBadge authority={message.grounding.authority} />
+                  ) : null}
+                </div>
                 {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
                 {onInspect && message.turn_id && (message.type === "agent_answer" || message.type === "agent_proposal") ? (
                   <button
@@ -159,6 +170,15 @@ export function ConversationView({
                 ) : null}
               </header>
               <MessageBody type={message.type} content={message.content} />
+              {message.grounding ? (
+                <SourcesExpander
+                  grounding={message.grounding}
+                  inspectedTurnId={inspectedTurnId}
+                  onInspect={onInspect}
+                  timeline={traceTimeline}
+                  turnId={message.turn_id}
+                />
+              ) : null}
               {artifacts.length > 0 ? (
                 <div className="message-artifacts">
                   {artifacts.map((artifact) => (

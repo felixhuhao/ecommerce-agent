@@ -68,6 +68,7 @@ function threadMessage(overrides: Partial<ThreadMessage> = {}): ThreadMessage {
     tool_name: null,
     status: null,
     result: null,
+    grounding: null,
     reason: null,
     ...overrides,
   };
@@ -342,6 +343,7 @@ describe("App", () => {
               duration_ms: 3,
               args_summary: null,
               result_summary: null,
+              evidence: null,
               tokens_in: null,
               tokens_out: null,
               span_id: "x",

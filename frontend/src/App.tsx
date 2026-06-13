@@ -470,6 +470,8 @@ function OperatorConsole({
           error={state.error}
           onSend={handleSend}
           onInspect={handleInspect}
+          traceTimeline={traceQuery.data}
+          inspectedTurnId={inspectedTurnId}
           focusMessageId={focusMessageId}
           onFocusMessageHandled={handleFocusMessageHandled}
         />

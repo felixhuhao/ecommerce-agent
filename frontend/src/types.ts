@@ -21,7 +21,23 @@ export interface ThreadMessage {
   tool_name: string | null;
   status: string | null;
   result: Record<string, unknown> | null;
+  grounding: Grounding | null;
   reason: string | null;
+}
+
+export type Authority = "authoritative" | "derived" | "unverified" | "not_applicable";
+
+export interface GroundingSource {
+  span_id: string;
+  tool_name: string;
+  args_summary: string | null;
+  result_summary: string | null;
+}
+
+export interface Grounding {
+  authority: Authority;
+  sources: GroundingSource[];
+  diagnostic: string | null;
 }
 
 export interface SessionSummary {
@@ -83,13 +99,14 @@ export interface McpHealth {
 }
 
 export interface TraceSpan {
-  kind: "model_call" | "tool_call";
+  kind: "model_call" | "tool_call" | "route_decision" | "policy_denial";
   name: string | null;
   status: string;
   ts: number;
   duration_ms: number | null;
   args_summary: string | null;
   result_summary: string | null;
+  evidence: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
   span_id: string;
