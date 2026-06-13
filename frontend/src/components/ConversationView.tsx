@@ -1,8 +1,9 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Check, RefreshCw, Send, Wrench, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
+import { foldApprovals } from "../state/approvals";
 import type { ThreadMessage, TraceTimeline } from "../types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import { SourcesExpander } from "./SourcesExpander";
@@ -90,12 +91,10 @@ interface ApprovalState {
 
 function approvalStates(messages: ThreadMessage[]): Map<string, ApprovalState> {
   const states = new Map<string, ApprovalState>();
-  for (const message of messages) {
-    if (!message.approval_id) continue;
-    const current = states.get(message.approval_id) ?? { status: null, reason: null };
-    states.set(message.approval_id, {
-      status: message.status ?? current.status,
-      reason: message.reason ?? current.reason,
+  for (const approval of foldApprovals(messages)) {
+    states.set(approval.approvalId, {
+      status: approval.status,
+      reason: approval.reason,
     });
   }
   return states;
@@ -134,7 +133,8 @@ function InlineApprovalCard({
 
   const status = state?.status ?? message.status ?? "pending";
   const isPending = status === "pending";
-  const isBusy = pendingApprovalId === message.approval_id;
+  const approvalId = message.approval_id;
+  const isBusy = pendingApprovalId === approvalId;
 
   return (
     <section className="inline-approval" aria-label="Approval card">
@@ -142,7 +142,7 @@ function InlineApprovalCard({
         <div>
           <span className="inline-approval-kicker">Approval card</span>
           <strong>{inlineCardTitle(message)}</strong>
-          <code>{message.approval_id}</code>
+          <code>{approvalId}</code>
         </div>
         <span className={`status-pill status-${status}`}>{status}</span>
       </div>
@@ -155,7 +155,7 @@ function InlineApprovalCard({
       {isPending && onApprove && onReject ? (
         <div className="inline-approval-actions">
           <input
-            aria-label={`Reject reason for ${message.approval_id}`}
+            aria-label={`Reject reason for ${approvalId}`}
             value={reason}
             onChange={(event) => setReason(event.currentTarget.value)}
             disabled={isBusy}
@@ -163,7 +163,7 @@ function InlineApprovalCard({
           <button
             className="icon-button danger"
             type="button"
-            onClick={() => onReject(message.approval_id as string, reason.trim() || undefined)}
+            onClick={() => onReject(approvalId, reason.trim() || undefined)}
             disabled={isBusy}
             title="Reject"
           >
@@ -173,7 +173,7 @@ function InlineApprovalCard({
           <button
             className="icon-button success"
             type="button"
-            onClick={() => onApprove(message.approval_id as string)}
+            onClick={() => onApprove(approvalId)}
             disabled={isBusy}
             title="Approve"
           >
@@ -206,7 +206,7 @@ export function ConversationView({
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
-  const approvals = approvalStates(messages);
+  const approvals = useMemo(() => approvalStates(messages), [messages]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });

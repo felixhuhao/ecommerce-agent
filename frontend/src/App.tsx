@@ -180,7 +180,6 @@ function OperatorConsole({
   const activeIdRef = useRef<string | null>(null);
   const pendingSendSessionIdRef = useRef<string | null>(null);
   const busyNoteTimeoutRef = useRef<number | null>(null);
-  const surfacedApprovalIdRef = useRef<string | null>(null);
   const wasInFlight = useRef(false);
   activeIdRef.current = activeId;
   pendingSendSessionIdRef.current = pendingSendSessionId;
@@ -225,19 +224,6 @@ function OperatorConsole({
 
   const { state, streamStatus, markTurnStarted, applyThread } = useSessionStream(activeId);
   const approvals = useMemo(() => foldApprovals(state.messages), [state.messages]);
-  const latestPendingProposalId = useMemo(() => {
-    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
-      const message = state.messages[index];
-      if (
-        message.type === "agent_proposal" &&
-        message.approval_id &&
-        message.status === "pending"
-      ) {
-        return message.approval_id;
-      }
-    }
-    return null;
-  }, [state.messages]);
 
   const handleAuthExpired = useCallback(() => {
     applyThread([]);
@@ -247,19 +233,10 @@ function OperatorConsole({
   }, [applyThread, onUnauthorized]);
 
   useEffect(() => {
-    surfacedApprovalIdRef.current = null;
     setInspectedTurnId(null);
     setFocusMessageId(null);
     setFocusApprovalId(null);
   }, [activeId]);
-
-  useEffect(() => {
-    if (!latestPendingProposalId) return;
-    if (surfacedApprovalIdRef.current === latestPendingProposalId) return;
-    surfacedApprovalIdRef.current = latestPendingProposalId;
-    setActiveTab("approvals");
-    setFocusApprovalId(latestPendingProposalId);
-  }, [latestPendingProposalId]);
 
   useEffect(() => {
     const inFlight = state.inFlightTurnId !== null;

@@ -137,8 +137,6 @@ async def _append_turn_result(
         )
         return
 
-    grounding = _grounding_payload(record, suppress_unverified_without_sources=True)
-
     approval_id = next((event.approval_id for event in reversed(approval_events)), None)
     if not approval_id or approval_client is None:
         await append_and_publish(
@@ -151,6 +149,8 @@ async def _append_turn_result(
             ),
         )
         return
+
+    grounding = _grounding_payload(record, suppress_unverified_without_sources=True)
 
     try:
         approval = await approval_client.get_approval(approval_id)

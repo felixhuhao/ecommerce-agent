@@ -394,7 +394,7 @@ describe("App", () => {
     expect(await screen.findByText("order_query")).toBeInTheDocument();
   });
 
-  it("opens the approvals rail when a pending proposal arrives", async () => {
+  it("keeps the active rail tab when a pending proposal arrives inline", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
@@ -460,14 +460,10 @@ describe("App", () => {
       }),
     );
 
-    await waitFor(() =>
-      expect(screen.getByRole("tab", { name: /Approvals/ })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      ),
-    );
-    expect(screen.getAllByText("Create purchase order").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("approval-1").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("tab", { name: "Trace" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Approval card")).toBeInTheDocument();
+    expect(screen.getByText("Create purchase order")).toBeInTheDocument();
+    expect(screen.getByText("approval-1")).toBeInTheDocument();
   });
 
   it("refetches artifacts when a running turn finishes", async () => {

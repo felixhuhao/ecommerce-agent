@@ -31,8 +31,6 @@ def _sources(record: TraceRecord) -> list[GroundingSource]:
             continue
         if not is_data_bearing(event.name):
             continue
-        if event.name is None:
-            continue
         sources.append(
             GroundingSource(
                 span_id=_source_span_id(event),
