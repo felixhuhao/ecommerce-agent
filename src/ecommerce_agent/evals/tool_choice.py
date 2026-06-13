@@ -17,6 +17,7 @@ from ecommerce_agent.tools.staging import (
 )
 from ecommerce_agent.trace.capture import capture
 from ecommerce_agent.trace.schema import TraceRecord
+from ecommerce_agent.trace.tools import fired_tools
 
 _DATASET_PATH = Path(__file__).parent / "datasets" / "tool_choice.yaml"
 # Tool choice is observable early; keep the live eval close to the phase-1 decision
@@ -114,18 +115,6 @@ def load_tool_choice_cases(path: str | None = None) -> list[ToolChoiceCase]:
             )
         )
     return cases
-
-
-def fired_tools(record: TraceRecord) -> list[str]:
-    names: list[str] = []
-    for event in record.events:
-        if event.event_type != "tool_call" or event.phase != "start" or not event.name:
-            continue
-        # The report shows each fired tool once, in first-seen order; repeated calls
-        # should not make a failed strategy look larger than it is.
-        if event.name not in names:
-            names.append(event.name)
-    return names
 
 
 def score_case(
