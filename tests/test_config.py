@@ -64,3 +64,16 @@ def test_auth_and_audit_defaults() -> None:
 
 def test_grounding_evidence_default() -> None:
     assert Settings(_env_file=None).grounding_evidence_max_chars == 2000
+
+
+def test_monitoring_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.monitor_enabled is False
+    assert settings.monitor_interval_seconds == 900
+    assert settings.monitor_low_stock_threshold == 50
+    assert settings.monitor_sales_drop_pct == 0.25
+    assert settings.monitor_cooldown_seconds == 86400
+    assert settings.alert_retention_days == 90
+    assert settings.monitor_spring_user_id == "1"
+    assert settings.monitor_spring_session_id == "monitor"

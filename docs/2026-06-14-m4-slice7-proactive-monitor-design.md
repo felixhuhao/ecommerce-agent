@@ -185,6 +185,9 @@ user-scoped queries.
   reaper). Fine now; flagged for any future multi-instance deploy.
 - **System-actor scope:** restricted to global-aggregate tools by construction (`get_statistics`,
   `inventory_low_stock` only for v1); documented.
+- **DeepAgents tool exclusion hook:** hiding filesystem/scaffolding tools for the cause pass currently uses
+  DeepAgents' tool-exclusion middleware. Re-check this hook on DeepAgents upgrades because the public API is
+  still profile-oriented.
 
 ## 11. Implementation checklist
 

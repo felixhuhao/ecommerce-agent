@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Any
@@ -10,6 +11,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from ecommerce_agent.api import health as health_module
 from ecommerce_agent.api.audit import router as audit_router
 from ecommerce_agent.api.auth import router as auth_router
+from ecommerce_agent.api.monitoring import monitor_router, run_monitor_from_app
+from ecommerce_agent.api.monitoring import router as monitoring_router
 from ecommerce_agent.api.sessions import router as sessions_router
 from ecommerce_agent.api.spa import mount_spa
 from ecommerce_agent.audit.mongo import MongoAuditStore
@@ -31,6 +34,8 @@ from ecommerce_agent.mcp_client import (
     filter_viz_tools,
     tool_names,
 )
+from ecommerce_agent.monitoring.bus import AlertBus
+from ecommerce_agent.monitoring.mongo import MongoAlertStore
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.factory import build_session_runtime
 from ecommerce_agent.sessions.registry import SessionRegistry
@@ -39,6 +44,7 @@ from ecommerce_agent.threads.mongo import MongoThreadStore
 from ecommerce_agent.trace.mongo import MongoTraceStore
 
 ApprovalClientCache = dict[tuple[str, str], Any]
+logger = logging.getLogger(__name__)
 
 
 def make_runtime_builder(settings: Settings):
@@ -104,6 +110,13 @@ def _configure_default_mongo_stores(app: FastAPI, settings: Settings) -> None:
             messages=mongo_db["thread_messages"],
             client=app.state.mongo_client,
         )
+    if getattr(app.state, "alert_store", None) is None:
+        mongo_db = get_db()
+        app.state.alert_store = MongoAlertStore(
+            alerts=mongo_db["alerts"],
+            client=app.state.mongo_client,
+            retention_days=settings.alert_retention_days,
+        )
 
 
 def _close_resource(resource: Any) -> None:
@@ -121,6 +134,7 @@ def _close_mongo_resources(app: FastAPI) -> None:
         "user_store",
         "login_session_store",
         "audit_store",
+        "alert_store",
     ):
         store = getattr(app.state, name, None)
         if store is None:
@@ -142,11 +156,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.user_store,
         app.state.login_session_store,
         app.state.audit_store,
+        app.state.alert_store,
     ):
         ensure = getattr(store, "ensure_indexes", None)
         if callable(ensure):
             await ensure()
     app.state.session_bus = getattr(app.state, "session_bus", None) or SessionBus()
+    app.state.alert_bus = getattr(app.state, "alert_bus", None) or AlertBus()
+    app.state.monitor_run_lock = getattr(app.state, "monitor_run_lock", None) or asyncio.Lock()
     app.state.background_tasks = getattr(app.state, "background_tasks", None) or set()
     app.state.approval_clients = getattr(app.state, "approval_clients", None) or {}
     app.state.session_registry = getattr(app.state, "session_registry", None) or SessionRegistry(
@@ -155,9 +172,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_live_sessions=settings.max_live_sessions,
     )
     app.state.reaper_task = asyncio.create_task(_reap_loop(app))
+    app.state.monitor_task = None
+    if settings.monitor_enabled:
+        app.state.monitor_task = asyncio.create_task(_monitor_loop(app))
     try:
         yield
     finally:
+        monitor_task = getattr(app.state, "monitor_task", None)
+        if monitor_task is not None:
+            monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await monitor_task
         reaper_task = getattr(app.state, "reaper_task", None)
         if reaper_task is not None:
             reaper_task.cancel()
@@ -170,6 +195,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await asyncio.gather(*pending_background_tasks, return_exceptions=True)
             app.state.background_tasks.clear()
         await app.state.session_registry.close_all()
+        monitor_runtime = getattr(app.state, "monitor_runtime", None)
+        close_monitor = getattr(monitor_runtime, "close", None)
+        if callable(close_monitor):
+            result = close_monitor()
+            if inspect.isawaitable(result):
+                await result
         _close_mongo_resources(app)
         await _close_approval_clients(getattr(app.state, "approval_clients", {}))
 
@@ -187,10 +218,23 @@ async def _reap_loop(app: FastAPI) -> None:
             for store in (
                 getattr(app.state, "thread_store", None),
                 getattr(app.state, "trace_store", None),
+                getattr(app.state, "alert_store", None),
             ):
                 sweep = getattr(store, "sweep_expired", None)
                 if callable(sweep):
                     await sweep()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _monitor_loop(app: FastAPI) -> None:
+    try:
+        while True:
+            try:
+                await run_monitor_from_app(app)
+            except Exception:
+                logger.warning("scheduled monitor run failed", exc_info=True)
+            await asyncio.sleep(app.state.settings.monitor_interval_seconds)
     except asyncio.CancelledError:
         pass
 
@@ -296,6 +340,12 @@ def create_app(
     app.state.user_store = None
     app.state.login_session_store = None
     app.state.audit_store = None
+    app.state.alert_store = None
+    app.state.alert_bus = None
+    app.state.monitor_run_lock = None
+    app.state.monitor_runtime = None
+    app.state.monitor_runtime_factory = None
+    app.state.monitor_task = None
 
     @app.get("/health")
     async def health_endpoint() -> dict[str, Any]:
@@ -325,6 +375,8 @@ def create_app(
 
     app.include_router(auth_router)
     app.include_router(audit_router)
+    app.include_router(monitoring_router)
+    app.include_router(monitor_router)
     app.include_router(sessions_router)
     mount_spa(app, app.state.settings.frontend_dist_dir)
     return app

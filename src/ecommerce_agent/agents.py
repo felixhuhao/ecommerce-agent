@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from deepagents.middleware._tool_exclusion import _ToolExclusionMiddleware
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -24,6 +25,19 @@ _ORDER_MANAGER_DESCRIPTION = (
 
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
+_MONITOR_CAUSE_EXCLUDED_TOOLS = frozenset(
+    {
+        "write_todos",
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob",
+        "grep",
+        "execute",
+        "task",
+    }
+)
 
 
 def _reliability_middleware() -> list[Any]:
@@ -69,6 +83,26 @@ def build_order_manager(
         middleware=_reliability_middleware(),
         skills=[],
         backend=backend,
+    )
+
+
+def build_monitor_cause_agent(
+    model: BaseChatModel,
+    *,
+    spring_read_tools: Sequence[BaseTool],
+) -> Any:
+    """Build the read-only cause explainer for proactive alerts."""
+    return build_agent(
+        model,
+        list(spring_read_tools),
+        system_prompt=get_prompt("monitor_cause"),
+        subagents=[],
+        middleware=[
+            *_reliability_middleware(),
+            _ToolExclusionMiddleware(excluded=_MONITOR_CAUSE_EXCLUDED_TOOLS),
+        ],
+        skills=[],
+        backend=None,
     )
 
 

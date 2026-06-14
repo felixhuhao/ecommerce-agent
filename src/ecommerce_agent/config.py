@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     # M4 slice 6: answer grounding
     grounding_evidence_max_chars: int = Field(default=2000, gt=0)
 
+    # M4 slice 7: proactive monitoring
+    monitor_enabled: bool = False
+    monitor_interval_seconds: int = Field(default=900, gt=0)
+    monitor_low_stock_threshold: int = Field(default=50, ge=0)
+    monitor_sales_drop_pct: float = Field(default=0.25, ge=0, le=1)
+    monitor_cooldown_seconds: int = Field(default=86400, ge=0)
+    alert_retention_days: int = Field(default=90, gt=0)
+    monitor_spring_user_id: str = "1"
+    monitor_spring_session_id: str = "monitor"
+
 
 @lru_cache
 def get_settings() -> Settings:

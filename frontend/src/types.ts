@@ -40,6 +40,42 @@ export interface Grounding {
   diagnostic: string | null;
 }
 
+export type AlertStatus = "open" | "acknowledged" | "closed";
+export type AlertSeverity = "info" | "warning" | "critical";
+
+export interface AlertSource {
+  source_id: string;
+  tool_name: string;
+  args_summary: string | null;
+  result_summary: string | null;
+  evidence: string | null;
+}
+
+export interface AlertGrounding {
+  authority: Authority;
+  sources: AlertSource[];
+  diagnostic: string | null;
+}
+
+export interface Alert {
+  alert_id: string;
+  check_name: string;
+  dedupe_key: string;
+  title: string;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  metric: string;
+  value: number | string | null;
+  threshold: number | string | null;
+  entities: Record<string, unknown>;
+  cause: string | null;
+  grounding: AlertGrounding;
+  created_at: string;
+  updated_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+}
+
 export interface SessionSummary {
   session_id: string;
   title: string | null;

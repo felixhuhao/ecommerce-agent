@@ -3,6 +3,7 @@ import ecommerce_agent.agents as agents_module
 from ecommerce_agent.agent import build_agent
 from ecommerce_agent.agents import (
     build_coordinator,
+    build_monitor_cause_agent,
     build_order_manager,
     build_sales_analyst,
     order_manager_subagent,
@@ -137,6 +138,44 @@ def test_build_order_manager_uses_approval_tools_directly(monkeypatch) -> None:
     assert captured["kwargs"]["skills"] == []
     middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
     assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= middleware_types
+
+
+def test_build_monitor_cause_agent_is_read_only_without_backend(monkeypatch) -> None:
+    captured = {}
+
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            middleware=list(middleware),
+            kwargs=kwargs,
+        )
+        return "MONITOR_CAUSE"
+
+    monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
+
+    result = build_monitor_cause_agent(
+        "MODEL",  # type: ignore[arg-type]
+        spring_read_tools=[_Tool("inventory_low_stock"), _Tool("get_statistics")],  # type: ignore[list-item]
+    )
+
+    assert result == "MONITOR_CAUSE"
+    assert captured["backend"] is None
+    assert [tool.name for tool in captured["tools"]] == ["inventory_low_stock", "get_statistics"]
+    assert "read-only" in captured["system_prompt"]
+    assert "approve" in captured["system_prompt"]
+    assert captured["kwargs"]["subagents"] == []
+    assert captured["kwargs"]["skills"] == []
+    middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
+    assert "_ToolExclusionMiddleware" in middleware_types
+    tool_exclusion = next(
+        middleware
+        for middleware in captured["middleware"]
+        if type(middleware).__name__ == "_ToolExclusionMiddleware"
+    )
+    assert {"execute", "write_file", "task"} <= tool_exclusion._excluded
 
 
 def test_sales_analyst_subagent_seam_shape() -> None:
