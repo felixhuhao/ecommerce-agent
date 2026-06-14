@@ -7,11 +7,11 @@ from typing import Any
 from ecommerce_agent.approvals import approval_card
 from ecommerce_agent.grounding.build import build_grounding
 from ecommerce_agent.grounding.model import Authority
-from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.threads.history import build_history
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import ThreadStore, append_and_publish
+from ecommerce_agent.tools.metadata import get_tool_meta
 from ecommerce_agent.trace.capture import capture
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
@@ -41,20 +41,20 @@ def _progress_frame(
 
 
 def _tool_label(name: str | None, *, phase: str | None, artifact: bool = False) -> str:
-    if artifact and phase == "end":
-        return "Chart generated"
-    if name == "get_statistics":
-        return "Reading sales data"
-    if name == "inventory_low_stock":
-        return "Reading inventory data"
-    if name == "stage_sales_analysis_inputs":
-        return "Staging analysis inputs"
-    if name == "execute":
-        return "Running analysis"
-    if name in VIZ_TOOLS:
-        return "Generating chart"
-    if name == "request_approval":
-        return "Approval requested" if phase == "end" else "Requesting approval"
+    meta = get_tool_meta(name)
+    if meta is None:
+        return f"Using {name}" if name else "Using tool"
+    # Viz end-labels are artifact-gated; approval end-labels are phase-gated.
+    if "viz.chart" in meta.tags:
+        if artifact and phase == "end":
+            return meta.live_label_end or meta.live_label_start or _using(name)
+        return meta.live_label_start or _using(name)
+    if meta.live_label_end is not None and phase == "end":
+        return meta.live_label_end
+    return meta.live_label_start or _using(name)
+
+
+def _using(name: str | None) -> str:
     return f"Using {name}" if name else "Using tool"
 
 

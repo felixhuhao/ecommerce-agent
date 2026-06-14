@@ -6,12 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from ecommerce_agent.config import Settings
+from ecommerce_agent.sessions import factory as factory
 from ecommerce_agent.sessions.factory import (
     POLICY_DENIED_MESSAGE,
     RoutedSessionAgent,
-    build_role_shaped_agents,
 )
 from ecommerce_agent.sessions.registry import RuntimeActor
+from ecommerce_agent.specialists import providers as providers_module
 
 
 class SpyAgent:
@@ -31,17 +32,6 @@ class SpyAgent:
             "event": "on_chat_model_stream",
             "data": {"chunk": SimpleNamespace(content=self.name)},
         }
-
-
-def test_viewer_agents_exclude_order_manager() -> None:
-    analyst = SpyAgent("analyst")
-    order_manager = SpyAgent("order-manager")
-
-    agents = build_role_shaped_agents(analyst, order_manager, can_propose=False)
-    assert set(agents) == {"sales-analyst"}
-
-    operator_agents = build_role_shaped_agents(analyst, order_manager, can_propose=True)
-    assert set(operator_agents) == {"sales-analyst", "order-manager"}
 
 
 @pytest.mark.asyncio
@@ -84,8 +74,6 @@ async def test_router_denies_unavailable_specialist_without_delegating() -> None
 async def test_viewer_runtime_does_not_build_order_manager(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import ecommerce_agent.sessions.factory as factory
-
     class FakeMcpClient:
         async def get_tools(self, *, server_name: str) -> list:
             return []
@@ -94,13 +82,17 @@ async def test_viewer_runtime_does_not_build_order_manager(
     monkeypatch.setattr(factory, "build_session_sandbox", lambda *args, **kwargs: object())
     monkeypatch.setattr(factory, "get_primary_model", lambda settings: object())
     monkeypatch.setattr(factory, "get_classifier_model", lambda settings: object())
-    monkeypatch.setattr(factory, "build_sales_analysis_staging_tool", lambda **kwargs: object())
-    monkeypatch.setattr(factory, "build_sales_analyst", lambda *args, **kwargs: SpyAgent("analyst"))
+    monkeypatch.setattr(
+        providers_module, "build_sales_analysis_staging_tool", lambda **kwargs: object()
+    )
+    monkeypatch.setattr(
+        providers_module, "build_sales_analyst", lambda *args, **kwargs: SpyAgent("analyst")
+    )
 
     def fail_build_order_manager(*args, **kwargs):
         raise AssertionError("viewer runtime must not build order-manager")
 
-    monkeypatch.setattr(factory, "build_order_manager", fail_build_order_manager)
+    monkeypatch.setattr(providers_module, "build_order_manager", fail_build_order_manager)
 
     runtime = await factory.build_session_runtime(
         "s1",

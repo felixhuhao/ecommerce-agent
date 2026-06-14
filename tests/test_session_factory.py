@@ -11,6 +11,7 @@ from ecommerce_agent.sessions.factory import (
     build_session_runtime,
 )
 from ecommerce_agent.sessions.registry import RuntimeActor
+from ecommerce_agent.specialists import providers as providers_module
 
 
 class FakeAgent:
@@ -94,11 +95,13 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
 
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
-    monkeypatch.setattr(factory_module, "build_sales_analysis_staging_tool", fake_build_stage_tool)
+    monkeypatch.setattr(
+        providers_module, "build_sales_analysis_staging_tool", fake_build_stage_tool
+    )
     monkeypatch.setattr(factory_module, "get_primary_model", lambda settings: object())
     monkeypatch.setattr(factory_module, "get_classifier_model", lambda settings: object())
-    monkeypatch.setattr(factory_module, "build_sales_analyst", fake_build_sales_analyst)
-    monkeypatch.setattr(factory_module, "build_order_manager", fake_build_order_manager)
+    monkeypatch.setattr(providers_module, "build_sales_analyst", fake_build_sales_analyst)
+    monkeypatch.setattr(providers_module, "build_order_manager", fake_build_order_manager)
 
     settings = Settings(_env_file=None, llm_api_key="k", spring_mcp_user_id="9")
 

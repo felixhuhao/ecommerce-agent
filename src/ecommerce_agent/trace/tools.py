@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from ecommerce_agent.mcp_client import READ_ONLY_SPRING_TOOLS
-from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
+from ecommerce_agent.tools.metadata import TOOL_META
 from ecommerce_agent.trace.schema import TraceRecord
 
 GET_STATISTICS_TOOL = "get_statistics"
@@ -9,9 +8,8 @@ EXECUTE_TOOL = "execute"
 
 # Tool calls whose output is evidence for an analytical claim. Explicit allowlist:
 # DeepAgents filesystem/scaffolding tools, viz tools, and request_approval are excluded.
-DATA_BEARING_TOOLS: frozenset[str] = (
-    READ_ONLY_SPRING_TOOLS | {STAGE_SALES_ANALYSIS_TOOL_NAME, EXECUTE_TOOL}
-)
+# Derived from the single source of truth in tools/metadata.py (data_bearing flag).
+DATA_BEARING_TOOLS: frozenset[str] = frozenset(m.name for m in TOOL_META if m.data_bearing)
 
 
 def fired_tools(record: TraceRecord) -> list[str]:

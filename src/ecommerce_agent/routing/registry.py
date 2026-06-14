@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ecommerce_agent.specialists.providers import PROVIDERS
+
 
 @dataclass(frozen=True)
 class Specialist:
@@ -37,20 +39,7 @@ class SpecialistRegistry:
 
 
 def build_specialist_registry() -> SpecialistRegistry:
+    """Build the registry from the authoritative provider list in specialists.providers."""
     return SpecialistRegistry(
-        [
-            Specialist(
-                "sales-analyst",
-                (
-                    "read-only sales analytics: querying business data, trends, "
-                    "forecasts, and charts."
-                ),
-                default=True,
-            ),
-            Specialist(
-                "order-manager",
-                "approval-only business writes: purchase orders, replenishment, "
-                "receiving, and order-status changes.",
-            ),
-        ]
+        [Specialist(p.name, p.description, default=p.default) for p in PROVIDERS]
     )

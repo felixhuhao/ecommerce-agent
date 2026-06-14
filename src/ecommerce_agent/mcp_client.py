@@ -5,56 +5,32 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from ecommerce_agent.config import Settings, get_settings
+from ecommerce_agent.tools.metadata import select_names
 
 SPRING_SERVER_NAME = "spring"
 MODELSCOPE_SERVER_NAME = "modelscope"
 PYTHON_SERVER_NAME = "python"
 
-READ_ONLY_SPRING_TOOLS: frozenset[str] = frozenset(
-    {
-        "product_query",
-        "product_search",
-        "order_query",
-        "inventory_query",
-        "inventory_low_stock",
-        "user_query",
-        "supplier_query",
-        "supplier_top",
-        "purchase_order_query",
-        "get_statistics",
-    }
-)
-
-APPROVAL_SPRING_TOOLS: frozenset[str] = frozenset({"request_approval"})
-
-WRITE_SPRING_TOOLS: frozenset[str] = frozenset(
-    {
-        "purchase_order_create",
-        "purchase_order_receive",
-        "order_update",
-    }
-)
-
+# Compatibility shims derived from the single source of truth in
+# tools/metadata.py. Prefer tools.metadata directly in new code; these frozensets
+# are kept so existing importers (diagnostics, evals, trace) stay byte-identical.
+READ_ONLY_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.read"}))
+APPROVAL_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"approval.request"}))
+WRITE_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.write"}))
 WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = WRITE_SPRING_TOOLS | APPROVAL_SPRING_TOOLS
-
-ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = frozenset(
-    {
-        "product_query",
-        "purchase_order_query",
-        "order_query",
-        "inventory_query",
-        "supplier_query",
-        "request_approval",
-    }
+ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset(
+        {
+            "products.query",
+            "orders.query",
+            "inventory.query",
+            "suppliers.query",
+            "purchase_orders.query",
+            "approval.request",
+        }
+    )
 )
-
-VIZ_TOOLS: frozenset[str] = frozenset(
-    {
-        "generate_line_chart",
-        "generate_bar_chart",
-        "generate_column_chart",
-    }
-)
+VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
 
 
 def spring_headers(

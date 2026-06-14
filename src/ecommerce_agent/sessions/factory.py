@@ -5,16 +5,10 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
-from ecommerce_agent.agents import (
-    build_order_manager,
-    build_sales_analyst,
-)
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     SPRING_SERVER_NAME,
     build_mcp_client,
-    filter_order_manager_tools,
-    filter_spring_read_tools,
     load_modelscope_viz_tools,
 )
 from ecommerce_agent.models import get_classifier_model, get_primary_model
@@ -23,26 +17,14 @@ from ecommerce_agent.routing.router import ClassifierRouter, Router
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sessions.registry import RuntimeActor, SessionRuntime
+from ecommerce_agent.specialists.providers import PROVIDERS
 from ecommerce_agent.threads.history import ROUTER_HISTORY_MAX_EXCHANGES, take_last_exchanges
-from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 
 logger = logging.getLogger(__name__)
 POLICY_DENIED_MESSAGE = (
     "This request would create an operational change, which your role is not permitted to "
     "propose. Ask an operator to perform write actions."
 )
-
-
-def build_role_shaped_agents(
-    analyst_agent: Any,
-    order_manager_agent: Any | None,
-    *,
-    can_propose: bool,
-) -> dict[str, Any]:
-    agents: dict[str, Any] = {"sales-analyst": analyst_agent}
-    if can_propose and order_manager_agent is not None:
-        agents["order-manager"] = order_manager_agent
-    return agents
 
 
 class RoutedSessionAgent:
@@ -121,7 +103,6 @@ async def build_session_runtime(
         session_id=session_id,
     )
     spring_all_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
-    spring_tools = filter_spring_read_tools(spring_all_tools)
     if settings.modelscope_mcp_url:
         try:
             viz_tools = await load_modelscope_viz_tools(mcp_client)
@@ -136,35 +117,26 @@ async def build_session_runtime(
 
     sandbox = build_session_sandbox(settings, session_id=session_id)
     model = get_primary_model(settings)
-    staging_tools = [
-        build_sales_analysis_staging_tool(
-            spring_read_tools=spring_tools,
+
+    # Runtime agents are role-shaped via provider.is_enabled: propose specialists
+    # are omitted for viewers. The router registry (built below) still includes
+    # every provider, so a viewer write-intent routes to the omitted specialist and
+    # yields the policy-denial answer rather than rerouting to the default.
+    agents: dict[str, Any] = {}
+    for provider in PROVIDERS:
+        if not provider.is_enabled(actor):
+            continue
+        agents[provider.name] = provider.build(
+            model=model,
+            spring_tools=spring_all_tools,
+            viz_tools=viz_tools,
             backend=sandbox,
         )
-    ]
-    analyst_agent = build_sales_analyst(
-        model,
-        spring_read_tools=spring_tools,
-        staging_tools=staging_tools,
-        viz_tools=viz_tools,
-        backend=sandbox,
-    )
-    order_manager_agent = None
-    if actor.can_propose:
-        order_manager_tools = filter_order_manager_tools(spring_all_tools)
-        order_manager_agent = build_order_manager(
-            model,
-            order_manager_tools=order_manager_tools,
-            backend=sandbox,
-        )
+
     registry = build_specialist_registry()
     routed_agent = RoutedSessionAgent(
         router=ClassifierRouter(get_classifier_model(settings), registry),
-        agents=build_role_shaped_agents(
-            analyst_agent,
-            order_manager_agent,
-            can_propose=actor.can_propose,
-        ),
+        agents=agents,
         default_specialist=registry.default.name,
     )
     return SessionRuntime(
