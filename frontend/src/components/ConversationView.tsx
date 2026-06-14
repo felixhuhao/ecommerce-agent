@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Check, RefreshCw, Send, Wrench, X } from "lucide-react";
+import { Activity, Check, Download, RefreshCw, Send, Wrench, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
+import { extFromMime } from "../lib/mime";
 import { foldApprovals } from "../state/approvals";
 import type { ThreadMessage, TraceTimeline } from "../types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
@@ -23,8 +24,6 @@ interface ConversationViewProps {
   onInspect?: (turnId: string) => void;
   traceTimeline?: TraceTimeline;
   inspectedTurnId?: string | null;
-  focusMessageId?: string | null;
-  onFocusMessageHandled?: () => void;
 }
 
 const LABELS: Record<ThreadMessage["type"], string> = {
@@ -58,6 +57,7 @@ interface ImageArtifact {
   id: string;
   src: string;
   title: string;
+  mimeType: string;
   toolName: string | null;
 }
 
@@ -72,12 +72,14 @@ function imageArtifacts(result: Record<string, unknown> | null): ImageArtifact[]
     if (typeof src !== "string" || !src.startsWith("data:image/")) return [];
     const id = artifact.id;
     const title = artifact.title;
+    const mimeType = artifact.mime_type;
     const toolName = artifact.tool_name;
     return [
       {
         id: typeof id === "string" && id.length > 0 ? id : `chart-${index}`,
         src,
         title: typeof title === "string" && title.length > 0 ? title : "Generated chart",
+        mimeType: typeof mimeType === "string" && mimeType.length > 0 ? mimeType : "image/png",
         toolName: typeof toolName === "string" ? toolName : null,
       },
     ];
@@ -201,8 +203,6 @@ export function ConversationView({
   onInspect,
   traceTimeline,
   inspectedTurnId = null,
-  focusMessageId,
-  onFocusMessageHandled,
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -211,12 +211,6 @@ export function ConversationView({
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
   }, [messages.length, provisionalAnswer, activeTool, busyNote, error]);
-
-  useEffect(() => {
-    if (!focusMessageId) return;
-    document.querySelector(`[data-message-id="${focusMessageId}"]`)?.scrollIntoView({ block: "center" });
-    onFocusMessageHandled?.();
-  }, [focusMessageId, onFocusMessageHandled]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -303,8 +297,17 @@ export function ConversationView({
                     <figure className="chart-artifact" key={artifact.id}>
                       <img src={artifact.src} alt={artifact.title} />
                       <figcaption>
-                        <span>{artifact.title}</span>
-                        {artifact.toolName ? <span>{artifact.toolName}</span> : null}
+                        <span className="chart-artifact-title">{artifact.title}</span>
+                        <span className="chart-artifact-meta">
+                          {artifact.toolName ? <span>{artifact.toolName}</span> : null}
+                          <a
+                            className="artifact-download"
+                            href={artifact.src}
+                            download={`${artifact.id}.${extFromMime(artifact.mimeType)}`}
+                          >
+                            <Download size={14} aria-hidden="true" /> Download
+                          </a>
+                        </span>
                       </figcaption>
                     </figure>
                   ))}

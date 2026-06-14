@@ -846,12 +846,28 @@ button:disabled {
 
 .chart-artifact figcaption {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 4px 2px;
   color: var(--ink-dim);
   font-family: var(--font-mono);
   font-size: 0.72rem;
+}
+
+.chart-artifact-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-artifact-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 /* Inspect control on agent/proposal message headers */
@@ -1781,67 +1797,6 @@ button:disabled {
   color: var(--ink-faint);
 }
 
-/* ---------- Artifacts ------------------------------------------------------ */
-
-.artifact-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-}
-
-.artifact-card {
-  margin: 0;
-  padding: 12px;
-  overflow: hidden;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  background: var(--paper-raised);
-  box-shadow: var(--shadow-soft);
-}
-
-/* The fix for the blown-out panel: constrain the chart to the card width. */
-.artifact-card img {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 0 0 1px var(--rule), 0 10px 24px -18px rgba(60, 44, 16, 0.45);
-}
-
-.artifact-card figcaption {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.artifact-tool {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-  font-weight: 600;
-  font-size: 0.82rem;
-}
-
-.artifact-time {
-  flex: 0 0 auto;
-  color: var(--ink-faint);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.02em;
-}
-
-.artifact-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-
 .artifact-download {
   display: inline-flex;
   align-items: center;
@@ -1862,23 +1817,6 @@ button:disabled {
 .artifact-download:hover {
   filter: brightness(1.06);
   box-shadow: 0 10px 22px -12px var(--emerald-glow);
-}
-
-.artifact-actions button {
-  padding: 6px 11px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--rule-strong);
-  background: var(--paper-inset);
-  color: var(--ink-dim);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.artifact-actions button:hover {
-  border-color: var(--gold-line);
-  background: var(--gold-bg);
-  color: var(--gold-deep);
 }
 
 /* ---------- Trace timeline ------------------------------------------------- */

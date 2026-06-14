@@ -1,6 +1,5 @@
 import type {
   Alert,
-  ArtifactSummary,
   HealthStatus,
   McpHealth,
   SessionDetail,
@@ -127,13 +126,6 @@ export async function getMcpHealth(): Promise<McpHealth> {
 
 export async function getTrace(sessionId: string, turnId: string): Promise<TraceTimeline> {
   return json(await apiFetch(`/api/sessions/${sessionId}/turns/${turnId}/trace`));
-}
-
-export async function getArtifacts(sessionId: string): Promise<ArtifactSummary[]> {
-  const body = await json<{ artifacts: ArtifactSummary[] }>(
-    await apiFetch(`/api/sessions/${sessionId}/artifacts`),
-  );
-  return body.artifacts;
 }
 
 export async function listAlerts(status?: string): Promise<Alert[]> {

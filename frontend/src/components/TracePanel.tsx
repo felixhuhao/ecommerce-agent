@@ -7,7 +7,6 @@ interface TracePanelProps {
   isLoading: boolean;
   isError: boolean;
   exportHref: string | null;
-  onViewArtifacts: () => void;
   onViewApproval: (approvalId: string) => void;
 }
 
@@ -19,11 +18,9 @@ function statusClass(status: string) {
 
 function SpanRow({
   span,
-  onViewArtifacts,
   onViewApproval,
 }: {
   span: TraceSpan;
-  onViewArtifacts: () => void;
   onViewApproval: (approvalId: string) => void;
 }) {
   const Icon = span.kind === "tool_call" ? Wrench : Cpu;
@@ -60,9 +57,9 @@ function SpanRow({
         ) : null}
         {span.error_message ? <p className="trace-error">{span.error_message}</p> : null}
         {span.artifact_id ? (
-          <button type="button" className="trace-link" onClick={onViewArtifacts}>
-            View in Artifacts
-          </button>
+          <p>
+            <span className="label">artifact</span> {span.artifact_id} (shown in the message)
+          </p>
         ) : null}
         {span.approval_id ? (
           <button
@@ -84,7 +81,6 @@ export function TracePanel({
   isLoading,
   isError,
   exportHref,
-  onViewArtifacts,
   onViewApproval,
 }: TracePanelProps) {
   return (
@@ -127,7 +123,6 @@ export function TracePanel({
                 <SpanRow
                   key={span.span_id}
                   span={span}
-                  onViewArtifacts={onViewArtifacts}
                   onViewApproval={onViewApproval}
                 />
               ))}

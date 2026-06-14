@@ -320,9 +320,6 @@ describe("App", () => {
       if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
-      if (url === "/api/sessions/s1/artifacts") {
-        return jsonResponse({ session_id: "s1", artifacts: [] });
-      }
       if (url === "/api/sessions/s1/turns/turn-1/trace") {
         return jsonResponse({
           trace_id: "tr",
@@ -414,9 +411,6 @@ describe("App", () => {
       if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
-      if (url === "/api/sessions/s1/artifacts") {
-        return jsonResponse({ session_id: "s1", artifacts: [] });
-      }
       if (url === "/health") {
         return jsonResponse({
           status: "ok",
@@ -466,63 +460,4 @@ describe("App", () => {
     expect(screen.getByText("approval-1")).toBeInTheDocument();
   });
 
-  it("refetches artifacts when a running turn finishes", async () => {
-    vi.stubGlobal("EventSource", FakeEventSource);
-    const sessions: SessionSummary[] = [
-      {
-        session_id: "s1",
-        title: "S1",
-        created_at: "2026-06-10T00:00:00Z",
-        last_message_preview: null,
-        message_count: 0,
-      },
-    ];
-    let artifactFetches = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
-      if (url === "/api/sessions") return jsonResponse({ sessions });
-      if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
-      if (url === "/api/sessions/s1/artifacts") {
-        artifactFetches += 1;
-        return jsonResponse({ session_id: "s1", artifacts: [] });
-      }
-      if (url === "/api/sessions/s1/messages" && init?.method === "POST") {
-        return jsonResponse({ turn_id: "turn-1", user_message_id: "m-user" }, 202);
-      }
-      if (url === "/health") {
-        return jsonResponse({
-          status: "ok",
-          app: "a",
-          environment: "t",
-          configured_mcp_servers: ["spring"],
-          agent_ready: true,
-          components: { mongo: { status: "ok" }, sandbox: { status: "ok" }, model: { status: "ok" } },
-        });
-      }
-      if (url === "/health/mcp") {
-        return jsonResponse({ status: "ok", servers: { spring: { status: "ok", tool_count: 1 } } });
-      }
-      return new Response("not found", { status: 404 });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderApp();
-
-    await waitFor(() => expect(artifactFetches).toBe(1));
-    await waitFor(() =>
-      expect(FakeEventSource.sources.some((source) => source.url === "/api/sessions/s1/stream")).toBe(
-        true,
-      ),
-    );
-
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "make chart" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/messages", expect.anything()));
-
-    const stream = FakeEventSource.sources.find((source) => source.url === "/api/sessions/s1/stream");
-    act(() => stream?.emit("done", { turn_id: "turn-1" }));
-
-    await waitFor(() => expect(artifactFetches).toBeGreaterThanOrEqual(2));
-  });
 });

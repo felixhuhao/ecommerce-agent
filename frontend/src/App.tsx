@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "./components/AppShell";
 import { AlertCenter } from "./components/AlertCenter";
 import { ApprovalWorkspace } from "./components/ApprovalWorkspace";
-import { ArtifactPanel } from "./components/ArtifactPanel";
 import { ConversationView } from "./components/ConversationView";
 import { HealthPanel } from "./components/HealthPanel";
 import { RightRail, type RailTab } from "./components/RightRail";
@@ -15,7 +14,6 @@ import {
   acknowledgeAlert,
   approveApproval,
   createSession,
-  getArtifacts,
   getHealth,
   getMe,
   getMcpHealth,
@@ -35,10 +33,9 @@ import { useSessionStream } from "./api/useSessionStream";
 import { performApprove, performReject } from "./state/approvalActions";
 import { foldApprovals } from "./state/approvals";
 import { performSend } from "./state/sendMessage";
-import type { Alert, ArtifactSummary, SessionSummary } from "./types";
+import type { Alert, SessionSummary } from "./types";
 
 const EMPTY_SESSIONS: SessionSummary[] = [];
-const EMPTY_ARTIFACTS: ArtifactSummary[] = [];
 const EMPTY_ALERTS: Alert[] = [];
 
 function isNotFound(error: unknown) {
@@ -183,12 +180,10 @@ function OperatorConsole({
   const [pendingSendSessionId, setPendingSendSessionId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<RailTab>("approvals");
   const [inspectedTurnId, setInspectedTurnId] = useState<string | null>(null);
-  const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
   const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const pendingSendSessionIdRef = useRef<string | null>(null);
   const busyNoteTimeoutRef = useRef<number | null>(null);
-  const wasInFlight = useRef(false);
   const canManageAlerts = actor.role === "operator";
   activeIdRef.current = activeId;
   pendingSendSessionIdRef.current = pendingSendSessionId;
@@ -209,12 +204,6 @@ function OperatorConsole({
     queryKey: ["health", "mcp"],
     queryFn: getMcpHealth,
     refetchInterval: 10000,
-    retry: false,
-  });
-  const artifactsQuery = useQuery({
-    queryKey: ["artifacts", activeId],
-    queryFn: () => getArtifacts(activeId as string),
-    enabled: !!activeId,
     retry: false,
   });
   const traceQuery = useQuery({
@@ -252,21 +241,12 @@ function OperatorConsole({
 
   useEffect(() => {
     setInspectedTurnId(null);
-    setFocusMessageId(null);
     setFocusApprovalId(null);
   }, [activeId]);
 
   useEffect(() => {
     if (!canManageAlerts && activeTab === "alerts") setActiveTab("approvals");
   }, [activeTab, canManageAlerts]);
-
-  useEffect(() => {
-    const inFlight = state.inFlightTurnId !== null;
-    if (wasInFlight.current && !inFlight && activeIdRef.current) {
-      queryClient.invalidateQueries({ queryKey: ["artifacts", activeIdRef.current] });
-    }
-    wasInFlight.current = inFlight;
-  }, [state.inFlightTurnId, queryClient]);
 
   useEffect(() => {
     if (!canManageAlerts) return;
@@ -311,14 +291,12 @@ function OperatorConsole({
   useEffect(() => {
     const errors = [
       sessionsQuery.error,
-      artifactsQuery.error,
       traceQuery.error,
       createMutation.error,
       alertsQuery.error,
     ];
     if (errors.some(isUnauthorized)) handleAuthExpired();
   }, [
-    artifactsQuery.error,
     createMutation.error,
     alertsQuery.error,
     handleAuthExpired,
@@ -494,18 +472,6 @@ function OperatorConsole({
     setFocusApprovalId(approvalId);
   }, []);
 
-  const handleViewArtifacts = useCallback(() => {
-    setActiveTab("artifacts");
-  }, []);
-
-  const handleJumpToMessage = useCallback((messageId: string) => {
-    setFocusMessageId(messageId);
-  }, []);
-
-  const handleFocusMessageHandled = useCallback(() => {
-    setFocusMessageId(null);
-  }, []);
-
   const handleFocusApprovalHandled = useCallback(() => {
     setFocusApprovalId(null);
   }, []);
@@ -557,8 +523,6 @@ function OperatorConsole({
           onInspect={handleInspect}
           traceTimeline={traceQuery.data}
           inspectedTurnId={inspectedTurnId}
-          focusMessageId={focusMessageId}
-          onFocusMessageHandled={handleFocusMessageHandled}
         />
       }
       rail={
@@ -592,14 +556,6 @@ function OperatorConsole({
               onFocusApprovalHandled={handleFocusApprovalHandled}
             />
           }
-          artifacts={
-            <ArtifactPanel
-              artifacts={artifactsQuery.data ?? EMPTY_ARTIFACTS}
-              isLoading={artifactsQuery.isLoading}
-              isError={artifactsQuery.isError}
-              onJumpToMessage={handleJumpToMessage}
-            />
-          }
           trace={
             <TracePanel
               timeline={traceQuery.data}
@@ -607,7 +563,6 @@ function OperatorConsole({
               isLoading={traceQuery.isLoading}
               isError={traceQuery.isError}
               exportHref={activeId && inspectedTurnId ? traceExportUrl(activeId, inspectedTurnId) : null}
-              onViewArtifacts={handleViewArtifacts}
               onViewApproval={handleViewApproval}
             />
           }

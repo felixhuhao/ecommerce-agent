@@ -82,6 +82,12 @@ describe("ConversationView", () => {
                   src,
                   tool_name: "generate_line_chart",
                 },
+                {
+                  id: "chart-2",
+                  kind: "image",
+                  src,
+                  tool_name: "generate_line_chart",
+                },
               ],
             },
           }),
@@ -98,6 +104,12 @@ describe("ConversationView", () => {
 
     const image = document.querySelector(".chart-artifact img");
     expect(image).toHaveAttribute("src", src);
+    const downloads = screen.getAllByRole("link", { name: /Download/i });
+    expect(downloads[0]).toHaveAttribute(
+      "download",
+      "chart-1.svg",
+    );
+    expect(downloads[1]).toHaveAttribute("download", "chart-2.png");
   });
 
   it("renders agent markdown (bold + GFM table) as HTML", () => {
@@ -336,24 +348,4 @@ describe("ConversationView", () => {
     expect(screen.queryByRole("button", { name: /Inspect/i })).toBeNull();
   });
 
-  it("clears handled message focus after scrolling", async () => {
-    const scrollIntoView = vi.fn();
-    const onFocusMessageHandled = vi.fn();
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
-
-    render(
-      <ConversationView
-        {...baseProps()}
-        messages={[message({ message_id: "m-focus" })]}
-        focusMessageId="m-focus"
-        onFocusMessageHandled={onFocusMessageHandled}
-      />,
-    );
-
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" }));
-    expect(onFocusMessageHandled).toHaveBeenCalled();
-  });
 });

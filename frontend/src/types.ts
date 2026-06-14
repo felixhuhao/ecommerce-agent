@@ -163,15 +163,3 @@ export interface TraceTimeline {
   span_count: number;
   spans: TraceSpan[];
 }
-
-export interface ArtifactSummary {
-  id: string;
-  kind: string;
-  mime_type: string;
-  src: string;
-  tool_name: string | null;
-  turn_id: string | null;
-  trace_id: string | null;
-  created_at: string;
-  message_id: string;
-}

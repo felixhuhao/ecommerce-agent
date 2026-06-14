@@ -4,7 +4,6 @@ import {
   acknowledgeAlert,
   approveApproval,
   createSession,
-  getArtifacts,
   getMe,
   getMcpHealth,
   getTrace,
@@ -148,28 +147,6 @@ describe("api client", () => {
   it("getTrace throws an ApiError carrying the status on 404", async () => {
     mockFetch(404, { detail: "trace not found" });
     await expect(getTrace("s1", "missing")).rejects.toMatchObject({ status: 404 });
-  });
-
-  it("getArtifacts returns the artifacts array", async () => {
-    mockFetch(200, {
-      session_id: "s1",
-      artifacts: [
-        {
-          id: "c0",
-          kind: "image",
-          mime_type: "image/png",
-          src: "data:image/png;base64,AA",
-          tool_name: "generate_bar_chart",
-          turn_id: "t1",
-          trace_id: "tr",
-          created_at: "x",
-          message_id: "m1",
-        },
-      ],
-    });
-
-    const artifacts = await getArtifacts("s1");
-    expect(artifacts[0].id).toBe("c0");
   });
 
   it("listAlerts returns alerts from the alert center endpoint", async () => {

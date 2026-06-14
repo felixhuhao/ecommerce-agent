@@ -41,7 +41,6 @@ const base = {
   isLoading: false,
   isError: false,
   exportHref: "/api/sessions/s1/turns/t1/trace/export",
-  onViewArtifacts: vi.fn(),
   onViewApproval: vi.fn(),
 };
 
@@ -89,11 +88,10 @@ describe("TracePanel", () => {
     expect(screen.getByText("tokens 12 in / 8 out")).toBeInTheDocument();
   });
 
-  it("links an artifact span to the Artifacts tab", () => {
-    const onViewArtifacts = vi.fn();
-    render(<TracePanel {...base} onViewArtifacts={onViewArtifacts} timeline={timeline()} />);
-    fireEvent.click(screen.getByRole("button", { name: /View in Artifacts/i }));
-    expect(onViewArtifacts).toHaveBeenCalled();
+  it("shows artifact ids on artifact spans", () => {
+    render(<TracePanel {...base} timeline={timeline()} />);
+    fireEvent.click(screen.getByText("generate_line_chart"));
+    expect(screen.getByText(/chart-x1/)).toBeInTheDocument();
   });
 
   it("links an approval span to its specific card by id", () => {

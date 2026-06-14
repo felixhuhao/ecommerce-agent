@@ -5,7 +5,6 @@ import { RightRail } from "./RightRail";
 const nodes = {
   alerts: <div>ALERTS</div>,
   approvals: <div>APPROVALS</div>,
-  artifacts: <div>ARTIFACTS</div>,
   trace: <div>TRACE</div>,
   health: <div>HEALTH</div>,
 };
@@ -39,6 +38,7 @@ describe("RightRail", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: "Trace" }));
     expect(onTabChange).toHaveBeenCalledWith("trace");
+    expect(screen.queryByRole("tab", { name: "Artifacts" })).not.toBeInTheDocument();
   });
 
   it("hides the badge when there are no pending approvals", () => {

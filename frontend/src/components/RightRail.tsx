@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type RailTab = "alerts" | "approvals" | "artifacts" | "trace" | "health";
+export type RailTab = "alerts" | "approvals" | "trace" | "health";
 
 interface RightRailProps {
   activeTab: RailTab;
@@ -10,7 +10,6 @@ interface RightRailProps {
   showAlerts?: boolean;
   alerts: ReactNode;
   approvals: ReactNode;
-  artifacts: ReactNode;
   trace: ReactNode;
   health: ReactNode;
 }
@@ -18,7 +17,6 @@ interface RightRailProps {
 const TABS: { id: RailTab; label: string }[] = [
   { id: "alerts", label: "Alerts" },
   { id: "approvals", label: "Approvals" },
-  { id: "artifacts", label: "Artifacts" },
   { id: "trace", label: "Trace" },
   { id: "health", label: "Health" },
 ];
@@ -31,11 +29,10 @@ export function RightRail({
   showAlerts = true,
   alerts,
   approvals,
-  artifacts,
   trace,
   health,
 }: RightRailProps) {
-  const panels: Record<RailTab, ReactNode> = { alerts, approvals, artifacts, trace, health };
+  const panels: Record<RailTab, ReactNode> = { alerts, approvals, trace, health };
   const tabs = showAlerts ? TABS : TABS.filter((tab) => tab.id !== "alerts");
 
   return (
