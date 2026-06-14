@@ -24,7 +24,10 @@ from langchain_core.tools import BaseTool
 from ecommerce_agent.agents import build_order_manager, build_sales_analyst
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.tools.metadata import select_names
-from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
+from ecommerce_agent.tools.staging import (
+    STAGE_SALES_ANALYSIS_TOOL_NAME,
+    build_sales_analysis_staging_tool,
+)
 
 SpecialistAssembler = Callable[..., Any]
 
@@ -75,14 +78,17 @@ class SpecialistProvider:
         """Select tools by ``tool_tags`` from the loaded pools, then assemble the agent.
 
         Selection is the single contract: changing ``tool_tags`` is the only way to
-        change what a specialist receives at runtime. ``assemble`` owns only the
-        specialist-specific construction (e.g. the analyst's staging tool).
+        change what a specialist receives at runtime. ``selected_names`` is passed to
+        ``assemble`` so specialist-owned custom tools (e.g. the analyst's staging tool,
+        entitled by the ``analysis.staging`` tag) are built only when their tag is
+        present — keeping ``tool_tags`` authoritative for custom tools too.
         """
         names = select_names(self.tool_tags)
         return self.assemble(
             model=model,
             spring_tools=_select_by_name(spring_tools, names),
             viz_tools=_select_by_name(viz_tools, names),
+            selected_names=names,
             backend=backend,
         )
 
@@ -96,11 +102,16 @@ def _assemble_sales_analyst(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
-    # ``spring_tools`` are the selected reads; build the staging tool from them so the
-    # sandbox analysis has order_query/product_query to invoke.
-    staging = [build_sales_analysis_staging_tool(spring_read_tools=spring_tools, backend=backend)]
+    # The staging tool is specialist-owned (not MCP-discovered), so it is built only
+    # when ``analysis.staging`` entitled it via tool_tags -> selected_names.
+    staging: list[BaseTool] = []
+    if STAGE_SALES_ANALYSIS_TOOL_NAME in selected_names:
+        staging = [
+            build_sales_analysis_staging_tool(spring_read_tools=spring_tools, backend=backend)
+        ]
     return build_sales_analyst(
         model,
         spring_read_tools=spring_tools,
@@ -115,6 +126,7 @@ def _assemble_order_manager(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
     return build_order_manager(model, order_manager_tools=spring_tools, backend=backend)

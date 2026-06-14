@@ -130,3 +130,51 @@ def test_build_selects_tools_from_provider_tool_tags() -> None:
     # are excluded because tool_tags names only reads.
     assert [t.name for t in captured["spring_tools"]] == ["product_query"]
     assert captured["viz_tools"] == []
+
+
+def test_removing_analysis_staging_tag_omits_staging_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The staging tool is specialist-owned (not MCP-discovered). It must be built only
+    # when analysis.staging is in tool_tags, so tool_tags stays the single source of
+    # truth for custom tools too.
+    import ecommerce_agent.specialists.providers as providers
+    from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
+
+    staging_calls: list[dict] = []
+    monkeypatch.setattr(
+        providers,
+        "build_sales_analysis_staging_tool",
+        lambda **kw: staging_calls.append(kw)
+        or SimpleNamespace(name=STAGE_SALES_ANALYSIS_TOOL_NAME),
+    )
+    analyst_kwargs: dict = {}
+    monkeypatch.setattr(
+        providers,
+        "build_sales_analyst",
+        lambda model, **kw: analyst_kwargs.update(kw) or "AGENT",
+    )
+
+    reads = [SimpleNamespace(name="product_query")]
+    common = {
+        "name": "t",
+        "description": "d",
+        "capability": "read",
+        "prompt_key": "x",
+        "assemble": providers._assemble_sales_analyst,
+        "default": True,
+    }
+
+    with_staging = SpecialistProvider(
+        tool_tags=frozenset({"spring.read", "analysis.staging"}), **common
+    )
+    with_staging.build(model="m", spring_tools=reads, viz_tools=[], backend="b")
+    assert len(staging_calls) == 1
+    assert [t.name for t in analyst_kwargs["staging_tools"]] == [STAGE_SALES_ANALYSIS_TOOL_NAME]
+
+    staging_calls.clear()
+    analyst_kwargs.clear()
+    without_staging = SpecialistProvider(tool_tags=frozenset({"spring.read"}), **common)
+    without_staging.build(model="m", spring_tools=reads, viz_tools=[], backend="b")
+    assert staging_calls == []
+    assert analyst_kwargs["staging_tools"] == []
