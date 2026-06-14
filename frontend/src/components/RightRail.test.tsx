@@ -54,4 +54,19 @@ describe("RightRail", () => {
     expect(screen.getByText("HEALTH")).toBeInTheDocument();
     expect(screen.queryByText("0")).not.toBeInTheDocument();
   });
+
+  it("hides the alerts tab when alerts are not available", () => {
+    render(
+      <RightRail
+        activeTab="approvals"
+        onTabChange={vi.fn()}
+        approvalCount={0}
+        alertCount={3}
+        showAlerts={false}
+        {...nodes}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: /Alerts/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Approvals" })).toBeInTheDocument();
+  });
 });

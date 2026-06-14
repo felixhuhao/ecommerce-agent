@@ -80,5 +80,42 @@ describe("AlertCenter", () => {
     expect(onRun).toHaveBeenCalledOnce();
     expect(onAcknowledge).toHaveBeenCalledWith("a1");
   });
-});
 
+  it("hides cause errors and partial cause sources", () => {
+    const failedCauseAlert: Alert = {
+      ...alert,
+      grounding: {
+        authority: "authoritative",
+        diagnostic: "cause_error:GraphRecursionError",
+        sources: [
+          ...alert.grounding.sources,
+          {
+            source_id: "cause:tool-1",
+            tool_name: "inventory_query",
+            args_summary: null,
+            result_summary: "partial",
+            evidence: "partial",
+          },
+        ],
+      },
+    };
+
+    render(
+      <AlertCenter
+        alerts={[failedCauseAlert]}
+        isLoading={false}
+        isError={false}
+        isRunning={false}
+        isAcknowledgingId={null}
+        actionError={null}
+        runNote={null}
+        onRun={vi.fn()}
+        onAcknowledge={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Cause analysis unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("cause_error:GraphRecursionError")).not.toBeInTheDocument();
+    expect(screen.getByText("Sources (1)")).toBeInTheDocument();
+  });
+});

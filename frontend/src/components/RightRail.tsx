@@ -7,6 +7,7 @@ interface RightRailProps {
   onTabChange: (tab: RailTab) => void;
   approvalCount: number;
   alertCount: number;
+  showAlerts?: boolean;
   alerts: ReactNode;
   approvals: ReactNode;
   artifacts: ReactNode;
@@ -27,6 +28,7 @@ export function RightRail({
   onTabChange,
   approvalCount,
   alertCount,
+  showAlerts = true,
   alerts,
   approvals,
   artifacts,
@@ -34,10 +36,12 @@ export function RightRail({
   health,
 }: RightRailProps) {
   const panels: Record<RailTab, ReactNode> = { alerts, approvals, artifacts, trace, health };
+  const tabs = showAlerts ? TABS : TABS.filter((tab) => tab.id !== "alerts");
+
   return (
     <div className="rail-tabbed">
       <div className="rail-tabs" role="tablist">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"

@@ -74,6 +74,7 @@ def test_monitoring_defaults() -> None:
     assert settings.monitor_low_stock_threshold == 50
     assert settings.monitor_sales_drop_pct == 0.25
     assert settings.monitor_cooldown_seconds == 86400
+    assert settings.monitor_cause_enabled is False
     assert settings.alert_retention_days == 90
     assert settings.monitor_spring_user_id == "1"
     assert settings.monitor_spring_session_id == "monitor"

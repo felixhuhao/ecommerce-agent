@@ -26,9 +26,16 @@ class LowStockCheck:
         findings: list[Finding] = []
         for row in rows:
             quantity = _first_number(row, ("quantity", "stock", "available", "currentStock"))
-            if quantity is not None and quantity > self.threshold:
+            safety_stock = _first_number(row, ("safetyStock", "safety_stock", "threshold"))
+            shortage = _first_number(row, ("shortage", "gap"))
+            if (
+                safety_stock is None
+                and shortage is None
+                and quantity is not None
+                and quantity > self.threshold
+            ):
                 continue
-            product_key = _entity_key(row, ("productId", "product_id", "sku", "id", "name"))
+            product_key = _low_stock_key(row)
             product_label = _entity_label(row, product_key)
             findings.append(
                 Finding(
@@ -38,7 +45,7 @@ class LowStockCheck:
                     severity=AlertSeverity.WARNING,
                     metric="inventory",
                     value=quantity,
-                    threshold=self.threshold,
+                    threshold=safety_stock if safety_stock is not None else self.threshold,
                     entities=_entities(row),
                     evidence=[_scoped_evidence(evidence, product_key)],
                 )
@@ -114,11 +121,24 @@ def _entity_key(row: dict[str, Any], keys: Sequence[str]) -> str:
     return "unknown"
 
 
+def _low_stock_key(row: dict[str, Any]) -> str:
+    product_key = _entity_key(row, ("productId", "product_id", "sku", "id", "name"))
+    warehouse = row.get("warehouse")
+    if warehouse not in (None, ""):
+        return f"{product_key}:{warehouse}"
+    return product_key
+
+
 def _entity_label(row: dict[str, Any], fallback: str) -> str:
     for key in ("name", "productName", "sku", "category"):
         value = row.get(key)
         if value not in (None, ""):
             return str(value)
+    product_id = row.get("productId") or row.get("product_id")
+    if product_id not in (None, ""):
+        warehouse = row.get("warehouse")
+        suffix = f" ({warehouse})" if warehouse not in (None, "") else ""
+        return f"Product {product_id}{suffix}"
     return fallback
 
 
@@ -137,10 +157,16 @@ def _entities(row: dict[str, Any]) -> dict[str, Any]:
             "category",
             "supplierId",
             "supplier_id",
+            "quantity",
+            "safetyStock",
+            "safety_stock",
+            "shortage",
+            "warehouse",
+            "updatedAt",
+            "updated_at",
         }
     }
 
 
 def _scoped_evidence(evidence: FindingEvidence, entity_key: str) -> FindingEvidence:
     return evidence.model_copy(update={"source_id": f"{evidence.source_id}:{entity_key}"})
-

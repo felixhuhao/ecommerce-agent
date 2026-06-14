@@ -62,7 +62,9 @@ export function AlertCenter({
             {alert.cause ? <p className="alert-cause">{alert.cause}</p> : null}
             <div className="alert-grounding">
               <ConfidenceBadge authority={alert.grounding.authority} />
-              {alert.grounding.diagnostic ? <span>{alert.grounding.diagnostic}</span> : null}
+              {diagnosticLabel(alert.grounding.diagnostic) ? (
+                <span>{diagnosticLabel(alert.grounding.diagnostic)}</span>
+              ) : null}
             </div>
             <AlertSources alert={alert} />
             {alert.status === "open" ? (
@@ -87,12 +89,13 @@ export function AlertCenter({
 }
 
 function AlertSources({ alert }: { alert: Alert }) {
-  if (alert.grounding.sources.length === 0) return null;
+  const sources = visibleSources(alert);
+  if (sources.length === 0) return null;
   return (
     <details className="alert-sources">
-      <summary>Sources ({alert.grounding.sources.length})</summary>
+      <summary>Sources ({sources.length})</summary>
       <div className="alert-source-list">
-        {alert.grounding.sources.map((source) => (
+        {sources.map((source) => (
           <div className="alert-source-row" key={source.source_id}>
             <div className="alert-source-head">
               <strong>{source.tool_name}</strong>
@@ -113,3 +116,15 @@ function formatValue(value: number | string | null): string {
   return typeof value === "number" ? new Intl.NumberFormat().format(value) : value;
 }
 
+function diagnosticLabel(diagnostic: string | null): string | null {
+  if (!diagnostic) return null;
+  if (diagnostic.startsWith("cause_error:")) return null;
+  return diagnostic;
+}
+
+function visibleSources(alert: Alert) {
+  if (alert.grounding.diagnostic?.startsWith("cause_error:")) {
+    return alert.grounding.sources.filter((source) => !source.source_id.startsWith("cause:"));
+  }
+  return alert.grounding.sources;
+}

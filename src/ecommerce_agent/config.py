@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     monitor_low_stock_threshold: int = Field(default=50, ge=0)
     monitor_sales_drop_pct: float = Field(default=0.25, ge=0, le=1)
     monitor_cooldown_seconds: int = Field(default=86400, ge=0)
+    monitor_cause_enabled: bool = False
     alert_retention_days: int = Field(default=90, gt=0)
     monitor_spring_user_id: str = "1"
     monitor_spring_session_id: str = "monitor"

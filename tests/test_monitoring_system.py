@@ -16,6 +16,14 @@ class FailingMcpClient:
         self.closed = True
 
 
+class SuccessfulMcpClient:
+    async def get_tools(self, server_name: str) -> list:
+        return []
+
+    async def aclose(self) -> None:
+        pass
+
+
 async def test_build_monitor_runtime_closes_mcp_client_on_setup_failure(monkeypatch) -> None:
     client = FailingMcpClient()
     monkeypatch.setattr(system_module, "build_mcp_client", lambda *args, **kwargs: client)
@@ -25,3 +33,21 @@ async def test_build_monitor_runtime_closes_mcp_client_on_setup_failure(monkeypa
 
     assert client.closed is True
 
+
+async def test_build_monitor_runtime_skips_cause_agent_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        system_module,
+        "build_mcp_client",
+        lambda *args, **kwargs: SuccessfulMcpClient(),
+    )
+
+    def fail_build_cause_agent(*args, **kwargs):  # noqa: ANN001
+        raise AssertionError("cause agent should not be built by default")
+
+    monkeypatch.setattr(system_module, "build_monitor_cause_agent", fail_build_cause_agent)
+
+    runtime = await build_monitor_runtime(
+        Settings(_env_file=None, llm_api_key="key", monitor_cause_enabled=False)
+    )
+
+    assert runtime.cause_agent is None

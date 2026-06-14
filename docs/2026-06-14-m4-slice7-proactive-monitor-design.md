@@ -135,8 +135,8 @@ off-by-default scheduling are the noise/cost controls.
 ## 6. Scope (YAGNI)
 
 **v1:** 2 checks; deterministic detection; detection evidence as primary Sources; **no monitor sandbox**;
-constrained monitor-cause agent; scheduler off by default + manual run; shared operator Alert Center + SSE;
-dedupe/cooldown; acknowledge.
+monitor-cause pass opt-in (`monitor_cause_enabled=false` by default after live recursion noise); scheduler
+off by default + manual run; shared operator Alert Center + SSE; dedupe/cooldown; acknowledge.
 **Deferred:** more / trend / ML-based checks; email or digest delivery; per-operator feeds; auto-resolve;
 a monitor sandbox for deeper (sandbox-computed, `derived`) cause analysis.
 
@@ -179,7 +179,7 @@ user-scoped queries.
 ## 10. Risks
 
 - **Alert noise** (make-or-break): deterministic thresholds + dedupe + cooldown + off-by-default; tunable.
-- **Cost/cadence:** LLM only on new findings; open-alert dedupe and cooldown after acknowledgement cap it;
+- **Cost/cadence:** LLM cause pass is opt-in; open-alert dedupe and cooldown after acknowledgement cap it;
   interval configurable.
 - **Single-instance scheduler:** the in-process loop assumes one app instance (same assumption as the
   reaper). Fine now; flagged for any future multi-instance deploy.

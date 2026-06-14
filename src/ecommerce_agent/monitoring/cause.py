@@ -41,7 +41,7 @@ async def explain_finding(
         return record.answer or None, record, None
     except Exception as exc:
         logger.warning("monitor cause pass failed for %s", finding.dedupe_key, exc_info=True)
-        return None, record, f"cause_error:{type(exc).__name__}"
+        return None, None, f"cause_error:{type(exc).__name__}"
 
 
 def _finding_prompt(finding: Finding) -> str:
@@ -56,4 +56,3 @@ def _finding_prompt(finding: Finding) -> str:
         f"Entities: {finding.entities}\n"
         f"Detection evidence: {[item.model_dump() for item in finding.evidence]}"
     )
-

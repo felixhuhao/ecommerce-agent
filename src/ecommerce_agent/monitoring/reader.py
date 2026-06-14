@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
 from ecommerce_agent.monitoring.models import FindingEvidence
@@ -103,8 +104,16 @@ def _evidence(value: Any) -> str:
 
 def _records(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
+        content_records = _content_records(value)
+        if content_records:
+            return content_records
         return [item for item in value if isinstance(item, dict)]
     if isinstance(value, dict):
+        content = value.get("content")
+        if isinstance(content, list):
+            content_records = _content_records(content)
+            if content_records:
+                return content_records
         for key in ("items", "data", "results", "rows", "inventory", "products"):
             nested = value.get(key)
             if isinstance(nested, list):
@@ -112,3 +121,15 @@ def _records(value: Any) -> list[dict[str, Any]]:
         return [value]
     return []
 
+
+def _content_records(content: list[Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            continue
+        try:
+            parsed = json.loads(item["text"])
+        except json.JSONDecodeError:
+            continue
+        records.extend(_records(parsed))
+    return records

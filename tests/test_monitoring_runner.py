@@ -166,6 +166,7 @@ async def test_cause_error_keeps_authoritative_detection_grounding() -> None:
     assert alert["cause"] is None
     assert alert["grounding"]["authority"] == Authority.AUTHORITATIVE
     assert alert["grounding"]["diagnostic"] == "cause_error:RuntimeError"
+    assert len(alert["grounding"]["sources"]) == 1
 
 
 async def test_acknowledged_alert_within_cooldown_is_skipped() -> None:

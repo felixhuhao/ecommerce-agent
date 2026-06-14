@@ -37,7 +37,7 @@ async def build_monitor_runtime(settings: Settings) -> MonitorRuntime:
         spring_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
         read_tools = filter_spring_read_tools(spring_tools)
         cause_agent = None
-        if settings.llm_api_key:
+        if settings.monitor_cause_enabled and settings.llm_api_key:
             cause_agent = build_monitor_cause_agent(
                 get_summary_model(settings),
                 spring_read_tools=read_tools,

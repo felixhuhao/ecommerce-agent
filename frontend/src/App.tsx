@@ -189,6 +189,7 @@ function OperatorConsole({
   const pendingSendSessionIdRef = useRef<string | null>(null);
   const busyNoteTimeoutRef = useRef<number | null>(null);
   const wasInFlight = useRef(false);
+  const canManageAlerts = actor.role === "operator";
   activeIdRef.current = activeId;
   pendingSendSessionIdRef.current = pendingSendSessionId;
 
@@ -226,13 +227,13 @@ function OperatorConsole({
   const alertsQuery = useQuery({
     queryKey: ["alerts"],
     queryFn: () => listAlerts(),
-    enabled: actor.role === "operator",
-    refetchInterval: actor.role === "operator" ? 30000 : false,
+    enabled: canManageAlerts,
+    refetchInterval: canManageAlerts ? 30000 : false,
     retry: false,
   });
 
   const sessions = sessionsQuery.data ?? EMPTY_SESSIONS;
-  const alerts = alertsQuery.data ?? EMPTY_ALERTS;
+  const alerts = canManageAlerts ? alertsQuery.data ?? EMPTY_ALERTS : EMPTY_ALERTS;
 
   useEffect(() => {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].session_id);
@@ -256,6 +257,10 @@ function OperatorConsole({
   }, [activeId]);
 
   useEffect(() => {
+    if (!canManageAlerts && activeTab === "alerts") setActiveTab("approvals");
+  }, [activeTab, canManageAlerts]);
+
+  useEffect(() => {
     const inFlight = state.inFlightTurnId !== null;
     if (wasInFlight.current && !inFlight && activeIdRef.current) {
       queryClient.invalidateQueries({ queryKey: ["artifacts", activeIdRef.current] });
@@ -264,7 +269,7 @@ function OperatorConsole({
   }, [state.inFlightTurnId, queryClient]);
 
   useEffect(() => {
-    if (actor.role !== "operator") return;
+    if (!canManageAlerts) return;
     if (typeof EventSource === "undefined") return;
     const events = new EventSource("/api/alerts/stream", { withCredentials: true });
     const invalidateAlerts = () => {
@@ -273,7 +278,7 @@ function OperatorConsole({
     events.addEventListener("alert.created", invalidateAlerts);
     events.addEventListener("alert.updated", invalidateAlerts);
     return () => events.close();
-  }, [actor.role, queryClient]);
+  }, [canManageAlerts, queryClient]);
 
   const clearBusyNoteTimeout = useCallback(() => {
     if (busyNoteTimeoutRef.current !== null) {
@@ -562,6 +567,7 @@ function OperatorConsole({
           onTabChange={setActiveTab}
           approvalCount={approvals.filter((approval) => approval.status === "pending").length}
           alertCount={openAlertCount}
+          showAlerts={canManageAlerts}
           alerts={
             <AlertCenter
               alerts={alerts}
