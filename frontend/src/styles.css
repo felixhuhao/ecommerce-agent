@@ -924,6 +924,16 @@ button:disabled {
   font-weight: 600;
 }
 
+.turn-status-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
 .confidence-badge {
   display: inline-flex;
   align-items: center;

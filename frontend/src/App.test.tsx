@@ -379,7 +379,18 @@ describe("App", () => {
     act(() =>
       stream?.emit("thread.append", {
         message: threadMessage({
+          message_id: "u1",
+          type: "user",
+          content: "Show me sales for the last 30 days",
+          turn_id: "turn-1",
+        }),
+      }),
+    );
+    act(() =>
+      stream?.emit("thread.append", {
+        message: threadMessage({
           message_id: "m1",
+          seq: 2,
           type: "agent_answer",
           content: "done",
           turn_id: "turn-1",
@@ -388,6 +399,9 @@ describe("App", () => {
     );
 
     fireEvent.click(await screen.findByRole("tab", { name: "Trace" }));
+    expect(screen.getByRole("combobox", { name: "Trace turn" })).toHaveTextContent(
+      "Show me sales for the last 30 days",
+    );
     expect(await screen.findByText("order_query")).toBeInTheDocument();
   });
 

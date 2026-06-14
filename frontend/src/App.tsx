@@ -40,6 +40,13 @@ const EMPTY_ALERTS: Alert[] = [];
 
 function traceTurnOptions(messages: ThreadMessage[]): TraceTurnOption[] {
   const seen = new Set<string>();
+  const questionsByTurn = new Map<string, string>();
+  for (const message of messages) {
+    if (message.type === "user" && message.turn_id) {
+      const question = message.content.trim().replace(/\s+/g, " ");
+      if (question) questionsByTurn.set(message.turn_id, question);
+    }
+  }
   return messages
     .filter(
       (message) =>
@@ -51,7 +58,8 @@ function traceTurnOptions(messages: ThreadMessage[]): TraceTurnOption[] {
       const turnId = message.turn_id as string;
       if (seen.has(turnId)) return [];
       seen.add(turnId);
-      const label = message.content.trim().replace(/\s+/g, " ").slice(0, 64);
+      const fallback = message.content.trim().replace(/\s+/g, " ");
+      const label = (questionsByTurn.get(turnId) ?? fallback).slice(0, 64);
       return [{ turnId, label: label || `Turn ${message.seq}` }];
     });
 }
