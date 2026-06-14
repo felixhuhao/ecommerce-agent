@@ -6,6 +6,7 @@ import pytest
 
 from ecommerce_agent.specialists.providers import (
     PROVIDERS,
+    SpecialistProvider,
     get_default_provider,
     get_provider,
 )
@@ -38,7 +39,11 @@ def test_sales_analyst_is_read_capability() -> None:
 def test_order_manager_is_propose_capability() -> None:
     p = get_provider("order-manager")
     assert p.capability == "propose"
-    assert p.approval_operations == frozenset({"order_update"})
+    # Phase A: order-manager still owns every approval op its prompt supports; Phase B
+    # re-homes the purchase-order ops to `purchasing` and narrows this to {order_update}.
+    assert p.approval_operations == frozenset(
+        {"order_update", "purchase_order_create", "purchase_order_receive"}
+    )
     assert p.prompt_key == "order_manager"
 
 
@@ -92,3 +97,36 @@ def test_provider_is_frozen() -> None:
     except AttributeError:
         return
     raise AssertionError("SpecialistProvider must be frozen")
+
+
+def test_build_selects_tools_from_provider_tool_tags() -> None:
+    # Locks the contract: build() derives the tool set from tool_tags, not from
+    # hardcoded literals inside the assembler. Changing tool_tags must change what
+    # the assembler receives.
+    captured: dict = {}
+
+    def record_assemble(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return "AGENT"
+
+    provider = SpecialistProvider(
+        name="test",
+        description="d",
+        capability="read",
+        prompt_key="x",
+        tool_tags=frozenset({"spring.read"}),
+        assemble=record_assemble,
+        default=True,
+    )
+    spring = [
+        SimpleNamespace(name="product_query"),
+        SimpleNamespace(name="request_approval"),
+    ]
+    viz = [SimpleNamespace(name="generate_line_chart")]
+
+    provider.build(model="m", spring_tools=spring, viz_tools=viz, backend="b")
+
+    # Only the spring.read-tagged read is selected; request_approval and the viz tool
+    # are excluded because tool_tags names only reads.
+    assert [t.name for t in captured["spring_tools"]] == ["product_query"]
+    assert captured["viz_tools"] == []

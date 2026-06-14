@@ -5,9 +5,11 @@ specialist. The session factory iterates :data:`PROVIDERS` instead of hand-wirin
 each specialist, so adding a specialist is a single new ``SpecialistProvider`` plus
 its prompt.
 
-Each provider owns its own ``build`` callable so specialist-specific assembly (the
-analyst's data-staging tool, the order-manager's approval-only tool set) lives with
-the provider, not in factory control flow.
+Tool selection is centralized in :meth:`SpecialistProvider.build`, which derives the
+tool set from the provider's own ``tool_tags`` via :func:`select_names`; the
+specialist-specific ``assemble`` callable then receives the already-selected tools
+and owns only the assembly differences (e.g. the analyst's data-staging tool). This
+keeps ``tool_tags`` the single source of truth for what a specialist receives.
 """
 
 from __future__ import annotations
@@ -24,10 +26,10 @@ from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.tools.metadata import select_names
 from ecommerce_agent.tools.staging import build_sales_analysis_staging_tool
 
-SpecialistBuild = Callable[..., Any]
+SpecialistAssembler = Callable[..., Any]
 
-# Tool tags selected by each specialist. Kept here as the authoritative per-provider
-# selection set; the mcp_client compatibility frozensets reproduce today's filters.
+# Tool tags selected by each specialist. ``build`` resolves these via select_names,
+# so changing a set here is the only edit needed to change a specialist's tool surface.
 SALES_ANALYST_TAGS: frozenset[str] = frozenset({"spring.read", "viz.chart", "analysis.staging"})
 ORDER_MANAGER_TAGS: frozenset[str] = frozenset(
     {
@@ -40,6 +42,13 @@ ORDER_MANAGER_TAGS: frozenset[str] = frozenset(
     }
 )
 
+# Phase A: order-manager still owns every approval operation its prompt supports
+# (prompts.yml). Phase B re-homes the purchase-order operations to a new
+# ``purchasing`` provider and narrows this set to just ``order_update``.
+ORDER_MANAGER_APPROVAL_OPERATIONS: frozenset[str] = frozenset(
+    {"order_update", "purchase_order_create", "purchase_order_receive"}
+)
+
 
 @dataclass(frozen=True)
 class SpecialistProvider:
@@ -48,44 +57,67 @@ class SpecialistProvider:
     capability: Literal["read", "propose"]
     prompt_key: str
     tool_tags: frozenset[str]
-    build: SpecialistBuild
+    assemble: SpecialistAssembler
     approval_operations: frozenset[str] = frozenset()
     default: bool = False
 
     def is_enabled(self, actor: RuntimeActor) -> bool:
         return self.capability == "read" or actor.can_propose
 
+    def build(
+        self,
+        *,
+        model: BaseChatModel,
+        spring_tools: Sequence[BaseTool],
+        viz_tools: Sequence[BaseTool],
+        backend: Any,
+    ) -> Any:
+        """Select tools by ``tool_tags`` from the loaded pools, then assemble the agent.
 
-def _build_sales_analyst(
+        Selection is the single contract: changing ``tool_tags`` is the only way to
+        change what a specialist receives at runtime. ``assemble`` owns only the
+        specialist-specific construction (e.g. the analyst's staging tool).
+        """
+        names = select_names(self.tool_tags)
+        return self.assemble(
+            model=model,
+            spring_tools=_select_by_name(spring_tools, names),
+            viz_tools=_select_by_name(viz_tools, names),
+            backend=backend,
+        )
+
+
+def _select_by_name(tools: Sequence[BaseTool], names: frozenset[str]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in names]
+
+
+def _assemble_sales_analyst(
     *,
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
     backend: Any,
 ) -> Any:
-    read_names = select_names(frozenset({"spring.read"}))
-    reads = [tool for tool in spring_tools if tool.name in read_names]
-    viz_names = select_names(frozenset({"viz.chart"}))
-    viz = [tool for tool in viz_tools if tool.name in viz_names]
-    staging = [build_sales_analysis_staging_tool(spring_read_tools=reads, backend=backend)]
+    # ``spring_tools`` are the selected reads; build the staging tool from them so the
+    # sandbox analysis has order_query/product_query to invoke.
+    staging = [build_sales_analysis_staging_tool(spring_read_tools=spring_tools, backend=backend)]
     return build_sales_analyst(
         model,
-        spring_read_tools=reads,
-        viz_tools=viz,
+        spring_read_tools=spring_tools,
+        viz_tools=viz_tools,
         staging_tools=staging,
         backend=backend,
     )
 
 
-def _build_order_manager(
+def _assemble_order_manager(
     *,
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
     backend: Any,
 ) -> Any:
-    tools = [tool for tool in spring_tools if tool.name in select_names(ORDER_MANAGER_TAGS)]
-    return build_order_manager(model, order_manager_tools=tools, backend=backend)
+    return build_order_manager(model, order_manager_tools=spring_tools, backend=backend)
 
 
 PROVIDERS: tuple[SpecialistProvider, ...] = (
@@ -98,7 +130,7 @@ PROVIDERS: tuple[SpecialistProvider, ...] = (
         capability="read",
         prompt_key="sales_analyst",
         tool_tags=SALES_ANALYST_TAGS,
-        build=_build_sales_analyst,
+        assemble=_assemble_sales_analyst,
         default=True,
     ),
     SpecialistProvider(
@@ -110,8 +142,8 @@ PROVIDERS: tuple[SpecialistProvider, ...] = (
         capability="propose",
         prompt_key="order_manager",
         tool_tags=ORDER_MANAGER_TAGS,
-        build=_build_order_manager,
-        approval_operations=frozenset({"order_update"}),
+        assemble=_assemble_order_manager,
+        approval_operations=ORDER_MANAGER_APPROVAL_OPERATIONS,
     ),
 )
 

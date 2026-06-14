@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ecommerce_agent.specialists.providers import PROVIDERS
-
 
 @dataclass(frozen=True)
 class Specialist:
@@ -39,7 +37,14 @@ class SpecialistRegistry:
 
 
 def build_specialist_registry() -> SpecialistRegistry:
-    """Build the registry from the authoritative provider list in specialists.providers."""
+    """Build the registry from the authoritative provider list in specialists.providers.
+
+    ``PROVIDERS`` is imported lazily so this module stays importable without pulling
+    in the agent builders / DeepAgents runtime wiring — the descriptor registry is
+    meant to stay lightweight for routing and eval code.
+    """
+    from ecommerce_agent.specialists.providers import PROVIDERS
+
     return SpecialistRegistry(
         [Specialist(p.name, p.description, default=p.default) for p in PROVIDERS]
     )
