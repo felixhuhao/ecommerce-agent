@@ -95,8 +95,21 @@ export type StreamEvent =
   | { kind: "thread.append"; message: ThreadMessage }
   | { kind: "token"; text: string }
   | { kind: "tool"; name: string; phase: string }
+  | { kind: "turn.progress"; step: TurnProgressStep }
   | { kind: "done"; turnId: string }
   | { kind: "error"; message: string };
+
+export type TurnProgressStatus = "pending" | "running" | "done" | "failed";
+
+export interface TurnProgressStep {
+  turnId: string;
+  stepId: string;
+  kind: string;
+  label: string;
+  status: TurnProgressStatus;
+  detail: string | null;
+  ts: number | null;
+}
 
 export interface HealthComponent {
   status: string;

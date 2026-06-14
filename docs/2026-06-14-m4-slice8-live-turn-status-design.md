@@ -25,7 +25,8 @@ Behavior:
 - The latest active step is visually emphasized.
 - Completed steps remain visible for context.
 - On success, the block collapses/disappears once the durable answer/proposal arrives.
-- On failure, keep a short failed state next to the existing error notice.
+- On failure, keep failed progress visible next to the existing error notice until the next turn or
+  session switch. Timed auto-dismiss is deferred.
 - Remove `Inspect` buttons from chat messages.
 - Remove trace jump links from `SourcesExpander`; sources remain expandable in place.
 - Keep the `Trace` tab for manual post-chat analysis.
@@ -110,7 +111,7 @@ Routing currently has no "start" event. A route decision appears only when the d
 
 Tool labels should be user-facing and deterministic:
 
-- `get_statistics` -> `Reading business data`
+- `get_statistics` -> `Reading sales data`
 - `inventory_low_stock` -> `Reading inventory data`
 - `stage_sales_analysis_inputs` -> `Staging analysis inputs`
 - `execute` -> `Running analysis`
@@ -139,13 +140,15 @@ Reducer rules:
 
 - `turn_started`: clear progress and seed `Starting turn`.
 - `turn.progress`: upsert by `stepId`, preserve order by first seen / `ts`.
+- A new step completes the frontend-owned `Starting turn` seed, but must not mark unrelated running
+  tool steps done; concurrent tools stay running until their own end/error.
 - `thread.append` terminal answer/proposal: finalize and clear/hide progress.
 - `done`: finalize and clear/hide progress.
-- `error`: mark the current running step failed and keep progress visible with the error notice.
+- `error`: mark running steps failed and keep progress visible with the error notice.
 
 This requires changing the existing `error` reducer behavior. Today `error` calls `finalize()`, which
-clears transient turn state. With progress, the reducer needs to keep enough state to mark the active
-step failed instead of wiping the tracker immediately.
+clears transient turn state. With progress, the reducer needs to keep enough state to mark running
+steps failed instead of wiping the tracker immediately.
 
 Render with a new `TurnStatusTracker` component inside `ConversationView`.
 

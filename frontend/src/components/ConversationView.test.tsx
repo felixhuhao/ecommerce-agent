@@ -6,7 +6,6 @@ import type { ThreadMessage } from "../types";
 function baseProps() {
   return {
     provisionalAnswer: null,
-    activeTool: null,
     streamStatus: "open" as const,
     composerDisabled: false,
     busyNote: null,
@@ -54,7 +53,6 @@ describe("ConversationView", () => {
       <ConversationView
         messages={[message()]}
         provisionalAnswer={null}
-        activeTool={null}
         streamStatus="open"
         composerDisabled={false}
         busyNote={null}
@@ -93,7 +91,6 @@ describe("ConversationView", () => {
           }),
         ]}
         provisionalAnswer={null}
-        activeTool={null}
         streamStatus="open"
         composerDisabled={false}
         busyNote={null}
@@ -136,16 +133,6 @@ describe("ConversationView", () => {
     expect(screen.getByText("**not bold**")).toBeInTheDocument();
   });
 
-  it("shows an Inspect control on agent answers that calls onInspect with the turn id", () => {
-    const onInspect = vi.fn();
-    render(
-      <ConversationView {...baseProps()} onInspect={onInspect} messages={[message({ turn_id: "turn-9" })]} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Inspect/i }));
-    expect(onInspect).toHaveBeenCalledWith("turn-9");
-  });
-
   it("renders a confidence badge and Sources expander", () => {
     render(
       <ConversationView
@@ -174,78 +161,40 @@ describe("ConversationView", () => {
     fireEvent.click(screen.getByText("Sources (1)"));
     expect(screen.getByText("get_statistics")).toBeInTheDocument();
     expect(screen.getByText(/sales rows/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Trace/i })).toBeNull();
   });
 
-  it("shows trace evidence in Sources when the inspected timeline is loaded", () => {
+  it("renders live turn status steps", () => {
     render(
       <ConversationView
         {...baseProps()}
-        inspectedTurnId="t1"
-        messages={[
-          message({
-            turn_id: "t1",
-            grounding: {
-              authority: "derived",
-              diagnostic: null,
-              sources: [
-                {
-                  span_id: "span-1",
-                  tool_name: "execute",
-                  args_summary: null,
-                  result_summary: "forecast summary",
-                },
-              ],
-            },
-          }),
+        messages={[]}
+        turnProgress={[
+          {
+            turnId: "t1",
+            stepId: "start:t1",
+            kind: "start",
+            label: "Starting turn",
+            status: "done",
+            detail: null,
+            ts: null,
+          },
+          {
+            turnId: "t1",
+            stepId: "tool:stats",
+            kind: "tool",
+            label: "Reading sales data",
+            status: "running",
+            detail: "get_statistics",
+            ts: 1,
+          },
         ]}
-        traceTimeline={{
-          trace_id: "tr",
-          session_id: "s1",
-          turn_id: "t1",
-          started_at: 1,
-          ended_at: 2,
-          duration_ms: 10,
-          tokens_in_total: null,
-          tokens_out_total: null,
-          span_count: 1,
-          spans: [
-            {
-              kind: "tool_call",
-              name: "execute",
-              status: "ok",
-              ts: 1,
-              duration_ms: 3,
-              args_summary: null,
-              result_summary: "forecast summary",
-              evidence: "full forecast evidence",
-              tokens_in: null,
-              tokens_out: null,
-              span_id: "span-1",
-              artifact_id: null,
-              approval_id: null,
-              error_message: null,
-            },
-          ],
-        }}
       />,
     );
 
-    fireEvent.click(screen.getByText("Sources (1)"));
-    expect(screen.getByText(/full forecast evidence/)).toBeInTheDocument();
-  });
-
-  it("shows an Inspect control on agent proposals", () => {
-    const onInspect = vi.fn();
-    render(
-      <ConversationView
-        {...baseProps()}
-        onInspect={onInspect}
-        messages={[message({ type: "agent_proposal", turn_id: "proposal-turn" })]}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Inspect/i }));
-    expect(onInspect).toHaveBeenCalledWith("proposal-turn");
+    expect(screen.getByLabelText("Turn status")).toBeInTheDocument();
+    expect(screen.getByText("Starting turn")).toBeInTheDocument();
+    expect(screen.getByText("Reading sales data")).toBeInTheDocument();
   });
 
   it("keeps proposal header label while still showing grounding sources", () => {
@@ -336,12 +285,15 @@ describe("ConversationView", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
-  it("shows no Inspect control on operator messages", () => {
+  it("shows no Inspect control on thread messages", () => {
     render(
       <ConversationView
         {...baseProps()}
-        onInspect={vi.fn()}
-        messages={[message({ type: "user", content: "hi", turn_id: null })]}
+        messages={[
+          message({ type: "user", content: "hi", turn_id: null }),
+          message({ seq: 2, type: "agent_answer", content: "done", turn_id: "t1" }),
+          message({ seq: 3, type: "agent_proposal", content: "proposal", turn_id: "t2" }),
+        ]}
       />,
     );
 

@@ -37,16 +37,19 @@ function timeline(overrides: Partial<TraceTimeline> = {}): TraceTimeline {
 }
 
 const base = {
-  inspectedTurnId: "t1" as string | null,
+  selectedTurnId: "t1" as string | null,
+  turnOptions: [{ turnId: "t1", label: "Latest answer" }],
   isLoading: false,
   isError: false,
   exportHref: "/api/sessions/s1/turns/t1/trace/export",
+  onSelectTurn: vi.fn(),
   onViewApproval: vi.fn(),
 };
 
 describe("TracePanel", () => {
   it("renders spans, duration and the export link", () => {
     render(<TracePanel {...base} timeline={timeline()} />);
+    expect(screen.getByRole("combobox", { name: "Trace turn" })).toHaveValue("t1");
     expect(screen.getByText("generate_line_chart")).toBeInTheDocument();
     expect(screen.getByText("12 ms")).toBeInTheDocument();
     expect(screen.getByText("1 spans")).toBeInTheDocument();
@@ -158,9 +161,37 @@ describe("TracePanel", () => {
     expect(screen.getByText(/full evidence payload/)).toBeInTheDocument();
   });
 
-  it("prompts to select a turn when none is inspected", () => {
-    render(<TracePanel {...base} inspectedTurnId={null} timeline={undefined} />);
-    expect(screen.getByText(/Select an answer's Inspect/i)).toBeInTheDocument();
+  it("selects a trace turn from the tab-owned selector", () => {
+    const onSelectTurn = vi.fn();
+    render(
+      <TracePanel
+        {...base}
+        onSelectTurn={onSelectTurn}
+        selectedTurnId="t2"
+        turnOptions={[
+          { turnId: "t2", label: "Second answer" },
+          { turnId: "t1", label: "First answer" },
+        ]}
+        timeline={timeline({ turn_id: "t2" })}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Trace turn" }), {
+      target: { value: "t1" },
+    });
+    expect(onSelectTurn).toHaveBeenCalledWith("t1");
+  });
+
+  it("shows an empty state when no completed trace turns exist", () => {
+    render(
+      <TracePanel
+        {...base}
+        selectedTurnId={null}
+        turnOptions={[]}
+        timeline={undefined}
+      />,
+    );
+    expect(screen.getByText(/No completed turns with traces yet/i)).toBeInTheDocument();
   });
 
   it("shows empty-activity and error states", () => {

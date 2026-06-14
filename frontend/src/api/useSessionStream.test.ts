@@ -83,6 +83,31 @@ describe("useSessionStream", () => {
     expect(result.current.state.error).toBe("turn failed");
   });
 
+  it("applies turn progress frames", () => {
+    let eventSource!: FakeEventSource;
+    const factory = (url: string) => {
+      eventSource = new FakeEventSource(url);
+      return eventSource as unknown as EventSource;
+    };
+    const { result } = renderHook(() => useSessionStream("s1", factory));
+
+    act(() => result.current.markTurnStarted("t1"));
+    act(() =>
+      eventSource.emit("turn.progress", {
+        turn_id: "t1",
+        step_id: "tool:stats",
+        kind: "tool",
+        label: "Reading sales data",
+        status: "running",
+      }),
+    );
+
+    expect(result.current.state.turnProgress.map((step) => step.label)).toEqual([
+      "Starting turn",
+      "Reading sales data",
+    ]);
+  });
+
   it("resets state when the session id changes", () => {
     const factory = (url: string) => new FakeEventSource(url) as unknown as EventSource;
     const { result, rerender } = renderHook(({ id }) => useSessionStream(id, factory), {

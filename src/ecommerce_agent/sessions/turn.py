@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ecommerce_agent.approvals import approval_card
 from ecommerce_agent.grounding.build import build_grounding
 from ecommerce_agent.grounding.model import Authority
+from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.threads.history import build_history
 from ecommerce_agent.threads.messages import ThreadMessage
@@ -16,11 +18,93 @@ from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 logger = logging.getLogger(__name__)
 
 
+def _progress_frame(
+    *,
+    turn_id: str,
+    step_id: str,
+    kind: str,
+    label: str,
+    status: str,
+    detail: str | None = None,
+    ts: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "event": "turn.progress",
+        "turn_id": turn_id,
+        "step_id": step_id,
+        "kind": kind,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "ts": ts if ts is not None else time.time(),
+    }
+
+
+def _tool_label(name: str | None, *, phase: str | None, artifact: bool = False) -> str:
+    if artifact and phase == "end":
+        return "Chart generated"
+    if name == "get_statistics":
+        return "Reading sales data"
+    if name == "inventory_low_stock":
+        return "Reading inventory data"
+    if name == "stage_sales_analysis_inputs":
+        return "Staging analysis inputs"
+    if name == "execute":
+        return "Running analysis"
+    if name in VIZ_TOOLS:
+        return "Generating chart"
+    if name == "request_approval":
+        return "Approval requested" if phase == "end" else "Requesting approval"
+    return f"Using {name}" if name else "Using tool"
+
+
 def _trace_event_to_frame(event: TraceEvent) -> dict | None:
     if event.event_type == "answer_chunk":
         return None
     if event.event_type == "tool_call":
         return {"event": "tool", "name": event.name, "phase": event.phase}
+    return None
+
+
+def _trace_event_to_progress(event: TraceEvent, *, turn_id: str) -> dict[str, Any] | None:
+    if event.event_type == "tool_call":
+        step_id = f"tool:{event.tool_call_id or event.run_id or event.span_id}"
+        return _progress_frame(
+            turn_id=turn_id,
+            step_id=step_id,
+            kind=(
+                "artifact"
+                if event.artifact_id
+                else "approval"
+                if event.name == "request_approval"
+                else "tool"
+            ),
+            label=_tool_label(event.name, phase=event.phase, artifact=bool(event.artifact_id)),
+            status="done" if event.phase == "end" else "running",
+            detail=event.name,
+            ts=event.ts,
+        )
+    if event.event_type == "route_decision":
+        specialist = event.name or "specialist"
+        return _progress_frame(
+            turn_id=turn_id,
+            step_id=f"route:{event.run_id or event.span_id}",
+            kind="specialist",
+            label=f"{specialist} selected",
+            status="done",
+            detail=specialist,
+            ts=event.ts,
+        )
+    if event.event_type == "policy_denial":
+        return _progress_frame(
+            turn_id=turn_id,
+            step_id=f"policy:{event.run_id or event.span_id}",
+            kind="error",
+            label="Request blocked by role policy",
+            status="failed",
+            detail=event.name,
+            ts=event.ts,
+        )
     return None
 
 
@@ -219,6 +303,19 @@ async def run_turn(
             frame = _trace_event_to_frame(event)
             if frame is not None:
                 bus.publish(session_id, frame)
+            progress = _trace_event_to_progress(event, turn_id=turn_id)
+            if progress is not None:
+                bus.publish(session_id, progress)
+        bus.publish(
+            session_id,
+            _progress_frame(
+                turn_id=turn_id,
+                step_id=f"answer:{turn_id}",
+                kind="answer",
+                label="Preparing answer",
+                status="running",
+            ),
+        )
         await _append_turn_result(
             record=record,
             session_id=session_id,
@@ -229,6 +326,17 @@ async def run_turn(
         )
     except Exception:
         logger.exception("agent turn failed for session %s", session_id)
+        bus.publish(
+            session_id,
+            _progress_frame(
+                turn_id=turn_id,
+                step_id=f"error:{turn_id}",
+                kind="error",
+                label="Unable to complete request",
+                status="failed",
+            ),
+        )
+        bus.publish(session_id, {"event": "error", "message": "Unable to complete the turn."})
         await append_and_publish(
             store,
             bus,
@@ -242,7 +350,6 @@ async def run_turn(
                 status="failed",
             ),
         )
-        bus.publish(session_id, {"event": "error", "message": "Unable to complete the turn."})
     finally:
         if record.ended_at is None:
             record.finish()

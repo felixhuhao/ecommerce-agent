@@ -304,7 +304,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("approval-1")).not.toBeInTheDocument());
   });
 
-  it("inspecting an answer opens its trace in the rail", async () => {
+  it("Trace tab defaults to the latest completed agent turn", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const sessions: SessionSummary[] = [
       {
@@ -387,7 +387,7 @@ describe("App", () => {
       }),
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /Inspect/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Trace" }));
     expect(await screen.findByText("order_query")).toBeInTheDocument();
   });
 

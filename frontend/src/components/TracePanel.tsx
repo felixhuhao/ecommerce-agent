@@ -1,12 +1,19 @@
 import { Cpu, Download, Wrench } from "lucide-react";
 import type { TraceSpan, TraceTimeline } from "../types";
 
+export interface TraceTurnOption {
+  turnId: string;
+  label: string;
+}
+
 interface TracePanelProps {
   timeline: TraceTimeline | undefined;
-  inspectedTurnId: string | null;
+  selectedTurnId: string | null;
+  turnOptions: TraceTurnOption[];
   isLoading: boolean;
   isError: boolean;
   exportHref: string | null;
+  onSelectTurn: (turnId: string) => void;
   onViewApproval: (approvalId: string) => void;
 }
 
@@ -77,10 +84,12 @@ function SpanRow({
 
 export function TracePanel({
   timeline,
-  inspectedTurnId,
+  selectedTurnId,
+  turnOptions,
   isLoading,
   isError,
   exportHref,
+  onSelectTurn,
   onViewApproval,
 }: TracePanelProps) {
   return (
@@ -96,8 +105,24 @@ export function TracePanel({
           </a>
         ) : null}
       </div>
-      {!inspectedTurnId ? (
-        <p className="empty-note">Select an answer's Inspect to view its trace</p>
+      {turnOptions.length > 0 ? (
+        <label className="trace-turn-select">
+          <span>Turn</span>
+          <select
+            aria-label="Trace turn"
+            value={selectedTurnId ?? ""}
+            onChange={(event) => onSelectTurn(event.currentTarget.value)}
+          >
+            {turnOptions.map((turn) => (
+              <option key={turn.turnId} value={turn.turnId}>
+                {turn.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {!selectedTurnId ? (
+        <p className="empty-note">No completed turns with traces yet</p>
       ) : isError ? (
         <p className="notice notice-error">Could not load trace.</p>
       ) : isLoading || !timeline ? (

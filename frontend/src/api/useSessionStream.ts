@@ -6,7 +6,7 @@ import { parseStreamEvent } from "./streamEvents";
 type EventSourceFactory = (url: string) => EventSource;
 export type StreamStatus = "idle" | "connecting" | "open" | "reconnecting";
 const defaultFactory: EventSourceFactory = (url) => new EventSource(url);
-const MESSAGE_EVENT_NAMES = ["thread.append", "token", "tool", "done"] as const;
+const MESSAGE_EVENT_NAMES = ["thread.append", "token", "tool", "turn.progress", "done"] as const;
 
 export function useSessionStream(
   sessionId: string | null,

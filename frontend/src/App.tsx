@@ -7,7 +7,7 @@ import { ConversationView } from "./components/ConversationView";
 import { HealthPanel } from "./components/HealthPanel";
 import { RightRail, type RailTab } from "./components/RightRail";
 import { SessionSidebar } from "./components/SessionSidebar";
-import { TracePanel } from "./components/TracePanel";
+import { TracePanel, type TraceTurnOption } from "./components/TracePanel";
 import {
   ApiError,
   type Me,
@@ -33,10 +33,28 @@ import { useSessionStream } from "./api/useSessionStream";
 import { performApprove, performReject } from "./state/approvalActions";
 import { foldApprovals } from "./state/approvals";
 import { performSend } from "./state/sendMessage";
-import type { Alert, SessionSummary } from "./types";
+import type { Alert, SessionSummary, ThreadMessage } from "./types";
 
 const EMPTY_SESSIONS: SessionSummary[] = [];
 const EMPTY_ALERTS: Alert[] = [];
+
+function traceTurnOptions(messages: ThreadMessage[]): TraceTurnOption[] {
+  const seen = new Set<string>();
+  return messages
+    .filter(
+      (message) =>
+        (message.type === "agent_answer" || message.type === "agent_proposal") && message.turn_id,
+    )
+    .slice()
+    .reverse()
+    .flatMap((message) => {
+      const turnId = message.turn_id as string;
+      if (seen.has(turnId)) return [];
+      seen.add(turnId);
+      const label = message.content.trim().replace(/\s+/g, " ").slice(0, 64);
+      return [{ turnId, label: label || `Turn ${message.seq}` }];
+    });
+}
 
 function isNotFound(error: unknown) {
   return isApiStatus(error, 404);
@@ -179,7 +197,7 @@ function OperatorConsole({
   const [pendingAlertId, setPendingAlertId] = useState<string | null>(null);
   const [pendingSendSessionId, setPendingSendSessionId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<RailTab>("approvals");
-  const [inspectedTurnId, setInspectedTurnId] = useState<string | null>(null);
+  const [selectedTraceTurnId, setSelectedTraceTurnId] = useState<string | null>(null);
   const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const pendingSendSessionIdRef = useRef<string | null>(null);
@@ -207,9 +225,9 @@ function OperatorConsole({
     retry: false,
   });
   const traceQuery = useQuery({
-    queryKey: ["trace", activeId, inspectedTurnId],
-    queryFn: () => getTrace(activeId as string, inspectedTurnId as string),
-    enabled: activeTab === "trace" && !!activeId && !!inspectedTurnId,
+    queryKey: ["trace", activeId, selectedTraceTurnId],
+    queryFn: () => getTrace(activeId as string, selectedTraceTurnId as string),
+    enabled: activeTab === "trace" && !!activeId && !!selectedTraceTurnId,
     retry: shouldRetryTrace,
     retryDelay: 400,
   });
@@ -230,6 +248,7 @@ function OperatorConsole({
 
   const { state, streamStatus, markTurnStarted, applyThread } = useSessionStream(activeId);
   const approvals = useMemo(() => foldApprovals(state.messages), [state.messages]);
+  const traceTurns = useMemo(() => traceTurnOptions(state.messages), [state.messages]);
   const openAlertCount = alerts.filter((alert) => alert.status === "open").length;
 
   const handleAuthExpired = useCallback(() => {
@@ -240,9 +259,19 @@ function OperatorConsole({
   }, [applyThread, onUnauthorized]);
 
   useEffect(() => {
-    setInspectedTurnId(null);
+    setSelectedTraceTurnId(null);
     setFocusApprovalId(null);
   }, [activeId]);
+
+  useEffect(() => {
+    if (traceTurns.length === 0) {
+      if (selectedTraceTurnId !== null) setSelectedTraceTurnId(null);
+      return;
+    }
+    if (!selectedTraceTurnId || !traceTurns.some((turn) => turn.turnId === selectedTraceTurnId)) {
+      setSelectedTraceTurnId(traceTurns[0].turnId);
+    }
+  }, [selectedTraceTurnId, traceTurns]);
 
   useEffect(() => {
     if (!canManageAlerts && activeTab === "alerts") setActiveTab("approvals");
@@ -462,11 +491,6 @@ function OperatorConsole({
     setBusyNote(null);
   }, [clearBusyNoteTimeout]);
 
-  const handleInspect = useCallback((turnId: string) => {
-    setInspectedTurnId(turnId);
-    setActiveTab("trace");
-  }, []);
-
   const handleViewApproval = useCallback((approvalId: string) => {
     setActiveTab("approvals");
     setFocusApprovalId(approvalId);
@@ -507,7 +531,6 @@ function OperatorConsole({
         <ConversationView
           messages={state.messages}
           provisionalAnswer={state.inFlightTurnId ? state.tokenBuffer : null}
-          activeTool={state.activeTool}
           streamStatus={streamStatus}
           composerDisabled={
             !activeId ||
@@ -520,9 +543,7 @@ function OperatorConsole({
           onApprove={handleApprove}
           onReject={handleReject}
           pendingApprovalId={pendingApprovalId}
-          onInspect={handleInspect}
-          traceTimeline={traceQuery.data}
-          inspectedTurnId={inspectedTurnId}
+          turnProgress={state.turnProgress}
         />
       }
       rail={
@@ -559,10 +580,16 @@ function OperatorConsole({
           trace={
             <TracePanel
               timeline={traceQuery.data}
-              inspectedTurnId={inspectedTurnId}
+              selectedTurnId={selectedTraceTurnId}
+              turnOptions={traceTurns}
               isLoading={traceQuery.isLoading}
               isError={traceQuery.isError}
-              exportHref={activeId && inspectedTurnId ? traceExportUrl(activeId, inspectedTurnId) : null}
+              exportHref={
+                activeId && selectedTraceTurnId
+                  ? traceExportUrl(activeId, selectedTraceTurnId)
+                  : null
+              }
+              onSelectTurn={setSelectedTraceTurnId}
               onViewApproval={handleViewApproval}
             />
           }

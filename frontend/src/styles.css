@@ -870,27 +870,58 @@ button:disabled {
   flex: 0 0 auto;
 }
 
-/* Inspect control on agent/proposal message headers */
-.inspect-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
+.turn-status {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
   background: var(--paper-inset);
-  color: var(--ink-dim);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  box-shadow: var(--shadow-soft);
 }
-.inspect-button:hover {
-  border-color: var(--emerald-line);
-  background: var(--emerald-bg);
+
+.turn-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.turn-status-steps {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn-status-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-dim);
+  font-size: 0.86rem;
+}
+
+.turn-status-step svg {
+  flex: 0 0 auto;
+}
+
+.turn-status-step.status-running {
   color: var(--emerald-deep);
+  font-weight: 600;
+}
+
+.turn-status-step.status-running svg {
+  animation: spin 0.9s linear infinite;
+}
+
+.turn-status-step.status-done {
+  color: var(--ink-faint);
+}
+
+.turn-status-step.status-failed {
+  color: var(--oxblood);
+  font-weight: 600;
 }
 
 .confidence-badge {
@@ -980,27 +1011,6 @@ button:disabled {
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.source-trace-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  background: var(--paper-raised);
-  color: var(--ink-dim);
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.source-trace-button:hover {
-  border-color: var(--emerald-line);
-  background: var(--emerald-bg);
-  color: var(--emerald-deep);
 }
 
 .inline-approval {
@@ -1844,6 +1854,31 @@ button:disabled {
   color: var(--gold-deep);
 }
 
+.trace-turn-select {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.trace-turn-select span {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.trace-turn-select select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper-inset);
+  color: var(--ink);
+  font: inherit;
+}
+
 .trace-summary {
   display: flex;
   flex-wrap: wrap;
@@ -2100,6 +2135,12 @@ button:disabled {
   50.01%,
   100% {
     opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

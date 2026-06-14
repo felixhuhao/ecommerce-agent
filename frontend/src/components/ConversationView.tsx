@@ -1,18 +1,18 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Check, Download, RefreshCw, Send, Wrench, X } from "lucide-react";
+import { Check, Download, RefreshCw, Send, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
 import { extFromMime } from "../lib/mime";
 import { foldApprovals } from "../state/approvals";
-import type { ThreadMessage, TraceTimeline } from "../types";
+import type { ThreadMessage, TurnProgressStep } from "../types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import { SourcesExpander } from "./SourcesExpander";
+import { TurnStatusTracker } from "./TurnStatusTracker";
 
 interface ConversationViewProps {
   messages: ThreadMessage[];
   provisionalAnswer: string | null;
-  activeTool: string | null;
   streamStatus: StreamStatus;
   composerDisabled: boolean;
   busyNote: string | null;
@@ -21,9 +21,7 @@ interface ConversationViewProps {
   onApprove?: (approvalId: string) => Promise<void> | void;
   onReject?: (approvalId: string, reason: string | undefined) => Promise<void> | void;
   pendingApprovalId?: string | null;
-  onInspect?: (turnId: string) => void;
-  traceTimeline?: TraceTimeline;
-  inspectedTurnId?: string | null;
+  turnProgress?: TurnProgressStep[];
 }
 
 const LABELS: Record<ThreadMessage["type"], string> = {
@@ -191,7 +189,6 @@ function InlineApprovalCard({
 export function ConversationView({
   messages,
   provisionalAnswer,
-  activeTool,
   streamStatus,
   composerDisabled,
   busyNote,
@@ -200,9 +197,7 @@ export function ConversationView({
   onApprove,
   onReject,
   pendingApprovalId = null,
-  onInspect,
-  traceTimeline,
-  inspectedTurnId = null,
+  turnProgress = [],
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -210,7 +205,7 @@ export function ConversationView({
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
-  }, [messages.length, provisionalAnswer, activeTool, busyNote, error]);
+  }, [messages.length, provisionalAnswer, busyNote, error]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -232,12 +227,6 @@ export function ConversationView({
             <div className="tool-chip stream-chip" title="Stream reconnecting">
               <RefreshCw size={15} aria-hidden="true" />
               <span>Reconnecting</span>
-            </div>
-          ) : null}
-          {activeTool ? (
-            <div className="tool-chip" title="Active tool">
-              <Wrench size={15} aria-hidden="true" />
-              <span>{activeTool}</span>
             </div>
           ) : null}
         </div>
@@ -264,15 +253,6 @@ export function ConversationView({
                   ) : null}
                 </div>
                 {status ? <span className={`status-pill status-${status}`}>{status}</span> : null}
-                {onInspect && message.turn_id && (message.type === "agent_answer" || message.type === "agent_proposal") ? (
-                  <button
-                    type="button"
-                    className="inspect-button"
-                    onClick={() => onInspect(message.turn_id as string)}
-                  >
-                    <Activity size={13} aria-hidden="true" /> Inspect
-                  </button>
-                ) : null}
               </header>
               <MessageBody type={message.type} content={message.content} />
               <InlineApprovalCard
@@ -285,10 +265,6 @@ export function ConversationView({
               {message.grounding ? (
                 <SourcesExpander
                   grounding={message.grounding}
-                  inspectedTurnId={inspectedTurnId}
-                  onInspect={onInspect}
-                  timeline={traceTimeline}
-                  turnId={message.turn_id}
                 />
               ) : null}
               {artifacts.length > 0 ? (
@@ -327,6 +303,8 @@ export function ConversationView({
         ) : null}
         <div ref={endRef} />
       </div>
+
+      <TurnStatusTracker steps={turnProgress} />
 
       <div className="notice-stack">
         {busyNote ? <div className="notice notice-warn">{busyNote}</div> : null}
