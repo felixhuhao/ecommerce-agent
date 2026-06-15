@@ -21,7 +21,13 @@ from typing import Any, Literal
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from ecommerce_agent.agents import build_order_manager, build_purchasing, build_sales_analyst
+from ecommerce_agent.agents import (
+    build_customer_insights,
+    build_inventory,
+    build_order_manager,
+    build_purchasing,
+    build_sales_analyst,
+)
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.tools.metadata import select_names
 from ecommerce_agent.tools.staging import (
@@ -37,6 +43,10 @@ SALES_ANALYST_TAGS: frozenset[str] = frozenset({"spring.read", "viz.chart", "ana
 ORDER_MANAGER_TAGS: frozenset[str] = frozenset({"orders.query", "approval.request"})
 PURCHASING_TAGS: frozenset[str] = frozenset(
     {"suppliers.query", "suppliers.top", "purchase_orders.query", "approval.request"}
+)
+INVENTORY_TAGS: frozenset[str] = frozenset({"inventory.query", "inventory.low_stock"})
+CUSTOMER_INSIGHTS_TAGS: frozenset[str] = frozenset(
+    {"customers.query", "orders.query", "analytics.aggregate"}
 )
 
 # Phase B: order-manager owns only order-status writes; PO create/receive moved to
@@ -137,6 +147,30 @@ def _assemble_purchasing(
     return build_purchasing(model, purchasing_tools=spring_tools, backend=backend)
 
 
+def _assemble_inventory(
+    *,
+    model: BaseChatModel,
+    spring_tools: Sequence[BaseTool],
+    viz_tools: Sequence[BaseTool],
+    selected_names: frozenset[str],
+    backend: Any,
+) -> Any:
+    return build_inventory(model, inventory_tools=spring_tools, backend=backend)
+
+
+def _assemble_customer_insights(
+    *,
+    model: BaseChatModel,
+    spring_tools: Sequence[BaseTool],
+    viz_tools: Sequence[BaseTool],
+    selected_names: frozenset[str],
+    backend: Any,
+) -> Any:
+    return build_customer_insights(
+        model, customer_insights_tools=spring_tools, backend=backend
+    )
+
+
 PROVIDERS: tuple[SpecialistProvider, ...] = (
     SpecialistProvider(
         name="sales-analyst",
@@ -173,6 +207,28 @@ PROVIDERS: tuple[SpecialistProvider, ...] = (
         tool_tags=PURCHASING_TAGS,
         assemble=_assemble_purchasing,
         approval_operations=PURCHASING_APPROVAL_OPERATIONS,
+    ),
+    SpecialistProvider(
+        name="inventory",
+        description=(
+            "read-only stock health: current stock levels, low-stock items, "
+            "reorder-point checks, and stockout-risk flags."
+        ),
+        capability="read",
+        prompt_key="inventory",
+        tool_tags=INVENTORY_TAGS,
+        assemble=_assemble_inventory,
+    ),
+    SpecialistProvider(
+        name="customer-insights",
+        description=(
+            "read-only customer analytics: customer behavior, segments, "
+            "lifetime value, and customer order history."
+        ),
+        capability="read",
+        prompt_key="customer_insights",
+        tool_tags=CUSTOMER_INSIGHTS_TAGS,
+        assemble=_assemble_customer_insights,
     ),
 )
 

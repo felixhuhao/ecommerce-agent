@@ -13,8 +13,14 @@ from ecommerce_agent.specialists.providers import (
 from ecommerce_agent.tools.metadata import select_names
 
 
-def test_providers_are_sales_analyst_order_manager_and_purchasing_in_order() -> None:
-    assert [p.name for p in PROVIDERS] == ["sales-analyst", "order-manager", "purchasing"]
+def test_providers_are_five_specialists_in_order() -> None:
+    assert [p.name for p in PROVIDERS] == [
+        "sales-analyst",
+        "order-manager",
+        "purchasing",
+        "inventory",
+        "customer-insights",
+    ]
 
 
 def test_provider_names_are_unique() -> None:
@@ -53,9 +59,10 @@ def test_purchasing_is_propose_capability() -> None:
 
 
 def test_read_provider_is_always_enabled() -> None:
-    p = get_provider("sales-analyst")
-    assert p.is_enabled(SimpleNamespace(can_propose=False)) is True
-    assert p.is_enabled(SimpleNamespace(can_propose=True)) is True
+    for name in ("sales-analyst", "inventory", "customer-insights"):
+        p = get_provider(name)
+        assert p.is_enabled(SimpleNamespace(can_propose=False)) is True
+        assert p.is_enabled(SimpleNamespace(can_propose=True)) is True
 
 
 def test_propose_provider_is_gated_on_can_propose() -> None:
@@ -102,6 +109,37 @@ def test_purchasing_tags_select_suppliers_purchase_orders_and_approval() -> None
     assert "purchase_order_receive" not in selected
     assert "order_query" not in selected
     assert "order_update" not in selected
+
+
+def test_inventory_is_read_capability() -> None:
+    p = get_provider("inventory")
+    assert p.capability == "read"
+    assert p.prompt_key == "inventory"
+    assert p.default is False
+    assert p.approval_operations == frozenset()
+
+
+def test_customer_insights_is_read_capability() -> None:
+    p = get_provider("customer-insights")
+    assert p.capability == "read"
+    assert p.prompt_key == "customer_insights"
+    assert p.default is False
+    assert p.approval_operations == frozenset()
+
+
+def test_inventory_tags_select_inventory_tools_only() -> None:
+    selected = select_names(get_provider("inventory").tool_tags)
+    assert selected == frozenset({"inventory_query", "inventory_low_stock"})
+    assert "get_statistics" not in selected
+    assert "order_query" not in selected
+    assert "request_approval" not in selected
+
+
+def test_customer_insights_tags_select_customer_tools_and_statistics() -> None:
+    selected = select_names(get_provider("customer-insights").tool_tags)
+    assert selected == frozenset({"user_query", "order_query", "get_statistics"})
+    assert "inventory_query" not in selected
+    assert "request_approval" not in selected
 
 
 def test_get_provider_raises_for_unknown_name() -> None:
