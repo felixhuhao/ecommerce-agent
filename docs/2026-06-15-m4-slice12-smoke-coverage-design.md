@@ -216,7 +216,12 @@ max_same_tool_calls:
   product_query: 2
   product_search: 2
   inventory_query: 2
+  stage_sales_analysis_inputs: 2
 ```
+
+`stage_sales_analysis_inputs` is capped even though it feeds the sandbox: it is backend
+data fetching, not iteration, so repeated calls are the same loop class the budget guards
+against. Only `execute` is exempt from the total (see §9).
 
 `product_search` is listed alongside `product_query` because inventory, purchasing,
 and customer-insights expose only `product_search` (only sales-analyst selects
