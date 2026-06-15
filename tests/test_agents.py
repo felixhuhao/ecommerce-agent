@@ -3,6 +3,8 @@ import ecommerce_agent.agents as agents_module
 from ecommerce_agent.agent import build_agent
 from ecommerce_agent.agents import (
     build_coordinator,
+    build_customer_insights,
+    build_inventory,
     build_monitor_cause_agent,
     build_order_manager,
     build_sales_analyst,
@@ -134,6 +136,80 @@ def test_build_order_manager_uses_approval_tools_directly(monkeypatch) -> None:
         "request_approval",
     ]
     assert "request_approval" in captured["system_prompt"]
+    assert captured["kwargs"]["subagents"] == []
+    assert captured["kwargs"]["skills"] == []
+    middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
+    assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= middleware_types
+
+
+def test_build_inventory_threads_tools_and_backend(monkeypatch) -> None:
+    captured = {}
+
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            middleware=list(middleware),
+            kwargs=kwargs,
+        )
+        return "INVENTORY"
+
+    monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
+
+    backend = object()
+    result = build_inventory(
+        "MODEL",  # type: ignore[arg-type]
+        inventory_tools=[_Tool("inventory_query"), _Tool("inventory_low_stock")],  # type: ignore[list-item]
+        backend=backend,
+    )
+
+    assert result == "INVENTORY"
+    assert captured["backend"] is backend
+    assert [tool.name for tool in captured["tools"]] == [
+        "inventory_query",
+        "inventory_low_stock",
+    ]
+    assert "read-only" in captured["system_prompt"].lower()
+    assert "inventory_query" in captured["system_prompt"]
+    assert captured["kwargs"]["subagents"] == []
+    assert captured["kwargs"]["skills"] == []
+    middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
+    assert {"ModelCallLimitMiddleware", "ToolCallLimitMiddleware"} <= middleware_types
+
+
+def test_build_customer_insights_threads_tools_and_backend(monkeypatch) -> None:
+    captured = {}
+
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            middleware=list(middleware),
+            kwargs=kwargs,
+        )
+        return "CUSTOMER_INSIGHTS"
+
+    monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
+
+    backend = object()
+    result = build_customer_insights(
+        "MODEL",  # type: ignore[arg-type]
+        customer_insights_tools=[_Tool("user_query"), _Tool("order_query")],  # type: ignore[list-item]
+        backend=backend,
+    )
+
+    assert result == "CUSTOMER_INSIGHTS"
+    assert captured["backend"] is backend
+    assert [tool.name for tool in captured["tools"]] == [
+        "user_query",
+        "order_query",
+    ]
+    assert "read-only" in captured["system_prompt"].lower()
+    assert "user_query" in captured["system_prompt"]
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
     middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}

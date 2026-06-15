@@ -21,7 +21,7 @@ async def test_classifier_routes_clear_prompts_live() -> None:
 
     po = await router.route("create a purchase order for 200 units of SKU-9")
     assert po.source == "classifier"
-    assert po.specialist == "order-manager"
+    assert po.specialist == "purchasing"
 
     sales = await router.route("what were total sales by category last month?")
     assert sales.source == "classifier"

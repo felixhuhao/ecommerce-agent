@@ -25,7 +25,7 @@ def test_multiturn_dataset_loads_and_is_well_formed() -> None:
     assert len(cases) >= 5
     assert all("multi-turn" in c.tags for c in cases)
     assert all(len(c.history) >= 1 for c in cases)
-    assert all(c.expected in {"sales-analyst", "order-manager"} for c in cases)
+    assert all(c.expected in {"sales-analyst", "purchasing"} for c in cases)
 
 
 class _ContextAwareStub:
@@ -37,14 +37,14 @@ class _ContextAwareStub:
 
         joined = " ".join(h["content"].lower() for h in history)
         if "purchase order" in joined or "po " in joined or "replenish" in joined:
-            return RouteDecision("order-manager", "classifier", "ctx: write thread")
+            return RouteDecision("purchasing", "classifier", "ctx: write thread")
         return RouteDecision("sales-analyst", "classifier", "ctx: analysis thread")
 
 
 @pytest.mark.asyncio
 async def test_context_aware_beats_latest_only_offline() -> None:
-    cases = [c for c in load_routing_cases(_MT_PATH) if c.expected == "order-manager"]
-    assert cases, "expected at least one order-manager multi-turn case"
+    cases = [c for c in load_routing_cases(_MT_PATH) if c.expected == "purchasing"]
+    assert cases, "expected at least one purchasing multi-turn case"
     stub = _ContextAwareStub()
 
     baseline = await run_routing_eval(LatestMessageRouter(stub), cases, router_name="latest-only")
