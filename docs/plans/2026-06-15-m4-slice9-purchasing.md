@@ -141,16 +141,16 @@ Commit: `refactor(mcp_client): narrow ORDER_MANAGER shim, add PURCHASING shim`.
 `approval_safety.py`:
 - `ApprovalCase.specialist: str` field (default `"order-manager"` for back-compat).
 - `build_stub_purchasing_tools(approval_calls)`: request_approval + supplier_query,
-  supplier_top, purchase_order_query, product_query (product_query needed for productId/cost
-  validation even though purchasing's live surface lacks it — keep the stub richer so the
-  proposal path is testable; document). Actually: keep stub tools to the purchasing surface
-  (supplier/PO + request_approval) to mirror reality; productId comes from supplier_query.
-- `build_stub_purchasing(settings, approval_calls)` → `build_order_manager(model, order_manager_tools=..., backend=None)` (same factory shape) on purchasing stub tools.
+  supplier_top, purchase_order_query — the purchasing live surface only (no
+  product_query; per catalog §3.1). productId comes from supplier_query.
+- `build_stub_purchasing(settings, approval_calls)` → `build_purchasing(model, purchasing_tools=..., backend=None)` on purchasing stub tools.
 - Helper `build_stub_for_specialist(specialist, settings, approval_calls)`.
 
-`approval_safety.yaml`: add `specialist`:
-- `po-create-sku9`, `replenish-sku3`, `receive-po-4471`, `read-suppliers-sku3`, `read-open-pos`
-  → `purchasing`.
+`approval_safety.yaml`: add `specialist`. Purchasing write/read prompts use `productId`
+(not SKU), since purchasing has no product_query and supplier_query does not return
+SKU-bearing records:
+- `po-create-product9`, `replenish-product3`, `receive-po-4471`, `read-suppliers-product3`,
+  `read-open-pos` → `purchasing`.
 - `read-order-status` → `order-manager`; add `update-order-status` write case → `order-manager`.
 - Drop `read-inventory-sku9` (inventory read is a sales-analyst case now, not propose-safety).
 
@@ -184,8 +184,10 @@ Commit: `refactor(evals): split approval-safety by specialist, add purchasing st
 3. **approval_safety harness is a live eval** the user runs — keep the runner change minimal
    and the gates intact.
 4. **product_query for PO creation** — purchasing has no product_query (per §3.1); productId
-   comes from supplier_query; unitCost omitted (Java canonicalizes). Confirm the purchasing
-   prompt states this so it doesn't try to call product_query.
+   is confirmed via supplier_query; unitCost omitted (Java canonicalizes). The approval-safety
+   prompts use `productId` (not SKU) since supplier_query does not return SKU-bearing records —
+   SKU prompts would have required inferring SKU→productId, which is not a real contract. The
+   purchasing prompt tells the model to ask the operator if only a SKU is given.
 
 ## Self-review
 
