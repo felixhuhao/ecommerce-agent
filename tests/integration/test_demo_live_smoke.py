@@ -118,7 +118,7 @@ CASES = [
     ),
     Case(
         id="order_status_change",
-        prompt="cancel order 1234",
+        prompt="cancel pending order 1008",
         specialists=("order-manager",),
         required_all_of=("request_approval",),
         forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | {"get_statistics"},
@@ -267,8 +267,15 @@ def _assert_case(case: Case, ctx: dict) -> None:
         if name in MAX_SAME_TOOL_CALLS and count > MAX_SAME_TOOL_CALLS[name]
     }
     assert not over_budget, f"repeated-tool fanout exceeded budget: {over_budget}"
-    assert len(ctx["tools"]) <= MAX_TOTAL_TOOL_CALLS, (
-        f"total tool calls {len(ctx['tools'])} > {MAX_TOTAL_TOOL_CALLS}"
+    # Per design §9, sandbox cases may repeat `execute`/staging as long as the turn
+    # finishes within the case timeout and produces its artifact (both asserted
+    # elsewhere). Exclude sandbox tools from the generic total so the cap guards
+    # against runaway read loops, not legitimate sandbox iteration.
+    counted = ctx["tools"] if not case.needs_sandbox else [
+        t for t in ctx["tools"] if t not in SANDBOX_TOOLS
+    ]
+    assert len(counted) <= MAX_TOTAL_TOOL_CALLS, (
+        f"total tool calls {len(counted)} > {MAX_TOTAL_TOOL_CALLS}"
     )
 
     if case.authorities is not None:
