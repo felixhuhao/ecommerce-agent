@@ -28,7 +28,7 @@
   tags: [straightforward]
 - id: inventory-snapshot
   prompt: how much inventory do we have on hand right now?
-  expected: sales-analyst
+  expected: inventory
   tags: [straightforward]
 - id: create-po
   prompt: create a purchase order for 200 units of SKU-9
@@ -66,4 +66,43 @@
 - id: supplier-lead-report
   prompt: report on supplier lead times and how they affect reorder timing
   expected: sales-analyst
+  tags: [boundary]
+# Phase C: inventory read specialist
+- id: stock-level-sku
+  prompt: what's the current stock level for SKU-119?
+  expected: inventory
+  tags: [straightforward]
+- id: low-stock-items
+  prompt: which items are below their reorder point right now?
+  expected: inventory
+  tags: [straightforward]
+- id: stockout-risk
+  prompt: which products are at risk of running out of stock this week?
+  expected: inventory
+  tags: [straightforward]
+- id: restock-recommendation
+  prompt: based on current stock levels, what should we consider reordering?
+  expected: inventory
+  tags: [adversarial, keyword-false-negative]
+# Phase C: customer-insights read specialist
+- id: top-customers-spend
+  prompt: who are our top customers by total spend?
+  expected: customer-insights
+  tags: [straightforward]
+- id: repeat-vs-onetime
+  prompt: how many repeat vs one-time buyers did we have last quarter?
+  expected: customer-insights
+  tags: [straightforward]
+# Phase C: get_statistics boundary cases (per-pair subject disambiguation)
+- id: inventory-turnover-trend
+  prompt: chart the inventory turnover rate trend over the last 6 months
+  expected: sales-analyst
+  tags: [boundary, get-statistics-shared]
+- id: customer-segment-ltv
+  prompt: break down customers into segments and analyze their lifetime value
+  expected: customer-insights
+  tags: [boundary, get-statistics-shared]
+- id: customer-order-history
+  prompt: what's customer 88's order history?
+  expected: customer-insights
   tags: [boundary]
