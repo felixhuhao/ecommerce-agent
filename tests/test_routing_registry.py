@@ -10,8 +10,9 @@ from ecommerce_agent.routing.registry import (
 def test_default_specialist_is_the_flagged_one() -> None:
     reg = build_specialist_registry()
     assert reg.default.name == "sales-analyst"
-    assert set(reg.names()) == {"sales-analyst", "order-manager"}
+    assert set(reg.names()) == {"sales-analyst", "order-manager", "purchasing"}
     assert reg.is_registered("order-manager") is True
+    assert reg.is_registered("purchasing") is True
     assert reg.is_registered("unsure") is False
 
 
@@ -20,6 +21,7 @@ def test_describe_lists_names_and_descriptions() -> None:
     text = reg.describe()
     assert "sales-analyst:" in text
     assert "order-manager:" in text
+    assert "purchasing:" in text
 
 
 def test_describe_is_byte_identical_to_the_classifier_prompt_snapshot() -> None:
@@ -29,8 +31,10 @@ def test_describe_is_byte_identical_to_the_classifier_prompt_snapshot() -> None:
     assert reg.describe() == (
         "- sales-analyst: read-only sales analytics: querying business data, trends, "
         "forecasts, and charts.\n"
-        "- order-manager: approval-only business writes: purchase orders, "
-        "replenishment, receiving, and order-status changes."
+        "- order-manager: approval-only business writes: customer-order status changes "
+        "(ship, cancel, update).\n"
+        "- purchasing: procurement writes: create or receive purchase orders, restock, "
+        "replenish, and supplier-focused proposals."
     )
 
 

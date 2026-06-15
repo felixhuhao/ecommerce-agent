@@ -13,8 +13,8 @@ from ecommerce_agent.specialists.providers import (
 from ecommerce_agent.tools.metadata import select_names
 
 
-def test_providers_are_exactly_sales_analyst_and_order_manager_in_order() -> None:
-    assert [p.name for p in PROVIDERS] == ["sales-analyst", "order-manager"]
+def test_providers_are_sales_analyst_order_manager_and_purchasing_in_order() -> None:
+    assert [p.name for p in PROVIDERS] == ["sales-analyst", "order-manager", "purchasing"]
 
 
 def test_provider_names_are_unique() -> None:
@@ -39,12 +39,17 @@ def test_sales_analyst_is_read_capability() -> None:
 def test_order_manager_is_propose_capability() -> None:
     p = get_provider("order-manager")
     assert p.capability == "propose"
-    # Phase A: order-manager still owns every approval op its prompt supports; Phase B
-    # re-homes the purchase-order ops to `purchasing` and narrows this to {order_update}.
-    assert p.approval_operations == frozenset(
-        {"order_update", "purchase_order_create", "purchase_order_receive"}
-    )
+    # Phase B: order-manager owns only order-status writes; PO ops moved to purchasing.
+    assert p.approval_operations == frozenset({"order_update"})
     assert p.prompt_key == "order_manager"
+
+
+def test_purchasing_is_propose_capability() -> None:
+    p = get_provider("purchasing")
+    assert p.capability == "propose"
+    assert p.approval_operations == frozenset({"purchase_order_create", "purchase_order_receive"})
+    assert p.prompt_key == "purchasing"
+    assert p.default is False
 
 
 def test_read_provider_is_always_enabled() -> None:
@@ -57,6 +62,9 @@ def test_propose_provider_is_gated_on_can_propose() -> None:
     p = get_provider("order-manager")
     assert p.is_enabled(SimpleNamespace(can_propose=False)) is False
     assert p.is_enabled(SimpleNamespace(can_propose=True)) is True
+    purchasing = get_provider("purchasing")
+    assert purchasing.is_enabled(SimpleNamespace(can_propose=False)) is False
+    assert purchasing.is_enabled(SimpleNamespace(can_propose=True)) is True
 
 
 def test_sales_analyst_tags_select_reads_viz_staging_without_writes_or_approval() -> None:
@@ -69,20 +77,31 @@ def test_sales_analyst_tags_select_reads_viz_staging_without_writes_or_approval(
     assert "request_approval" not in selected
 
 
-def test_order_manager_tags_select_its_reads_and_approval_only() -> None:
+def test_order_manager_tags_select_order_query_and_approval_only() -> None:
+    # Phase B: order-manager narrowed to order status. It must NOT carry product/inventory/
+    # supplier/PO reads (those moved to purchasing or sales-analyst).
     selected = select_names(get_provider("order-manager").tool_tags)
+    assert selected == frozenset({"order_query", "request_approval"})
+    assert "order_update" not in selected
+    assert "get_statistics" not in selected
+    assert "purchase_order_query" not in selected
+    assert "product_query" not in selected
+
+
+def test_purchasing_tags_select_suppliers_purchase_orders_and_approval() -> None:
+    selected = select_names(get_provider("purchasing").tool_tags)
     assert selected == frozenset(
         {
-            "product_query",
-            "purchase_order_query",
-            "order_query",
-            "inventory_query",
             "supplier_query",
+            "supplier_top",
+            "purchase_order_query",
             "request_approval",
         }
     )
+    assert "purchase_order_create" not in selected
+    assert "purchase_order_receive" not in selected
+    assert "order_query" not in selected
     assert "order_update" not in selected
-    assert "get_statistics" not in selected
 
 
 def test_get_provider_raises_for_unknown_name() -> None:

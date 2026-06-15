@@ -86,6 +86,24 @@ def build_order_manager(
     )
 
 
+def build_purchasing(
+    model: BaseChatModel,
+    *,
+    purchasing_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the procurement specialist: supplier/PO reads + approval-only writes."""
+    return build_agent(
+        model,
+        list(purchasing_tools),
+        system_prompt=get_prompt("purchasing"),
+        subagents=[],
+        middleware=_reliability_middleware(),
+        skills=[],
+        backend=backend,
+    )
+
+
 def build_monitor_cause_agent(
     model: BaseChatModel,
     *,

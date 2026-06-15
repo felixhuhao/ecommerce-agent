@@ -21,7 +21,7 @@ from typing import Any, Literal
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from ecommerce_agent.agents import build_order_manager, build_sales_analyst
+from ecommerce_agent.agents import build_order_manager, build_purchasing, build_sales_analyst
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.tools.metadata import select_names
 from ecommerce_agent.tools.staging import (
@@ -34,22 +34,16 @@ SpecialistAssembler = Callable[..., Any]
 # Tool tags selected by each specialist. ``build`` resolves these via select_names,
 # so changing a set here is the only edit needed to change a specialist's tool surface.
 SALES_ANALYST_TAGS: frozenset[str] = frozenset({"spring.read", "viz.chart", "analysis.staging"})
-ORDER_MANAGER_TAGS: frozenset[str] = frozenset(
-    {
-        "products.query",
-        "orders.query",
-        "inventory.query",
-        "suppliers.query",
-        "purchase_orders.query",
-        "approval.request",
-    }
+ORDER_MANAGER_TAGS: frozenset[str] = frozenset({"orders.query", "approval.request"})
+PURCHASING_TAGS: frozenset[str] = frozenset(
+    {"suppliers.query", "suppliers.top", "purchase_orders.query", "approval.request"}
 )
 
-# Phase A: order-manager still owns every approval operation its prompt supports
-# (prompts.yml). Phase B re-homes the purchase-order operations to a new
-# ``purchasing`` provider and narrows this set to just ``order_update``.
-ORDER_MANAGER_APPROVAL_OPERATIONS: frozenset[str] = frozenset(
-    {"order_update", "purchase_order_create", "purchase_order_receive"}
+# Phase B: order-manager owns only order-status writes; PO create/receive moved to
+# purchasing. purchasing owns procurement writes only (no order_status).
+ORDER_MANAGER_APPROVAL_OPERATIONS: frozenset[str] = frozenset({"order_update"})
+PURCHASING_APPROVAL_OPERATIONS: frozenset[str] = frozenset(
+    {"purchase_order_create", "purchase_order_receive"}
 )
 
 
@@ -132,6 +126,17 @@ def _assemble_order_manager(
     return build_order_manager(model, order_manager_tools=spring_tools, backend=backend)
 
 
+def _assemble_purchasing(
+    *,
+    model: BaseChatModel,
+    spring_tools: Sequence[BaseTool],
+    viz_tools: Sequence[BaseTool],
+    selected_names: frozenset[str],
+    backend: Any,
+) -> Any:
+    return build_purchasing(model, purchasing_tools=spring_tools, backend=backend)
+
+
 PROVIDERS: tuple[SpecialistProvider, ...] = (
     SpecialistProvider(
         name="sales-analyst",
@@ -148,14 +153,26 @@ PROVIDERS: tuple[SpecialistProvider, ...] = (
     SpecialistProvider(
         name="order-manager",
         description=(
-            "approval-only business writes: purchase orders, replenishment, "
-            "receiving, and order-status changes."
+            "approval-only business writes: customer-order status changes "
+            "(ship, cancel, update)."
         ),
         capability="propose",
         prompt_key="order_manager",
         tool_tags=ORDER_MANAGER_TAGS,
         assemble=_assemble_order_manager,
         approval_operations=ORDER_MANAGER_APPROVAL_OPERATIONS,
+    ),
+    SpecialistProvider(
+        name="purchasing",
+        description=(
+            "procurement writes: create or receive purchase orders, restock, "
+            "replenish, and supplier-focused proposals."
+        ),
+        capability="propose",
+        prompt_key="purchasing",
+        tool_tags=PURCHASING_TAGS,
+        assemble=_assemble_purchasing,
+        approval_operations=PURCHASING_APPROVAL_OPERATIONS,
     ),
 )
 

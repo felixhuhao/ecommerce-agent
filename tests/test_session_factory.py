@@ -93,6 +93,11 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         captured["direct_order_manager_backend"] = backend
         return FakeAgent("ORDER_MANAGER")
 
+    def fake_build_purchasing(model, *, purchasing_tools, backend):
+        captured["direct_purchasing_tools"] = [tool.name for tool in purchasing_tools]
+        captured["direct_purchasing_backend"] = backend
+        return FakeAgent("PURCHASING")
+
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
     monkeypatch.setattr(
@@ -102,6 +107,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     monkeypatch.setattr(factory_module, "get_classifier_model", lambda settings: object())
     monkeypatch.setattr(providers_module, "build_sales_analyst", fake_build_sales_analyst)
     monkeypatch.setattr(providers_module, "build_order_manager", fake_build_order_manager)
+    monkeypatch.setattr(providers_module, "build_purchasing", fake_build_purchasing)
 
     settings = Settings(_env_file=None, llm_api_key="k", spring_mcp_user_id="9")
 
@@ -121,11 +127,14 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["direct_analyst_tools"] == ["product_query", "order_query"]
     assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
     assert captured["direct_order_manager_tools"] == [
-        "product_query",
         "order_query",
         "request_approval",
     ]
     assert captured["direct_order_manager_backend"] is captured["direct_analyst_backend"]
+    # purchasing owns supplier/PO reads + request_approval; from the 3-tool spring
+    # pool only request_approval matches its tags.
+    assert captured["direct_purchasing_tools"] == ["request_approval"]
+    assert captured["direct_purchasing_backend"] is captured["direct_analyst_backend"]
     assert mcp_client.calls == ["spring"]
 
 

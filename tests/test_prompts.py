@@ -28,23 +28,40 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "Sales Forecast by Category" in prompt
 
 
-def test_get_order_manager_prompt_is_nonempty_and_approval_only() -> None:
+def test_get_order_manager_prompt_is_nonempty_and_order_status_only() -> None:
     prompt = get_prompt("order_manager")
+
+    assert isinstance(prompt, str) and len(prompt) > 100
+    assert "request_approval" in prompt
+    assert "order_update" in prompt
+    assert "order_query" in prompt
+    assert "Never" in prompt and "executed" in prompt
+    assert "at most once" in prompt
+    assert "Do not call request_approval until" in prompt
+    assert "confirm the current status with order_query" in prompt
+    # Phase B: PO/supplier/product guidance moved to the purchasing specialist.
+    assert "purchase_order_create" not in prompt
+    assert "purchase_order_receive" not in prompt
+    assert "product_query" not in prompt
+    assert "unitCost" not in prompt
+
+
+def test_get_purchasing_prompt_is_nonempty_and_procurement_approval_only() -> None:
+    prompt = get_prompt("purchasing")
 
     assert isinstance(prompt, str) and len(prompt) > 100
     assert "request_approval" in prompt
     assert "purchase_order_create" in prompt
     assert "purchase_order_receive" in prompt
-    assert "order_update" in prompt
+    assert "supplier_query" in prompt
+    assert "supplier_top" in prompt
+    assert "purchase_order_query" in prompt
     assert "Never" in prompt and "executed" in prompt
-    assert "product_query" in prompt
     assert "at most once" in prompt
-    assert "Prefer" in prompt and "omitting unitCost" in prompt
+    assert "unitCost" in prompt
     assert "Java canonicalizes unitCost" in prompt
-    assert "purchase order totalCost" in prompt
-    assert "retail price" in prompt
-    assert "Do not call request_approval until" in prompt
-    assert "confirm the relevant facts with read tools first" in prompt
+    # Phase B: customer-order status writes stay with order-manager.
+    assert "order_update" not in prompt
 
 
 def test_get_coordinator_prompt_is_active_router() -> None:
@@ -71,6 +88,8 @@ def test_router_classifier_prompt_has_specialists_slot() -> None:
 
     assert "{specialists}" in prompt
     assert "unsure" in prompt
+    assert "purchasing" in prompt
+    assert "order-manager" in prompt
 
 
 def test_get_prompt_unknown_key_raises() -> None:
