@@ -29,6 +29,12 @@ PURCHASING_SPRING_TOOLS: frozenset[str] = select_names(
         {"suppliers.query", "suppliers.top", "purchase_orders.query", "approval.request"}
     )
 )
+INVENTORY_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset({"inventory.query", "inventory.low_stock"})
+)
+CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset({"customers.query", "orders.query", "analytics.aggregate"})
+)
 VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
 
 
@@ -105,6 +111,14 @@ def filter_order_manager_tools(tools: list[BaseTool]) -> list[BaseTool]:
 
 def filter_purchasing_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in PURCHASING_SPRING_TOOLS]
+
+
+def filter_inventory_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in INVENTORY_SPRING_TOOLS]
+
+
+def filter_customer_insights_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in CUSTOMER_INSIGHTS_SPRING_TOOLS]
 
 
 def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:

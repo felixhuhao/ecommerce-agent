@@ -167,6 +167,17 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
         "supplier_query",
         "supplier_top",
     ]
+    assert spring["inventory_allowed_tool_count"] == 2
+    assert spring["inventory_allowed_tools"] == [
+        "inventory_low_stock",
+        "inventory_query",
+    ]
+    assert spring["customer_insights_allowed_tool_count"] == 3
+    assert spring["customer_insights_allowed_tools"] == [
+        "get_statistics",
+        "order_query",
+        "user_query",
+    ]
     assert spring["blocked_write_tools"] == [
         "order_update",
         "purchase_order_create",
@@ -176,6 +187,8 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     assert spring["missing_expected_read_tools"] == []
     assert spring["missing_expected_order_manager_tools"] == []
     assert spring["missing_expected_purchasing_tools"] == []
+    assert spring["missing_expected_inventory_tools"] == []
+    assert spring["missing_expected_customer_insights_tools"] == []
 
 
 def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:

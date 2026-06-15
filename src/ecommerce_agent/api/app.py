@@ -21,6 +21,8 @@ from ecommerce_agent.auth.users_store import MongoUserStore
 from ecommerce_agent.config import Settings, get_settings
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
+    CUSTOMER_INSIGHTS_SPRING_TOOLS,
+    INVENTORY_SPRING_TOOLS,
     MODELSCOPE_SERVER_NAME,
     ORDER_MANAGER_SPRING_TOOLS,
     PURCHASING_SPRING_TOOLS,
@@ -30,6 +32,8 @@ from ecommerce_agent.mcp_client import (
     VIZ_TOOLS,
     WRITE_SPRING_TOOLS,
     build_mcp_client,
+    filter_customer_insights_tools,
+    filter_inventory_tools,
     filter_order_manager_tools,
     filter_purchasing_tools,
     filter_spring_read_tools,
@@ -296,6 +300,8 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
         read_tools = filter_spring_read_tools(tools)
         order_manager_tools = filter_order_manager_tools(tools)
         purchasing_tools = filter_purchasing_tools(tools)
+        inventory_tools = filter_inventory_tools(tools)
+        customer_insights_tools = filter_customer_insights_tools(tools)
         result.update(
             {
                 "sales_analyst_allowed_tool_count": len(read_tools),
@@ -304,6 +310,12 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
                 "order_manager_allowed_tools": sorted(tool_names(order_manager_tools)),
                 "purchasing_allowed_tool_count": len(purchasing_tools),
                 "purchasing_allowed_tools": sorted(tool_names(purchasing_tools)),
+                "inventory_allowed_tool_count": len(inventory_tools),
+                "inventory_allowed_tools": sorted(tool_names(inventory_tools)),
+                "customer_insights_allowed_tool_count": len(customer_insights_tools),
+                "customer_insights_allowed_tools": sorted(
+                    tool_names(customer_insights_tools)
+                ),
                 "blocked_write_tools": sorted(names & WRITE_SPRING_TOOLS),
                 "approval_tools": sorted(names & APPROVAL_SPRING_TOOLS),
                 "missing_expected_read_tools": sorted(READ_ONLY_SPRING_TOOLS - names),
@@ -311,6 +323,12 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
                     ORDER_MANAGER_SPRING_TOOLS - names
                 ),
                 "missing_expected_purchasing_tools": sorted(PURCHASING_SPRING_TOOLS - names),
+                "missing_expected_inventory_tools": sorted(
+                    INVENTORY_SPRING_TOOLS - names
+                ),
+                "missing_expected_customer_insights_tools": sorted(
+                    CUSTOMER_INSIGHTS_SPRING_TOOLS - names
+                ),
             }
         )
     elif server_name == MODELSCOPE_SERVER_NAME:
