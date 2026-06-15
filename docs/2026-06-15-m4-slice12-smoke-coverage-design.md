@@ -181,8 +181,8 @@ Column semantics — do NOT treat the table as a loose "any tool satisfies the c
 | `sales_category_chart` | `compare sales by category and chart it` | `sales-analyst` | `get_statistics`, one suitable chart tool, `stage_sales_analysis_inputs`, `execute` | `generate_line_chart` for category-only comparison, write tools | authoritative answer with chart artifact |
 | `forecast_chart` | `forecast SKU-LOW-003 sales next month and chart it` | `sales-analyst` | `stage_sales_analysis_inputs`, `execute`, one chart tool, `get_statistics` | write tools | derived or authoritative answer with chart artifact |
 | `purchase_order_proposal` | `create a purchase order for 200 units of productId 9 from supplier 7` | `purchasing` | `product_search`, `supplier_query`, `supplier_top`, `purchase_order_query`, `request_approval` | direct write tools (`purchase_order_create`, `purchase_order_receive`, `order_update`) | pending proposal card |
-| `order_status_change` | `cancel order 1234` | `order-manager` | `order_query`, `request_approval` | direct write tools (`order_update`), viz tools, `get_statistics` | pending proposal card for the status change |
-| `invalid_sku_graceful` | `forecast SKU-NOPE-999 next month and chart it` | `sales-analyst` or `inventory` | product lookup/read tools | write tools, chart artifact unless real data exists | graceful no-data answer; no long loop |
+| `order_status_change` | `cancel pending order 1008` | `order-manager` | `order_query`, `request_approval` | direct write tools (`order_update`), viz tools, `get_statistics` | pending proposal card for the status change |
+| `invalid_sku_graceful` | `forecast SKU-NOPE-999 next month and chart it` | `sales-analyst` or `inventory` | product lookup/read tools | write tools, viz tools | graceful no-data answer; no long loop |
 
 Required Tools (`all_of`, must each appear at least once):
 

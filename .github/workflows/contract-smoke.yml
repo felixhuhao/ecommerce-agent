@@ -65,6 +65,19 @@ jobs:
       - name: Start chart MCP
         run: docker compose -f compose.chart-mcp.yml up -d
 
+      - name: Wait for chart MCP readiness
+        run: |
+          # chart MCP boots via `npx -y @antv/mcp-server-chart`, so the first run
+          # downloads the package before port 1122 serves the MCP protocol. Probe
+          # with the same get_tools call the smoke uses, or strict mode flakes.
+          PROBE='import asyncio; from ecommerce_agent.config import Settings; from ecommerce_agent.mcp_client import build_mcp_client, MODELSCOPE_SERVER_NAME; asyncio.run(build_mcp_client(Settings(modelscope_mcp_url="http://127.0.0.1:1122/mcp")).get_tools(server_name=MODELSCOPE_SERVER_NAME))'
+          for i in $(seq 1 60); do
+            if uv run python -c "$PROBE" >/dev/null 2>&1; then echo "chart MCP ready after ${i}s"; exit 0; fi
+            sleep 2
+          done
+          echo "chart MCP did not become ready"; docker compose -f compose.chart-mcp.yml logs || true
+          exit 1
+
       - name: Run strict Tier 0 contract smoke
         env:
           RUN_DEMO_CONTRACT_SMOKE: "1"

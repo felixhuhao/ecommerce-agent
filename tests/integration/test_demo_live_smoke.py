@@ -50,6 +50,7 @@ MAX_SAME_TOOL_CALLS = {
     "product_query": 2,
     "product_search": 2,
     "inventory_query": 2,
+    "stage_sales_analysis_inputs": 2,
 }
 ALWAYS_FORBIDDEN = frozenset({"task", "write_todos"})
 SANDBOX_TOOLS = frozenset({"execute", "stage_sales_analysis_inputs"})
@@ -128,7 +129,7 @@ CASES = [
         id="invalid_sku_graceful",
         prompt="forecast SKU-NOPE-999 next month and chart it",
         specialists=("sales-analyst", "inventory"),
-        forbidden=WRITE_SPRING_TOOLS,
+        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS,
         expects_no_artifact=True,
     ),
 ]
@@ -267,12 +268,12 @@ def _assert_case(case: Case, ctx: dict) -> None:
         if name in MAX_SAME_TOOL_CALLS and count > MAX_SAME_TOOL_CALLS[name]
     }
     assert not over_budget, f"repeated-tool fanout exceeded budget: {over_budget}"
-    # Per design §9, sandbox cases may repeat `execute`/staging as long as the turn
-    # finishes within the case timeout and produces its artifact (both asserted
-    # elsewhere). Exclude sandbox tools from the generic total so the cap guards
-    # against runaway read loops, not legitimate sandbox iteration.
+    # Per design §9, sandbox cases may repeat `execute` as long as the turn finishes
+    # within the case timeout and produces its artifact (both asserted elsewhere).
+    # Only `execute` is exempt from the generic total; staging is backend data
+    # fetching and stays capped (MAX_SAME_TOOL_CALLS) so it can't hide a read loop.
     counted = ctx["tools"] if not case.needs_sandbox else [
-        t for t in ctx["tools"] if t not in SANDBOX_TOOLS
+        t for t in ctx["tools"] if t != "execute"
     ]
     assert len(counted) <= MAX_TOTAL_TOOL_CALLS, (
         f"total tool calls {len(counted)} > {MAX_TOTAL_TOOL_CALLS}"
