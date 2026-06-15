@@ -1,0 +1,76 @@
+name: contract-smoke
+
+# Closeout gate: spins up the full dependency stack (MySQL + Spring MCP + chart MCP)
+# and runs the Tier 0 contract smoke in strict mode, so an unreachable service or a
+# data/tool contract drift is a FAILURE, not a skip. Run manually before a demo or
+# after backend/tool changes. See docs/2026-06-15-m4-slice12-smoke-coverage-design.md §8.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mcp-ref:
+        description: "ecommerce-mcp-server git ref to build"
+        required: false
+        default: "main"
+
+jobs:
+  contract-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout Spring MCP companion repo
+        uses: actions/checkout@v4
+        with:
+          repository: felixhuhao/ecommerce-mcp-server
+          ref: ${{ inputs.mcp-ref }}
+          path: ecommerce-mcp-server
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync
+
+      - name: Start MySQL and seed schema + data
+        run: |
+          docker network create demo-stack
+          docker run -d --rm --name mysql --network demo-stack --network-alias mysql \
+            -e MYSQL_ROOT_PASSWORD=root \
+            mysql:8
+          for i in $(seq 1 60); do
+            if docker exec mysql mysqladmin ping -uroot -proot --silent; then break; fi
+            sleep 2
+          done
+          docker exec -i mysql mysql -uroot -proot < ecommerce-mcp-server/src/main/resources/schema.sql
+          docker exec -i mysql mysql -uroot -proot ecommerce_db < ecommerce-mcp-server/src/main/resources/data.sql
+
+      - name: Build and start Spring MCP
+        run: |
+          docker build -t ecommerce-mcp-server:ci ./ecommerce-mcp-server
+          docker run -d --rm --name mcp --network demo-stack --network-alias mcp \
+            -p 8080:8080 \
+            -e SPRING_DATASOURCE_URL='jdbc:mysql://mysql:3306/ecommerce_db?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC' \
+            -e SPRING_DATASOURCE_USERNAME=root \
+            -e SPRING_DATASOURCE_PASSWORD=root \
+            -e APP_SERVICE_TOKEN=dev-service-token \
+            ecommerce-mcp-server:ci
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/actuator/health || true)
+            if [ "$code" = "200" ]; then echo "Spring MCP healthy after ${i}s"; exit 0; fi
+            sleep 2
+          done
+          echo "Spring MCP did not become healthy (last=$code)"; docker logs mcp; exit 1
+
+      - name: Start chart MCP
+        run: docker compose -f compose.chart-mcp.yml up -d
+
+      - name: Run strict Tier 0 contract smoke
+        env:
+          RUN_DEMO_CONTRACT_SMOKE: "1"
+          MODELSCOPE_MCP_URL: "http://127.0.0.1:1122/mcp"
+        run: uv run pytest tests/integration/test_demo_contract_smoke.py -q
+
+      - name: Dump Spring MCP logs on failure
+        if: failure()
+        run: docker logs mcp || true
