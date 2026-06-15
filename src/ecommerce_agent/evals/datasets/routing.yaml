@@ -8,11 +8,11 @@
   tags: [adversarial, keyword-false-positive]
 - id: buy-more-units
   prompt: we should buy 500 more units of SKU-12 from the cheapest supplier
-  expected: order-manager
+  expected: purchasing
   tags: [adversarial, keyword-false-negative]
 - id: low-stock-reorder
   prompt: stock is low on blue widgets, can you set up a reorder?
-  expected: order-manager
+  expected: purchasing
   tags: [adversarial, keyword-false-negative]
 - id: sales-by-category
   prompt: what were total sales by category last month?
@@ -32,11 +32,11 @@
   tags: [straightforward]
 - id: create-po
   prompt: create a purchase order for 200 units of SKU-9
-  expected: order-manager
+  expected: purchasing
   tags: [straightforward]
 - id: receive-po
   prompt: receive purchase order 4471
-  expected: order-manager
+  expected: purchasing
   tags: [straightforward]
 - id: update-order-status
   prompt: mark order 8812 as shipped
@@ -44,5 +44,26 @@
   tags: [straightforward]
 - id: replenish-supplier
   prompt: replenish our stock of SKU-3 from supplier 12
-  expected: order-manager
+  expected: purchasing
   tags: [straightforward]
+# Phase B boundary cases: order <-> purchasing <-> sales-analyst
+- id: cancel-order
+  prompt: cancel order 5012
+  expected: order-manager
+  tags: [boundary]
+- id: order-status-read
+  prompt: what's the status of order 8812?
+  expected: order-manager
+  tags: [boundary]
+- id: po-status-read
+  prompt: what's the status of purchase order 4471?
+  expected: purchasing
+  tags: [boundary]
+- id: top-suppliers
+  prompt: who are our top suppliers by order volume?
+  expected: purchasing
+  tags: [boundary]
+- id: supplier-lead-report
+  prompt: report on supplier lead times and how they affect reorder timing
+  expected: sales-analyst
+  tags: [boundary]
