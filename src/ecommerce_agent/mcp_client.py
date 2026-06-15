@@ -14,20 +14,19 @@ PYTHON_SERVER_NAME = "python"
 # Compatibility shims derived from the single source of truth in
 # tools/metadata.py. Prefer tools.metadata directly in new code; these frozensets
 # are kept so existing importers (diagnostics, evals, trace) stay byte-identical.
+# The per-specialist sets mirror the provider tool_tags in specialists/providers.py.
 READ_ONLY_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.read"}))
 APPROVAL_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"approval.request"}))
 WRITE_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.write"}))
 WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = WRITE_SPRING_TOOLS | APPROVAL_SPRING_TOOLS
+# Phase B: order-manager narrowed to order status; purchase-order/supplier tools
+# moved to purchasing.
 ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset({"orders.query", "approval.request"})
+)
+PURCHASING_SPRING_TOOLS: frozenset[str] = select_names(
     frozenset(
-        {
-            "products.query",
-            "orders.query",
-            "inventory.query",
-            "suppliers.query",
-            "purchase_orders.query",
-            "approval.request",
-        }
+        {"suppliers.query", "suppliers.top", "purchase_orders.query", "approval.request"}
     )
 )
 VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
@@ -102,6 +101,10 @@ def filter_spring_read_tools(tools: list[BaseTool]) -> list[BaseTool]:
 
 def filter_order_manager_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in ORDER_MANAGER_SPRING_TOOLS]
+
+
+def filter_purchasing_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in PURCHASING_SPRING_TOOLS]
 
 
 def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:

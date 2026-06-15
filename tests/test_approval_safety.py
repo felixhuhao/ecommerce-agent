@@ -41,17 +41,20 @@ def test_order_manager_surface_holds_no_write_tool() -> None:
 
 
 def test_filter_drops_write_tools_from_a_representative_surface() -> None:
+    # Phase B: order-manager narrowed to order status only (order_query + approval).
     surface = [
+        _named_tool("order_query"),
         _named_tool("product_query"),
-        _named_tool("inventory_query"),
+        _named_tool("supplier_query"),
         _named_tool("request_approval"),
         _named_tool("purchase_order_create"),
         _named_tool("purchase_order_receive"),
         _named_tool("order_update"),
     ]
     kept = {tool.name for tool in filter_order_manager_tools(surface)}
-    assert "request_approval" in kept
-    assert {"product_query", "inventory_query"} <= kept
+    assert kept == {"order_query", "request_approval"}
+    assert "product_query" not in kept
+    assert "supplier_query" not in kept
     assert kept & WRITE_SPRING_TOOLS == set()
 
 

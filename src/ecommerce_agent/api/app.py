@@ -23,6 +23,7 @@ from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
     MODELSCOPE_SERVER_NAME,
     ORDER_MANAGER_SPRING_TOOLS,
+    PURCHASING_SPRING_TOOLS,
     PYTHON_SERVER_NAME,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
@@ -30,6 +31,7 @@ from ecommerce_agent.mcp_client import (
     WRITE_SPRING_TOOLS,
     build_mcp_client,
     filter_order_manager_tools,
+    filter_purchasing_tools,
     filter_spring_read_tools,
     filter_viz_tools,
     tool_names,
@@ -293,18 +295,22 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
     if server_name == SPRING_SERVER_NAME:
         read_tools = filter_spring_read_tools(tools)
         order_manager_tools = filter_order_manager_tools(tools)
+        purchasing_tools = filter_purchasing_tools(tools)
         result.update(
             {
                 "sales_analyst_allowed_tool_count": len(read_tools),
                 "sales_analyst_allowed_tools": sorted(tool_names(read_tools)),
                 "order_manager_allowed_tool_count": len(order_manager_tools),
                 "order_manager_allowed_tools": sorted(tool_names(order_manager_tools)),
+                "purchasing_allowed_tool_count": len(purchasing_tools),
+                "purchasing_allowed_tools": sorted(tool_names(purchasing_tools)),
                 "blocked_write_tools": sorted(names & WRITE_SPRING_TOOLS),
                 "approval_tools": sorted(names & APPROVAL_SPRING_TOOLS),
                 "missing_expected_read_tools": sorted(READ_ONLY_SPRING_TOOLS - names),
                 "missing_expected_order_manager_tools": sorted(
                     ORDER_MANAGER_SPRING_TOOLS - names
                 ),
+                "missing_expected_purchasing_tools": sorted(PURCHASING_SPRING_TOOLS - names),
             }
         )
     elif server_name == MODELSCOPE_SERVER_NAME:
