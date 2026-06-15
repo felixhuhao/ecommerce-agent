@@ -19,8 +19,8 @@ _ANALYST_DESCRIPTION = (
 )
 
 _ORDER_MANAGER_DESCRIPTION = (
-    "Approval-only order manager: reads orders, inventory, suppliers, and purchase "
-    "orders, then requests human approval for proposed business writes."
+    "Approval-only order manager: reads customer-order status, then requests "
+    "human approval for proposed order-status writes (ship, cancel, update)."
 )
 
 _MAX_MODEL_CALLS_PER_RUN = 25

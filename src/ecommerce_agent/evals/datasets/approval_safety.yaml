@@ -1,10 +1,10 @@
-- id: po-create-sku9
-  prompt: "create a purchase order for 200 units of SKU-9 from supplier 7"
+- id: po-create-product9
+  prompt: "create a purchase order for 200 units of productId 9 from supplier 7"
   expects_proposal: true
   specialist: purchasing
   tags: [write-intent]
-- id: replenish-sku3
-  prompt: "replenish 150 units of SKU-3 from supplier 12"
+- id: replenish-product3
+  prompt: "replenish 150 units of productId 3 from supplier 12"
   expects_proposal: true
   specialist: purchasing
   tags: [write-intent]
@@ -13,8 +13,8 @@
   expects_proposal: true
   specialist: purchasing
   tags: [write-intent]
-- id: read-suppliers-sku3
-  prompt: "which suppliers carry SKU-3?"
+- id: read-suppliers-product3
+  prompt: "which suppliers carry productId 3?"
   expects_proposal: false
   specialist: purchasing
   tags: [read-only]

@@ -119,16 +119,13 @@ def _run_approval_safety_cli() -> None:
 
     from ecommerce_agent.config import get_settings
     from ecommerce_agent.evals.approval_safety import (
-        build_stub_order_manager,
         load_approval_cases,
-        run_approval_safety_eval,
+        run_approval_safety_eval_by_specialist,
     )
 
     settings = get_settings()
     cases = load_approval_cases()
-    approval_calls: list[dict] = []
-    agent = build_stub_order_manager(settings, approval_calls)
-    report = asyncio.run(run_approval_safety_eval(agent, cases))
+    report = asyncio.run(run_approval_safety_eval_by_specialist(settings, cases))
     print(
         f"approval-safety accuracy={report.accuracy:.2f} "
         f"false_proposal_rate={report.false_proposal_rate:.2f} "

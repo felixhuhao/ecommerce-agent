@@ -183,10 +183,8 @@ def test_eval_approval_safety_dispatch_runs_branch(
 
     monkeypatch.setattr(config_module, "get_settings", lambda: object())
     monkeypatch.setattr(aps, "load_approval_cases", lambda: ["case"])
-    monkeypatch.setattr(aps, "build_stub_order_manager", lambda settings, calls: "AGENT")
 
-    async def fake_run(agent, cases, **kwargs):
-        assert agent == "AGENT"
+    async def fake_run(settings, cases, **kwargs):
         assert cases == ["case"]
         return ApprovalReport(
             n=1,
@@ -200,7 +198,7 @@ def test_eval_approval_safety_dispatch_runs_branch(
             cases=[],
         )
 
-    monkeypatch.setattr(aps, "run_approval_safety_eval", fake_run)
+    monkeypatch.setattr(aps, "run_approval_safety_eval_by_specialist", fake_run)
 
     cli.run_eval_command(argparse.Namespace(eval_target="approval-safety"))
 
