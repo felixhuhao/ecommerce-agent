@@ -65,6 +65,20 @@ _ORDER_MANAGER_READ_FIXTURES: dict[str, list[dict]] = {
     "order_query": [{"orderId": 8812, "status": "shipped"}],
 }
 _PURCHASING_READ_FIXTURES: dict[str, list[dict]] = {
+    "product_search": [
+        {
+            "productId": 3,
+            "sku": "SKU-LOW-003",
+            "name": "快充充电器 / Fast Charger",
+            "cost": 25,
+        },
+        {
+            "productId": 9,
+            "sku": "SKU-119",
+            "name": "移动电源 / Power Bank",
+            "cost": 45,
+        },
+    ],
     "supplier_query": [
         {"supplierId": 7, "name": "Acme", "products": [9]},
         {"supplierId": 12, "name": "Globex", "products": [3]},

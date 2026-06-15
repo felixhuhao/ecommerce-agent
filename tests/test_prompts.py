@@ -56,6 +56,8 @@ def test_get_purchasing_prompt_is_nonempty_and_procurement_approval_only() -> No
     assert "supplier_query" in prompt
     assert "supplier_top" in prompt
     assert "purchase_order_query" in prompt
+    assert "product_search" in prompt
+    assert "SKU" in prompt and "productId" in prompt
     assert "Never" in prompt and "executed" in prompt
     assert "at most once" in prompt
     assert "unitCost" in prompt

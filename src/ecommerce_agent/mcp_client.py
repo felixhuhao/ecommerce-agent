@@ -26,11 +26,17 @@ ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = select_names(
 )
 PURCHASING_SPRING_TOOLS: frozenset[str] = select_names(
     frozenset(
-        {"suppliers.query", "suppliers.top", "purchase_orders.query", "approval.request"}
+        {
+            "products.search",
+            "suppliers.query",
+            "suppliers.top",
+            "purchase_orders.query",
+            "approval.request",
+        }
     )
 )
 INVENTORY_SPRING_TOOLS: frozenset[str] = select_names(
-    frozenset({"inventory.query", "inventory.low_stock"})
+    frozenset({"products.search", "inventory.query", "inventory.low_stock"})
 )
 CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
     frozenset({"customers.query", "orders.query", "analytics.aggregate"})

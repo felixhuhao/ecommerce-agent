@@ -160,17 +160,19 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     assert "request_approval" not in spring["sales_analyst_allowed_tools"]
     assert spring["order_manager_allowed_tool_count"] == 2
     assert spring["order_manager_allowed_tools"] == ["order_query", "request_approval"]
-    assert spring["purchasing_allowed_tool_count"] == 4
+    assert spring["purchasing_allowed_tool_count"] == 5
     assert spring["purchasing_allowed_tools"] == [
+        "product_search",
         "purchase_order_query",
         "request_approval",
         "supplier_query",
         "supplier_top",
     ]
-    assert spring["inventory_allowed_tool_count"] == 2
+    assert spring["inventory_allowed_tool_count"] == 3
     assert spring["inventory_allowed_tools"] == [
         "inventory_low_stock",
         "inventory_query",
+        "product_search",
     ]
     assert spring["customer_insights_allowed_tool_count"] == 3
     assert spring["customer_insights_allowed_tools"] == [

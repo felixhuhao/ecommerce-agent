@@ -61,6 +61,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
             self.calls.append(server_name)
             return [
                 FakeTool("product_query"),
+                FakeTool("product_search"),
                 FakeTool("order_query"),
                 FakeTool("request_approval"),
             ]
@@ -136,21 +137,19 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["session_id"] == "sess-1"
     assert captured["user_id"] == "42"
     assert captured["sandbox_session_id"] == "sess-1"
-    assert captured["stage_tool_inputs"] == ["product_query", "order_query"]
+    assert captured["stage_tool_inputs"] == ["product_query", "product_search", "order_query"]
     assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]
-    assert captured["direct_analyst_tools"] == ["product_query", "order_query"]
+    assert captured["direct_analyst_tools"] == ["product_query", "product_search", "order_query"]
     assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
     assert captured["direct_order_manager_tools"] == [
         "order_query",
         "request_approval",
     ]
     assert captured["direct_order_manager_backend"] is captured["direct_analyst_backend"]
-    # purchasing owns supplier/PO reads + request_approval; from the 3-tool spring
-    # pool only request_approval matches its tags.
-    assert captured["direct_purchasing_tools"] == ["request_approval"]
+    # purchasing owns product identity + supplier/PO reads + request_approval.
+    assert captured["direct_purchasing_tools"] == ["product_search", "request_approval"]
     assert captured["direct_purchasing_backend"] is captured["direct_analyst_backend"]
-    # inventory: none of the 3 spring tools match inventory tags
-    assert captured["direct_inventory_tools"] == []
+    assert captured["direct_inventory_tools"] == ["product_search"]
     assert captured["direct_inventory_backend"] is captured["direct_analyst_backend"]
     # customer-insights: order_query matches; product_query and request_approval don't
     assert captured["direct_customer_insights_tools"] == ["order_query"]

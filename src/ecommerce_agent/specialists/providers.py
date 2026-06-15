@@ -42,9 +42,17 @@ SpecialistAssembler = Callable[..., Any]
 SALES_ANALYST_TAGS: frozenset[str] = frozenset({"spring.read", "viz.chart", "analysis.staging"})
 ORDER_MANAGER_TAGS: frozenset[str] = frozenset({"orders.query", "approval.request"})
 PURCHASING_TAGS: frozenset[str] = frozenset(
-    {"suppliers.query", "suppliers.top", "purchase_orders.query", "approval.request"}
+    {
+        "products.search",
+        "suppliers.query",
+        "suppliers.top",
+        "purchase_orders.query",
+        "approval.request",
+    }
 )
-INVENTORY_TAGS: frozenset[str] = frozenset({"inventory.query", "inventory.low_stock"})
+INVENTORY_TAGS: frozenset[str] = frozenset(
+    {"products.search", "inventory.query", "inventory.low_stock"}
+)
 CUSTOMER_INSIGHTS_TAGS: frozenset[str] = frozenset(
     {"customers.query", "orders.query", "analytics.aggregate"}
 )

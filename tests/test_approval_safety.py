@@ -163,13 +163,13 @@ def test_order_manager_stub_tools_expose_request_approval_and_order_read() -> No
     assert {"supplier_query", "purchase_order_query", "product_query"}.isdisjoint(names)
 
 
-def test_purchasing_stub_tools_expose_request_approval_and_supplier_po_reads() -> None:
+def test_purchasing_stub_tools_expose_request_approval_and_procurement_reads() -> None:
     calls: list[dict] = []
     tools = build_stub_purchasing_tools(calls)
     names = {tool.name for tool in tools}
     assert "request_approval" in names
-    assert {"supplier_query", "supplier_top", "purchase_order_query"} <= names
-    # purchasing owns no customer-order or product reads.
+    assert {"product_search", "supplier_query", "supplier_top", "purchase_order_query"} <= names
+    # purchasing owns no customer-order reads or broad product query.
     assert "order_query" not in names
     assert "product_query" not in names
 

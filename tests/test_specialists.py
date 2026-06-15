@@ -95,10 +95,11 @@ def test_order_manager_tags_select_order_query_and_approval_only() -> None:
     assert "product_query" not in selected
 
 
-def test_purchasing_tags_select_suppliers_purchase_orders_and_approval() -> None:
+def test_purchasing_tags_select_product_identity_suppliers_purchase_orders_and_approval() -> None:
     selected = select_names(get_provider("purchasing").tool_tags)
     assert selected == frozenset(
         {
+            "product_search",
             "supplier_query",
             "supplier_top",
             "purchase_order_query",
@@ -109,6 +110,7 @@ def test_purchasing_tags_select_suppliers_purchase_orders_and_approval() -> None
     assert "purchase_order_receive" not in selected
     assert "order_query" not in selected
     assert "order_update" not in selected
+    assert "product_query" not in selected
 
 
 def test_inventory_is_read_capability() -> None:
@@ -127,11 +129,14 @@ def test_customer_insights_is_read_capability() -> None:
     assert p.approval_operations == frozenset()
 
 
-def test_inventory_tags_select_inventory_tools_only() -> None:
+def test_inventory_tags_select_product_identity_and_inventory_tools_only() -> None:
     selected = select_names(get_provider("inventory").tool_tags)
-    assert selected == frozenset({"inventory_query", "inventory_low_stock"})
+    assert selected == frozenset(
+        {"product_search", "inventory_query", "inventory_low_stock"}
+    )
     assert "get_statistics" not in selected
     assert "order_query" not in selected
+    assert "product_query" not in selected
     assert "request_approval" not in selected
 
 
