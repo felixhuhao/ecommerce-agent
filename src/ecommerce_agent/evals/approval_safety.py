@@ -22,6 +22,7 @@ class ApprovalCase:
     prompt: str
     expects_proposal: bool
     tags: list[str] = field(default_factory=list)
+    specialist: str = "order-manager"
 
 
 @dataclass(frozen=True)
@@ -58,19 +59,21 @@ class _ReadArgs(BaseModel):
 
 
 # Local fixtures make write-intent prompts proposal-actionable without Spring.
-# Read tools ignore their query and return canned rows.
-_READ_FIXTURES: dict[str, list[dict]] = {
-    "product_query": [
-        {"productId": 9, "sku": "SKU-9", "cost": 12.50},
-        {"productId": 3, "sku": "SKU-3", "cost": 4.00},
-    ],
+# Read tools ignore their query and return canned rows. Split by specialist so each
+# stub mirrors its live tool surface (Phase B re-homed PO/supplier to purchasing).
+_ORDER_MANAGER_READ_FIXTURES: dict[str, list[dict]] = {
+    "order_query": [{"orderId": 8812, "status": "shipped"}],
+}
+_PURCHASING_READ_FIXTURES: dict[str, list[dict]] = {
     "supplier_query": [
         {"supplierId": 7, "name": "Acme", "products": [9]},
         {"supplierId": 12, "name": "Globex", "products": [3]},
     ],
-    "inventory_query": [{"productId": 9, "onHand": 40}],
+    "supplier_top": [
+        {"supplierId": 7, "name": "Acme"},
+        {"supplierId": 12, "name": "Globex"},
+    ],
     "purchase_order_query": [{"poId": 4471, "status": "open"}],
-    "order_query": [{"orderId": 8812, "status": "shipped"}],
 }
 
 
@@ -88,6 +91,7 @@ def load_approval_cases(path: str | None = None) -> list[ApprovalCase]:
                 prompt=entry["prompt"],
                 expects_proposal=expects,
                 tags=list(entry.get("tags", [])),
+                specialist=entry.get("specialist", "order-manager"),
             )
         )
     return cases
@@ -151,9 +155,7 @@ def aggregate(results: list[ApprovalCaseResult]) -> ApprovalReport:
     )
 
 
-def build_stub_order_manager_tools(approval_calls: list[dict]) -> list[BaseTool]:
-    """Build Spring-shaped stub tools for the approval-safety live eval."""
-
+def _build_request_approval_tool(approval_calls: list[dict]) -> BaseTool:
     def _request_approval(
         toolName: str,
         operationType: str,
@@ -173,15 +175,17 @@ def build_stub_order_manager_tools(approval_calls: list[dict]) -> list[BaseTool]
             "toolName": toolName,
         }
 
-    tools: list[BaseTool] = [
-        StructuredTool.from_function(
-            func=_request_approval,
-            name=REQUEST_APPROVAL_TOOL,
-            description="Request human approval for a supported write operation.",
-            args_schema=_RequestApprovalArgs,
-        )
-    ]
-    for name, rows in _READ_FIXTURES.items():
+    return StructuredTool.from_function(
+        func=_request_approval,
+        name=REQUEST_APPROVAL_TOOL,
+        description="Request human approval for a supported write operation.",
+        args_schema=_RequestApprovalArgs,
+    )
+
+
+def _build_read_tools(fixtures: dict[str, list[dict]]) -> list[BaseTool]:
+    tools: list[BaseTool] = []
+    for name, rows in fixtures.items():
         tools.append(
             StructuredTool.from_function(
                 func=(lambda read_rows: lambda query="": read_rows)(rows),
@@ -191,6 +195,22 @@ def build_stub_order_manager_tools(approval_calls: list[dict]) -> list[BaseTool]
             )
         )
     return tools
+
+
+def build_stub_order_manager_tools(approval_calls: list[dict]) -> list[BaseTool]:
+    """Spring-shaped stub tools for the order-manager approval-safety eval."""
+    return [
+        _build_request_approval_tool(approval_calls),
+        *_build_read_tools(_ORDER_MANAGER_READ_FIXTURES),
+    ]
+
+
+def build_stub_purchasing_tools(approval_calls: list[dict]) -> list[BaseTool]:
+    """Spring-shaped stub tools for the purchasing approval-safety eval."""
+    return [
+        _build_request_approval_tool(approval_calls),
+        *_build_read_tools(_PURCHASING_READ_FIXTURES),
+    ]
 
 
 def build_stub_order_manager(settings: Any, approval_calls: list[dict]) -> Any:
@@ -203,6 +223,31 @@ def build_stub_order_manager(settings: Any, approval_calls: list[dict]) -> Any:
         order_manager_tools=build_stub_order_manager_tools(approval_calls),
         backend=None,
     )
+
+
+def build_stub_purchasing(settings: Any, approval_calls: list[dict]) -> Any:
+    """Build the real purchasing agent on stub tools and no sandbox backend."""
+    from ecommerce_agent.agents import build_purchasing
+    from ecommerce_agent.models import get_primary_model
+
+    return build_purchasing(
+        get_primary_model(settings),
+        purchasing_tools=build_stub_purchasing_tools(approval_calls),
+        backend=None,
+    )
+
+
+def build_stub_for_specialist(
+    specialist: str,
+    settings: Any,
+    approval_calls: list[dict],
+) -> Any:
+    """Build the approval-safety stub agent for a given specialist."""
+    if specialist == "purchasing":
+        return build_stub_purchasing(settings, approval_calls)
+    if specialist == "order-manager":
+        return build_stub_order_manager(settings, approval_calls)
+    raise ValueError(f"no approval-safety stub for specialist {specialist!r}")
 
 
 async def _run_case(agent: Any, prompt: str, *, recursion_limit: int) -> TraceRecord:
@@ -240,3 +285,29 @@ async def run_approval_safety_eval(
                 )
             )
     return aggregate(results)
+
+
+async def run_approval_safety_eval_by_specialist(
+    settings: Any,
+    cases: list[ApprovalCase],
+    *,
+    recursion_limit: int = DEFAULT_RECURSION_LIMIT,
+) -> ApprovalReport:
+    """Run each case against a stub agent for its own specialist, then aggregate.
+
+    Phase B splits the approval-safety surface across order-manager and purchasing;
+    each case declares which specialist it targets. Cases are grouped by specialist,
+    run against the matching stub agent, and the per-case results are aggregated
+    into a single report.
+    """
+    grouped: dict[str, list[ApprovalCase]] = {}
+    for case in cases:
+        grouped.setdefault(case.specialist, []).append(case)
+
+    all_results: list[ApprovalCaseResult] = []
+    for specialist, group in grouped.items():
+        approval_calls: list[dict] = []
+        agent = build_stub_for_specialist(specialist, settings, approval_calls)
+        report = await run_approval_safety_eval(agent, group, recursion_limit=recursion_limit)
+        all_results.extend(report.cases)
+    return aggregate(all_results)

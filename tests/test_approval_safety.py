@@ -10,6 +10,7 @@ from ecommerce_agent.evals.approval_safety import (
     aggregate,
     build_stub_order_manager,
     build_stub_order_manager_tools,
+    build_stub_purchasing_tools,
     load_approval_cases,
     run_approval_safety_eval,
     score_case,
@@ -121,6 +122,9 @@ def test_default_dataset_loads_and_is_balanced() -> None:
     assert any(c.expects_proposal for c in cases)
     assert any(not c.expects_proposal for c in cases)
     assert sum("write-word-bait" in c.tags for c in cases) >= 2
+    # Phase B: cases span both propose specialists.
+    specialists = {c.specialist for c in cases}
+    assert {"order-manager", "purchasing"} <= specialists
 
 
 def test_build_stub_order_manager_wires_backend_none_and_stub_tools(
@@ -149,12 +153,25 @@ def test_build_stub_order_manager_wires_backend_none_and_stub_tools(
     assert "request_approval" in {tool.name for tool in captured["tools"]}
 
 
-def test_stub_tools_expose_request_approval_and_reads() -> None:
+def test_order_manager_stub_tools_expose_request_approval_and_order_read() -> None:
     calls: list[dict] = []
     tools = build_stub_order_manager_tools(calls)
     names = {tool.name for tool in tools}
     assert "request_approval" in names
-    assert {"product_query", "supplier_query", "inventory_query"} <= names
+    assert "order_query" in names
+    # Phase B: order-manager narrowed; no supplier/PO/product reads on its stub.
+    assert {"supplier_query", "purchase_order_query", "product_query"}.isdisjoint(names)
+
+
+def test_purchasing_stub_tools_expose_request_approval_and_supplier_po_reads() -> None:
+    calls: list[dict] = []
+    tools = build_stub_purchasing_tools(calls)
+    names = {tool.name for tool in tools}
+    assert "request_approval" in names
+    assert {"supplier_query", "supplier_top", "purchase_order_query"} <= names
+    # purchasing owns no customer-order or product reads.
+    assert "order_query" not in names
+    assert "product_query" not in names
 
 
 def test_request_approval_stub_records_and_returns_approval_id() -> None:
