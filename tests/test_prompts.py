@@ -112,6 +112,10 @@ def test_router_classifier_prompt_has_specialists_slot() -> None:
     assert "unsure" in prompt
     assert "purchasing" in prompt
     assert "order-manager" in prompt
+    assert "inventory" in prompt
+    assert "customer-insights" in prompt
+    assert "stockout" in prompt
+    assert "customer order history" in prompt.lower()
 
 
 def test_get_prompt_unknown_key_raises() -> None:

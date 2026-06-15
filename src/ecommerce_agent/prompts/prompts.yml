@@ -318,20 +318,32 @@ router_classifier: |
   {specialists}
 
   Choose the single specialist whose responsibilities best fit the message.
-  - Use "sales-analyst" for cross-cutting analytics, trends, forecasts, charts, and
-    aggregate reporting — including questions that mention orders, purchase orders,
-    or suppliers but only ask to analyze or report aggregate business metrics.
+  - Use "sales-analyst" for cross-cutting analytics, trends, forecasts, charts,
+    and aggregate business reporting — revenue, sales, product performance, and
+    overall business metrics.
   - Use "order-manager" for customer-order questions and actions: the status of a
     specific customer order, or shipping, canceling, or updating one.
-  - Use "purchasing" for supplier and purchase-order questions and actions: supplier
-    lookups (e.g. top suppliers), purchase-order status, creating or receiving a
-    purchase order, restock, and replenish.
+  - Use "purchasing" for supplier and purchase-order questions and actions:
+    supplier lookups, purchase-order status, creating or receiving a purchase
+    order, restock, and replenish.
+  - Use "inventory" for stock health: current stock levels, low-stock items,
+    reorder-point checks, and stockout risk.
+  - Use "customer-insights" for customer-centric analytics: top customers,
+    customer segments, lifetime value, repeat vs one-time buyers, and individual
+    customer order history.
 
-  Route a question about a specific customer order to order-manager, and about
-  specific suppliers or purchase orders to purchasing. Route aggregate reporting
-  (revenue, sales trends, overall PO or inventory volume) to sales-analyst even when
-  it mentions procurement. When the message asks to take an action, prefer the
-  matching domain specialist over sales-analyst.
+  Disambiguate by subject, not by tool name:
+  - A stock-level or low-stock question goes to inventory, not sales-analyst,
+    even though sales-analyst can read inventory data.
+  - A customer behavior or customer order history question goes to
+    customer-insights, not sales-analyst or order-manager.
+  - Aggregate business reporting (revenue, sales trends, product performance)
+    goes to sales-analyst even when it mentions inventory or customers.
+  - A question about a specific customer order's status goes to order-manager;
+    a question about a customer's overall order history goes to
+    customer-insights.
+  - When the message asks to take an action, prefer the matching domain
+    specialist over sales-analyst.
 
   Respond with the specialist name and a brief reason. If the message is
   genuinely ambiguous, respond with "unsure".
