@@ -53,6 +53,21 @@ def test_authoritative_when_get_statistics_fired() -> None:
     assert [source.tool_name for source in grounding.sources] == ["get_statistics"]
 
 
+def test_authoritative_when_inventory_fact_fired() -> None:
+    from ecommerce_agent.grounding.build import build_grounding
+
+    rec = _rec(
+        "SKU-LOW-003 has 12 units against safety stock 80.",
+        _start("inventory_low_stock"),
+        _end("inventory_low_stock"),
+    )
+
+    grounding = build_grounding(rec)
+
+    assert grounding.authority == Authority.AUTHORITATIVE
+    assert [source.tool_name for source in grounding.sources] == ["inventory_low_stock"]
+
+
 def test_derived_when_execute_evidence_and_no_statistics() -> None:
     from ecommerce_agent.grounding.build import build_grounding
 

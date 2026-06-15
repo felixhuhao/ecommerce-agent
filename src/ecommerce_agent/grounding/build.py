@@ -11,6 +11,14 @@ from ecommerce_agent.trace.tools import (
     sandbox_evidence_fired,
 )
 
+AUTHORITATIVE_READ_TOOLS = frozenset(
+    {
+        GET_STATISTICS_TOOL,
+        "inventory_query",
+        "inventory_low_stock",
+    }
+)
+
 _NUMERIC_CLAIM = re.compile(
     r"\$\s?\d|\d\s?%|\b\d[\d,]*\.\d+\b|\b\d{1,3}(?:,\d{3})+\b|\b\d{2,}\b"
 )
@@ -48,7 +56,7 @@ def build_grounding(record: TraceRecord) -> Grounding:
         fired = fired_tools(record)
         sources = _sources(record)
         numeric = has_numeric_claim(record.answer)
-        if GET_STATISTICS_TOOL in fired:
+        if AUTHORITATIVE_READ_TOOLS.intersection(fired):
             authority = Authority.AUTHORITATIVE
         elif sandbox_evidence_fired(record):
             authority = Authority.DERIVED

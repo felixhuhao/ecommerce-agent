@@ -14,11 +14,16 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "generate_line_chart" in prompt
     assert "generate_bar_chart" in prompt
     assert "generate_column_chart" in prompt
+    assert "generate_pie_chart" in prompt
+    assert "generate_scatter_chart" in prompt
+    assert "generate_spreadsheet" in prompt
     assert "Never embed raw order or product payloads inside Python source" in prompt
     assert "prefer stage_sales_analysis_inputs" in prompt.lower()
     assert "Do not call order_query" in prompt
     assert "you must call exactly one chart tool" in prompt
     assert "time, value, and optional group" in prompt
+    assert "Never use generate_line_chart for category-only comparisons" in prompt
+    assert "categories on the category axis" in prompt
     assert "do not call order_query or product_query again" in prompt
     assert "Do not include process narration" in prompt
     assert "chart" in prompt and "unavailable" in prompt
@@ -104,6 +109,12 @@ def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
     assert "user_query" in prompt
     assert "order_query" in prompt
     assert "get_statistics" in prompt
+    assert "top customers by spend" in prompt
+    assert "topCustomersBySpend" in prompt
+    assert "Do not pull each customer's order history" in prompt
+    assert "Do not answer until you have tool results" in prompt
+    assert "Do not include process narration" in prompt
+    assert '"Let me"' in prompt
     assert "Never create" in prompt or "never create" in prompt.lower()
 
 

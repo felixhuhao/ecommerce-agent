@@ -35,9 +35,10 @@ _CUSTOMER_INSIGHTS_DESCRIPTION = (
 
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
-_MONITOR_CAUSE_EXCLUDED_TOOLS = frozenset(
+_PLANNING_EXCLUDED_TOOLS = frozenset({"task", "write_todos"})
+_NON_ANALYST_EXCLUDED_TOOLS = frozenset(
     {
-        "write_todos",
+        *_PLANNING_EXCLUDED_TOOLS,
         "ls",
         "read_file",
         "write_file",
@@ -45,16 +46,19 @@ _MONITOR_CAUSE_EXCLUDED_TOOLS = frozenset(
         "glob",
         "grep",
         "execute",
-        "task",
     }
 )
+_MONITOR_CAUSE_EXCLUDED_TOOLS = _NON_ANALYST_EXCLUDED_TOOLS
 
 
-def _reliability_middleware() -> list[Any]:
-    return [
+def _reliability_middleware(excluded_tools: frozenset[str] = frozenset()) -> list[Any]:
+    middleware: list[Any] = [
         ModelCallLimitMiddleware(run_limit=_MAX_MODEL_CALLS_PER_RUN, exit_behavior="end"),
         ToolCallLimitMiddleware(run_limit=_MAX_TOOL_CALLS_PER_RUN, exit_behavior="end"),
     ]
+    if excluded_tools:
+        middleware.append(_ToolExclusionMiddleware(excluded=excluded_tools))
+    return middleware
 
 
 def build_sales_analyst(
@@ -72,7 +76,7 @@ def build_sales_analyst(
         tools,
         system_prompt=get_prompt("sales_analyst"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_PLANNING_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
     )
@@ -90,7 +94,7 @@ def build_order_manager(
         list(order_manager_tools),
         system_prompt=get_prompt("order_manager"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
     )
@@ -108,7 +112,7 @@ def build_purchasing(
         list(purchasing_tools),
         system_prompt=get_prompt("purchasing"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
     )
@@ -126,7 +130,7 @@ def build_inventory(
         list(inventory_tools),
         system_prompt=get_prompt("inventory"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
     )
@@ -144,7 +148,7 @@ def build_customer_insights(
         list(customer_insights_tools),
         system_prompt=get_prompt("customer_insights"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
     )

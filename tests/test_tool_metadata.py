@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ecommerce_agent.tools.metadata import (
     TOOL_META,
+    VIZ_TOOL_NAMES,
     ToolMeta,
     get_tool_meta,
     select_names,
@@ -34,7 +35,7 @@ _ORDER_MANAGER = frozenset(
         "request_approval",
     }
 )
-_VIZ = frozenset({"generate_line_chart", "generate_bar_chart", "generate_column_chart"})
+_VIZ = frozenset(VIZ_TOOL_NAMES)
 _WRITE = frozenset(
     {"order_update", "purchase_order_create", "purchase_order_receive"}
 )

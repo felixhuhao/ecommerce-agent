@@ -47,6 +47,37 @@ def _viz(name: str) -> ToolMeta:
     )
 
 
+VIZ_TOOL_NAMES: tuple[str, ...] = (
+    "generate_area_chart",
+    "generate_bar_chart",
+    "generate_boxplot_chart",
+    "generate_column_chart",
+    "generate_district_map",
+    "generate_dual_axes_chart",
+    "generate_fishbone_diagram",
+    "generate_flow_diagram",
+    "generate_funnel_chart",
+    "generate_histogram_chart",
+    "generate_line_chart",
+    "generate_liquid_chart",
+    "generate_mind_map",
+    "generate_network_graph",
+    "generate_organization_chart",
+    "generate_path_map",
+    "generate_pie_chart",
+    "generate_pin_map",
+    "generate_radar_chart",
+    "generate_sankey_chart",
+    "generate_scatter_chart",
+    "generate_spreadsheet",
+    "generate_treemap_chart",
+    "generate_venn_chart",
+    "generate_violin_chart",
+    "generate_waterfall_chart",
+    "generate_word_cloud_chart",
+)
+
+
 TOOL_META: tuple[ToolMeta, ...] = (
     # --- Spring read tools ---
     _spring_read("product_query", "products.query"),
@@ -78,9 +109,7 @@ TOOL_META: tuple[ToolMeta, ...] = (
         "purchase_order_receive", "spring", frozenset({"spring.write", "purchase_orders.receive"})
     ),
     # --- ModelScope viz tools ---
-    _viz("generate_line_chart"),
-    _viz("generate_bar_chart"),
-    _viz("generate_column_chart"),
+    *(_viz(name) for name in VIZ_TOOL_NAMES),
     # --- Custom staging tool ---
     ToolMeta(
         "stage_sales_analysis_inputs",
