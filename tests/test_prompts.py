@@ -83,6 +83,28 @@ def test_get_coordinator_prompt_is_active_router() -> None:
     assert "approval proposal" in prompt
 
 
+def test_get_inventory_prompt_is_nonempty_and_read_only() -> None:
+    prompt = get_prompt("inventory")
+
+    assert isinstance(prompt, str) and len(prompt) > 100
+    assert "read-only" in prompt.lower()
+    assert "inventory_query" in prompt
+    assert "inventory_low_stock" in prompt
+    assert "reorder" in prompt.lower()
+    assert "Never create" in prompt or "never create" in prompt.lower()
+
+
+def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
+    prompt = get_prompt("customer_insights")
+
+    assert isinstance(prompt, str) and len(prompt) > 100
+    assert "read-only" in prompt.lower()
+    assert "user_query" in prompt
+    assert "order_query" in prompt
+    assert "get_statistics" in prompt
+    assert "Never create" in prompt or "never create" in prompt.lower()
+
+
 def test_router_classifier_prompt_has_specialists_slot() -> None:
     prompt = get_prompt("router_classifier")
 

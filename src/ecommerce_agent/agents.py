@@ -23,6 +23,16 @@ _ORDER_MANAGER_DESCRIPTION = (
     "human approval for proposed order-status writes (ship, cancel, update)."
 )
 
+_INVENTORY_DESCRIPTION = (
+    "Read-only inventory manager: checks stock levels, identifies low-stock "
+    "items, and recommends reordering without executing writes."
+)
+
+_CUSTOMER_INSIGHTS_DESCRIPTION = (
+    "Read-only customer insights: analyzes customer behavior, segments, "
+    "lifetime value, and customer order history."
+)
+
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
 _MONITOR_CAUSE_EXCLUDED_TOOLS = frozenset(
@@ -97,6 +107,42 @@ def build_purchasing(
         model,
         list(purchasing_tools),
         system_prompt=get_prompt("purchasing"),
+        subagents=[],
+        middleware=_reliability_middleware(),
+        skills=[],
+        backend=backend,
+    )
+
+
+def build_inventory(
+    model: BaseChatModel,
+    *,
+    inventory_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the read-only inventory specialist: stock health + reorder flags."""
+    return build_agent(
+        model,
+        list(inventory_tools),
+        system_prompt=get_prompt("inventory"),
+        subagents=[],
+        middleware=_reliability_middleware(),
+        skills=[],
+        backend=backend,
+    )
+
+
+def build_customer_insights(
+    model: BaseChatModel,
+    *,
+    customer_insights_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the read-only customer insights specialist: customer analytics."""
+    return build_agent(
+        model,
+        list(customer_insights_tools),
+        system_prompt=get_prompt("customer_insights"),
         subagents=[],
         middleware=_reliability_middleware(),
         skills=[],
