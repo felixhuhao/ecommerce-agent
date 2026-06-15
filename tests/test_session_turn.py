@@ -318,7 +318,8 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
-    assert messages[0].grounding is None
+    assert messages[0].grounding is not None
+    assert messages[0].grounding["authority"] == "authoritative"
 
 
 @pytest.mark.asyncio
@@ -672,7 +673,7 @@ async def test_run_turn_attaches_grounding_to_agent_proposal() -> None:
     messages = await store.list_messages("s1")
     assert messages[0].type == "agent_proposal"
     assert messages[0].grounding is not None
-    assert messages[0].grounding["authority"] == "unverified"
+    assert messages[0].grounding["authority"] == "authoritative"
     assert [source["tool_name"] for source in messages[0].grounding["sources"]] == [
         "inventory_query"
     ]

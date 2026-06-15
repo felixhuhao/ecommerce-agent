@@ -24,7 +24,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync
-      - name: Pre-merge quick gate (design §8)
-        run: |
-          uv run pytest tests/test_prompts.py tests/test_specialists.py tests/test_tool_metadata.py \
-            tests/integration/test_demo_contract_smoke.py -q
+      - name: Unit gate (full suite)
+        run: uv run pytest tests/ --ignore=tests/integration -q
