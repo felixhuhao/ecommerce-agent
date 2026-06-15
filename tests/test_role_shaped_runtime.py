@@ -88,6 +88,14 @@ async def test_viewer_runtime_does_not_build_order_manager(
     monkeypatch.setattr(
         providers_module, "build_sales_analyst", lambda *args, **kwargs: SpyAgent("analyst")
     )
+    monkeypatch.setattr(
+        providers_module, "build_inventory", lambda *args, **kwargs: SpyAgent("inventory")
+    )
+    monkeypatch.setattr(
+        providers_module,
+        "build_customer_insights",
+        lambda *args, **kwargs: SpyAgent("customer-insights"),
+    )
 
     def fail_build_order_manager(*args, **kwargs):
         raise AssertionError("viewer runtime must not build order-manager")
@@ -101,3 +109,7 @@ async def test_viewer_runtime_does_not_build_order_manager(
     )
 
     assert "order-manager" not in runtime.agent.agents
+    assert "purchasing" not in runtime.agent.agents
+    assert "sales-analyst" in runtime.agent.agents
+    assert "inventory" in runtime.agent.agents
+    assert "customer-insights" in runtime.agent.agents

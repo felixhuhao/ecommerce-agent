@@ -98,6 +98,16 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         captured["direct_purchasing_backend"] = backend
         return FakeAgent("PURCHASING")
 
+    def fake_build_inventory(model, *, inventory_tools, backend):
+        captured["direct_inventory_tools"] = [tool.name for tool in inventory_tools]
+        captured["direct_inventory_backend"] = backend
+        return FakeAgent("INVENTORY")
+
+    def fake_build_customer_insights(model, *, customer_insights_tools, backend):
+        captured["direct_customer_insights_tools"] = [tool.name for tool in customer_insights_tools]
+        captured["direct_customer_insights_backend"] = backend
+        return FakeAgent("CUSTOMER_INSIGHTS")
+
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
     monkeypatch.setattr(
@@ -108,6 +118,10 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     monkeypatch.setattr(providers_module, "build_sales_analyst", fake_build_sales_analyst)
     monkeypatch.setattr(providers_module, "build_order_manager", fake_build_order_manager)
     monkeypatch.setattr(providers_module, "build_purchasing", fake_build_purchasing)
+    monkeypatch.setattr(providers_module, "build_inventory", fake_build_inventory)
+    monkeypatch.setattr(
+        providers_module, "build_customer_insights", fake_build_customer_insights
+    )
 
     settings = Settings(_env_file=None, llm_api_key="k", spring_mcp_user_id="9")
 
@@ -135,6 +149,12 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     # pool only request_approval matches its tags.
     assert captured["direct_purchasing_tools"] == ["request_approval"]
     assert captured["direct_purchasing_backend"] is captured["direct_analyst_backend"]
+    # inventory: none of the 3 spring tools match inventory tags
+    assert captured["direct_inventory_tools"] == []
+    assert captured["direct_inventory_backend"] is captured["direct_analyst_backend"]
+    # customer-insights: order_query matches; product_query and request_approval don't
+    assert captured["direct_customer_insights_tools"] == ["order_query"]
+    assert captured["direct_customer_insights_backend"] is captured["direct_analyst_backend"]
     assert mcp_client.calls == ["spring"]
 
 
