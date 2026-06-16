@@ -4,6 +4,8 @@ import asyncio
 import logging
 from typing import Any
 
+import httpx
+
 from ecommerce_agent.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,23 @@ async def probe_mongo(thread_store: Any) -> dict[str, str]:
 
 
 def probe_sandbox(settings: Settings) -> dict[str, str]:
+    backend = settings.sandbox_backend.strip().lower()
+    if backend == "remote":
+        if not settings.sandbox_executor_url:
+            return {"status": "unconfigured", "backend": "remote"}
+        try:
+            response = httpx.get(
+                f"{settings.sandbox_executor_url.rstrip('/')}/health",
+                timeout=1.0,
+            )
+            response.raise_for_status()
+        except Exception:
+            logger.warning("Remote sandbox health probe failed", exc_info=True)
+            return {"status": "unavailable", "backend": "remote"}
+        return {"status": "ok", "backend": "remote"}
+    if backend != "docker":
+        return {"status": "unconfigured", "backend": backend}
+
     client = None
     try:
         import docker
@@ -32,7 +51,7 @@ def probe_sandbox(settings: Settings) -> dict[str, str]:
         close = getattr(client, "close", None)
         if callable(close):
             close()
-    return {"status": "ok"}
+    return {"status": "ok", "backend": "docker"}
 
 
 def probe_model(settings: Settings) -> dict[str, str]:

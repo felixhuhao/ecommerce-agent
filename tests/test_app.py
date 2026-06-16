@@ -421,7 +421,11 @@ def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_health_reports_components(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.health as health_module
 
-    monkeypatch.setattr(health_module, "probe_sandbox", lambda settings: {"status": "ok"})
+    monkeypatch.setattr(
+        health_module,
+        "probe_sandbox",
+        lambda settings: {"status": "ok", "backend": "remote"},
+    )
 
     app = create_app(settings=make_settings(llm_api_key="k"))
     use_in_memory_stores(app)
@@ -432,8 +436,55 @@ def test_health_reports_components(monkeypatch: pytest.MonkeyPatch) -> None:
     components = body["components"]
     assert components["mongo"]["status"] == "ok"
     assert components["sandbox"]["status"] == "ok"
+    assert components["sandbox"]["backend"] == "remote"
     assert components["model"]["status"] == "ok"
     assert components["model"]["checked"] == "config-only"
+
+
+def test_sandbox_health_probes_remote_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.health as health_module
+
+    seen: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            seen["raised"] = False
+
+    def fake_get(url: str, *, timeout: float) -> Response:
+        seen["url"] = url
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(health_module.httpx, "get", fake_get)
+
+    status = health_module.probe_sandbox(
+        make_settings(
+            sandbox_backend="remote",
+            sandbox_executor_url="http://executor:8000/",
+        )
+    )
+
+    assert status == {"status": "ok", "backend": "remote"}
+    assert seen["url"] == "http://executor:8000/health"
+    assert seen["timeout"] == 1.0
+
+
+def test_sandbox_health_reports_remote_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.health as health_module
+
+    def fake_get(url: str, *, timeout: float):  # noqa: ANN001
+        raise TimeoutError("nope")
+
+    monkeypatch.setattr(health_module.httpx, "get", fake_get)
+
+    status = health_module.probe_sandbox(
+        make_settings(
+            sandbox_backend="remote",
+            sandbox_executor_url="http://executor:8000",
+        )
+    )
+
+    assert status == {"status": "unavailable", "backend": "remote"}
 
 
 def test_health_model_unconfigured_without_key(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -299,9 +299,9 @@ for Phase B service mode:
   Mongo/chart network and accept Mongo exposure — unnecessary; the dedicated network + localhost
   binding avoids it.
 
-`docker` remains the default (fully `network_mode="none"`) backend until parity passes; service mode
-is opt-in. Before production or arbitrary-code use, replace the local executor with a remote
-executor, gVisor/microVM, or per-session container isolation.
+After Phase C, `.env.example` defaults local development to service mode; `DockerSandbox` remains the
+fully `network_mode="none"` fallback. Before production or arbitrary-code use, replace the local
+executor with a remote executor, gVisor/microVM, or per-session container isolation.
 
 ### 6.5 Service Exposure Posture
 
@@ -496,9 +496,7 @@ service + client) is the seam, gated on the bwrap probe.
 
 > **STATUS: implemented (code + integration-verified).** `sandbox_executor/` (FastAPI service +
 > Dockerfile), `compose.sandbox.yml`, `RemoteSandboxClient` + factory seam + config are landed; the
-> bwrap preflight and all §9 B2 parity/auth/isolation checks pass against the running executor. `docker`
-> remains the default backend (`SANDBOX_BACKEND=docker`) until Phase C; opt into service mode by
-> setting `SANDBOX_BACKEND=remote` and starting `compose.sandbox.yml`.
+> bwrap preflight and all §9 B2 parity/auth/isolation checks pass against the running executor.
 
 - Add a local sandbox executor service container, exposed per §6.5 (localhost + shared token), on its
   own dedicated **non-`internal`** Compose network (isolated from Mongo/chart).
@@ -518,7 +516,8 @@ service + client) is the seam, gated on the bwrap probe.
   `DockerSandbox` to `BaseSandbox`.
 - Add config: `sandbox_backend = docker | remote`, `sandbox_executor_url`,
   `sandbox_executor_token` (shared bearer; required in `remote` mode).
-- Keep `docker` as default until the service passes parity.
+- Keep the no-env code fallback as `docker` until the service passes parity; the local env-template
+  default switches to `remote` in Phase C.
 - Parity-test `RemoteSandboxClient` against current `DockerSandbox` behavior (§9):
   - execute command
   - upload/download files
@@ -541,15 +540,19 @@ service + client) is the seam, gated on the bwrap probe.
 
 ### Phase C — Default to Service Mode
 
-- Switch local dev default to the sandbox executor service once parity is proven.
-- Keep `DockerSandbox` as fallback or test-only backend.
-- Update docs and health checks to report the active sandbox backend.
+- **STATUS: implemented.** A live `RemoteSandboxClient` smoke passed against the running executor
+  (execute, upload/download, helper import, cross-session isolation, timeout, close), and the local
+  env-template default is now `SANDBOX_BACKEND=remote`.
+- Local dev now defaults to the sandbox executor service in `.env.example`.
+- `DockerSandbox` remains the no-env/fallback backend.
+- `/health` reports the active sandbox backend.
 
 ## 9. Tests
 
 Unit/default tests:
 
-- settings parse `sandbox_backend`, `sandbox_executor_url`, and `sandbox_executor_token`.
+- settings parse `sandbox_backend`, `sandbox_executor_url`, and `sandbox_executor_token`; no-env code
+  defaults still fall back to `docker`, while `.env.example` is the local dev `remote` default.
 - sandbox factory chooses `DockerSandbox` or `RemoteSandboxClient`.
 - cleanup helper targets only labeled/name-prefixed sandbox containers.
 - path validation rejects traversal outside workspace (including absolute escapes and the
@@ -644,8 +647,8 @@ Manual checks:
   residual is **outbound internet**: service mode is local-dev isolation, not `network_mode=none` and
   not production-grade arbitrary-code isolation. `internal: true` would close the egress residual but
   was rejected because it silently breaks published ports on Docker Desktop (verified), so the host app
-  could not reach an internal-only executor. `docker` stays default; service mode is opt-in until
-  parity + auth + topology are proven.
+  could not reach an internal-only executor. Service mode is now the local dev default because parity,
+  auth, and topology checks passed; `DockerSandbox` remains the high-isolation fallback.
 - **Compose migration of orphan Mongo containers can lose data if rushed.** Treat anonymous-volume
   orphan cleanup as a manual operator choice; fresh setups are already safe.
 - **Not a high-risk arbitrary-code sandbox.** If future scope includes uploaded scripts, package
@@ -668,15 +671,7 @@ Manual checks:
      unauthenticated. Reset the volume, or `mongodump` → recreate with auth → `mongorestore` with
      credentials. Required, not optional, because auth is load-bearing for service-mode isolation.
    - Fresh setups still need no migration — the named volume initializes with auth on first start.
-2. B2 timing for the sandbox executor service.
-   - The design is resolved: a local sandbox executor service with URL/token/config is specified
-     (§6.2, §6.5, §6.6). The remaining open question is whether to run B2 immediately after B1 or
-     defer until we are ready to exercise the remote-executor seam. Default: B1 can land alone; run
-     B2 only when ready for the bwrap probe + service/client parity work. `docker` stays default until
-     B2 passes.
-3. Should local default remain `DockerSandbox` after Phase A?
-   - Default: yes, until `RemoteSandboxClient` parity tests pass.
-4. Should the one-command startup script also start the Java MCP/MySQL stack?
+2. Should the one-command startup script also start the Java MCP/MySQL stack?
    - Default: optional helper script, but keep Compose projects separate.
 
 ## 12. Acceptance

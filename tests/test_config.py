@@ -38,7 +38,7 @@ def test_sandbox_settings_have_safe_defaults() -> None:
     assert settings.sandbox_idle_ttl_seconds == 600
 
 
-def test_sandbox_backend_defaults_to_docker() -> None:
+def test_sandbox_backend_falls_back_to_docker_without_env() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.sandbox_backend == "docker"

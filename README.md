@@ -76,12 +76,13 @@ seed, or reset them.
 Start the full agent-owned stack with one command:
 
 ```bash
-docker compose -f docker-compose.yml -f compose.chart-mcp.yml up -d
+docker compose -f docker-compose.yml -f compose.chart-mcp.yml -f compose.sandbox.yml up -d
 ```
 
 This brings up Mongo (`docker-compose.yml`, named volume `mongo-data`) plus the
-chart MCP server and renderer (`compose.chart-mcp.yml`). To start only what a
-given task needs, target individual services instead.
+chart MCP server and renderer (`compose.chart-mcp.yml`) and the local sandbox
+executor service (`compose.sandbox.yml`). To start only what a given task needs,
+target individual services instead.
 
 Start Mongo when exercising sessions or the approval workflow:
 
@@ -92,7 +93,7 @@ docker compose up -d mongo
 The default `.env.example` values point the app at that service:
 
 ```env
-MONGO_URL=mongodb://localhost:27017
+MONGO_URL=mongodb://ecommerce_agent:dev-mongo-password@localhost:27017/?authSource=admin
 MONGO_DB=ecommerce_agent
 APPROVAL_API_BASE_URL=http://localhost:8080
 ```
@@ -103,14 +104,27 @@ If `27017` is already in use, run:
 MONGO_PORT=27018 docker compose up -d mongo
 ```
 
-and set `MONGO_URL=mongodb://localhost:27018`.
+and set `MONGO_URL=mongodb://ecommerce_agent:dev-mongo-password@localhost:27018/?authSource=admin`.
+
+## Sandbox Executor
+
+Local development defaults to the long-lived sandbox executor service:
+
+```env
+SANDBOX_BACKEND=remote
+SANDBOX_EXECUTOR_URL=http://localhost:8006
+```
+
+Keep `SANDBOX_BACKEND=docker` as a fallback when you need the older
+per-session DockerSandbox path.
 
 ## Sandbox Container Cleanup
 
-The agent runs analytical code in per-session sandbox containers named
-`ecommerce-sandbox-*` (labeled `com.ecommerce-agent.sandbox=true`). They are
-removed when their session is closed or evicted, but containers left over from
-debugging or crashes can linger. Remove all stale agent sandbox containers:
+When `SANDBOX_BACKEND=docker`, analytical code runs in per-session sandbox
+containers named `ecommerce-sandbox-*` (labeled
+`com.ecommerce-agent.sandbox=true`). They are removed when their session is
+closed or evicted, but containers left over from debugging or crashes can
+linger. Remove all stale agent sandbox containers:
 
 ```bash
 uv run python -m ecommerce_agent.sandbox.cleanup
@@ -118,8 +132,8 @@ uv run python -m ecommerce_agent.sandbox.cleanup
 
 This force-removes only containers carrying the `com.ecommerce-agent.sandbox=true`
 label or whose name starts with `ecommerce-sandbox-` (so legacy unlabeled
-containers are caught too). It never touches Mongo, the chart services, or any
-other container.
+containers are caught too). It never touches Mongo, the chart services, the
+sandbox executor, or any other container.
 
 ## Local App
 
