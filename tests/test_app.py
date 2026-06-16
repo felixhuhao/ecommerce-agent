@@ -1,5 +1,6 @@
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -81,8 +82,22 @@ class FailingFakeMcpClient:
         raise TimeoutError(f"{server_name} timed out")
 
 
+def _local_mongo_settings() -> dict[str, object]:
+    """Pick up MONGO_URL/MONGO_DB from the local .env so the app/health tests run
+    against the authenticated dev Mongo (slice-11 B1). No credentials live in source."""
+    overrides: dict[str, object] = {}
+    env_path = Path(".env")
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("MONGO_URL="):
+                overrides["mongo_url"] = line.split("=", 1)[1].strip()
+            elif line.startswith("MONGO_DB="):
+                overrides["mongo_db"] = line.split("=", 1)[1].strip()
+    return overrides
+
+
 def make_settings(**overrides: object) -> Settings:
-    return Settings(_env_file=None, **overrides)
+    return Settings(_env_file=None, **{**_local_mongo_settings(), **overrides})
 
 
 TEST_USER = User(
