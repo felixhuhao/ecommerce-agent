@@ -253,28 +253,45 @@ air-tight isolation from `network_mode="none"` on each container
 A shared long-lived executor container exposed over HTTP does not inherit that for free. Decision
 for Phase B service mode:
 
-- **Decision: dedicated `internal: true` executor network + localhost-bound infra ports.** Put
-  `sandbox-executor` on its own Compose network with `internal: true`, and do **not** attach it to
-  the default `ecommerce-agent` network where Mongo (`ecommerce-agent-mongo`, unauthenticated) and the
-  chart services live. `internal: true` removes the Docker egress gateway, so the executor cannot
-  reach the bridge gateway, `host.docker.internal`, or the internet — closing the host-gateway route
-  to host-published Mongo that a plain separate network would still leave open. The executor exposes
-  only a localhost-bound host port (`127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8081}:8081`) for the Python
-  app; that inbound published-port path is independent of the egress gateway. Separately, bind the
-  Mongo + chart host ports to `127.0.0.1` too (§7) — defense-in-depth against any gateway reach, and
-  it also stops exposing unauthenticated Mongo to the LAN. Token auth (§6.5) is kept regardless.
-- **Residual, narrower:** because `internal: true` removes egress, service mode is now close to
-  `network_mode="none"` rather than "outbound internet accepted." The load-bearing assumption is that
-  the Docker target supports host→executor published-port access on an internal network; published-port
-  behavior with `internal` networks must be verified in Docker-gated topology tests (§9) before service
-  mode is enabled. If the target does not support it, Phase B must either keep `docker` as the default
-  and defer service mode, or explicitly document a weaker non-`internal` network posture.
+- **Decision: dedicated non-`internal` executor network + Mongo authentication (primary control) +
+  localhost-bound Mongo/chart ports (defense-in-depth).** Put `sandbox-executor` on its own Compose
+  network (a normal bridge, **not** `internal: true`), not attached to the default network where Mongo
+  and the chart services live; the executor publishes `127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8081}:8081`
+  for the host Python app. **The primary control is Mongo authentication** (§7): the executor may open
+  a TCP connection to Mongo but is rejected without credentials, so it cannot read agent operational
+  data (sessions, threads, audit, traces, auth). Auth is load-bearing because network topology alone
+  is insufficient on Docker Desktop (this target): `host.docker.internal` auto-resolves (to
+  `192.168.65.254`) for every container and bypasses `127.0.0.1`-binding for published ports —
+  verified, the executor reached a `127.0.0.1`-bound Mongo via `host.docker.internal:27018`. The
+  dedicated network still blocks service-name resolution (`gaierror`), and localhost-binding still
+  blocks the raw gateway IP (`ConnectionRefusedError` to the discovered gateway, e.g. `172.21.0.1`);
+  both are defense-in-depth. Token auth (§6.5) is kept regardless.
+- **Hard rule: the executor never receives Mongo credentials.** Mongo auth is the primary control
+  *only if* the executor cannot authenticate. `sandbox-executor` must NOT be given `MONGO_URL`,
+  `MONGO_INITDB_ROOT_PASSWORD`, or any Mongo credential — via `environment`, `env_file`, a mounted
+  `.env`, or staged workspace files. In particular, do **not** point the executor service at the app's
+  shared `.env`. Gated by a §9 test that `execute("env")` and the staged workspace expose no Mongo
+  credentials.
+- **Residual, accepted: outbound internet.** Unlike `DockerSandbox`'s `network_mode="none"`, the
+  executor can still reach the internet (verified `REACHED` to `1.1.1.1:53`). It may also be able to
+  open a TCP connection to Mongo's port (via `host.docker.internal` on Docker Desktop), but Mongo auth
+  rejects it without credentials. External-internet reach is acceptable for trusted model-generated
+  analytical code; data still enters via staging tools and approval gates live outside the sandbox.
+- **`internal: true` was tried and rejected (empirically).** `internal: true` does block egress, but on
+  Docker 29.5.3/Linux it **silently drops published ports** — `docker port` reports no mapping and the
+  host gets `Connection refused`, so the host app cannot reach an internal-only executor.
+  `enable_ip_masquerade=false` was also tried: it keeps published ports but does **not** block egress
+  (internet still reachable), so it is no better than the chosen posture. There is no static-topology
+  way to get both host-reachability and no-egress on this target. Eliminating the internet residual
+  needs per-execute netns (rejected as deceptively hard), containerizing the Python app so the executor
+  can be `internal: true` and reached over a shared internal network (Phase C+), or a real remote
+  executor/gVisor (production path).
 - **Rejected alternatives:** (a) per-execute network namespace inside the service — deceptively hard,
   needs extra capabilities/namespace plumbing and is easy to get subtly wrong; (b) the service spawns
   per-session containers internally — better isolation but re-erodes the cold-start/container
   management complexity the long-lived service exists to remove; (c) attach the executor to the
-  Mongo/chart network and accept Mongo exposure as a documented risk — unnecessary; static topology
-  avoids it for free.
+  Mongo/chart network and accept Mongo exposure — unnecessary; the dedicated network + localhost
+  binding avoids it.
 
 `docker` remains the default (fully `network_mode="none"`) backend until parity passes; service mode
 is opt-in. Before production or arbitrary-code use, replace the local executor with a remote
@@ -324,13 +341,36 @@ docker compose -f docker-compose.yml -f compose.chart-mcp.yml -f compose.sandbox
 Prefer a separate `compose.sandbox.yml` if the sandbox service needs extra build context or resource
 settings that would distract from Mongo.
 
-Bind all host-facing infra ports to `127.0.0.1` only — Mongo (`docker-compose.yml`) and the chart
+**Enable Mongo authentication** (primary control for service-mode isolation, §6.4). Mongo currently
+runs unauthenticated; start it with `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` and
+point `mongo_url` at `mongodb://<user>:<urlencoded-pass>@localhost:27017/?authSource=admin` — the root
+user lives in the `admin` database, so `authSource=admin` is explicit to avoid driver default
+ambiguity. **This puts root credentials directly in the app — acceptable for local dev and marked as
+such.** The least-privilege upgrade (out of scope for this slice) is to let the root env vars
+initialize Mongo and create an app-scoped user, then set
+`mongo_url=mongodb://ecommerce_agent_app:<pass>@localhost:27017/ecommerce_agent?authSource=ecommerce_agent`;
+note this is app-hardening, not sandbox-isolation (the executor lacks creds
+either way). Every store (threads, audit, auth, trace, sessions) authenticates
+via `mongo_url`. Auth is load-bearing: on Docker Desktop `host.docker.internal`
+bypasses `127.0.0.1`-binding (verified), so the executor can open a TCP
+connection to Mongo's port but is rejected without credentials. This is good
+hygiene regardless of the sandbox — Mongo is currently exposed unauthenticated.
+
+`MONGO_INITDB_ROOT_*` only creates the root user on a **fresh** `/data/db`. An existing `mongo-data`
+named volume from a current dev setup already has data and no auth, so the init script will **not**
+run and Mongo stays unauthenticated. Since auth is load-bearing, migrating the existing volume is
+required, not optional: (a) reset — `docker volume rm` the `mongo-data` volume and
+`docker compose up mongo` to reinitialize with auth (local data lost); or (b) preserve data —
+`mongodump` unauthenticated from the running container, `docker volume rm mongo-data`, recreate the
+container with the `MONGO_INITDB_ROOT_*` env, then `mongorestore` using credentials.
+
+Bind Mongo + chart host ports to `127.0.0.1` only — Mongo (`docker-compose.yml`) and the chart
 renderer / chart-mcp (`compose.chart-mcp.yml`) currently publish on `0.0.0.0`. Changing them to
-`127.0.0.1:${PORT}:${PORT}` closes two gaps at once: it stops exposing unauthenticated Mongo to the
-LAN, and it removes the host-gateway route to Mongo/chart as a fallback in case the executor's
-`internal: true` egress blocking (§6.4) ever regresses. The host app already reaches these over
-`localhost` (`mongo_url`, chart `localhost:1122`) and other containers reach them by service name, so
-this breaks nothing.
+`127.0.0.1:${PORT}:${PORT}` is now **defense-in-depth**, not the primary control: it blocks the raw
+gateway IP (`ConnectionRefusedError` to the discovered gateway) and stops exposing Mongo to the LAN.
+On Docker Desktop it does **not** block `host.docker.internal` (which bypasses the binding); Mongo auth
+covers that vector. The host app already reaches these over `localhost` (`mongo_url`, chart
+`localhost:1122`) and other containers reach them by service name, so this breaks nothing.
 
 Mongo is already Compose-managed for fresh setups (named volume `mongo-data`). The only remaining
 Mongo hygiene is operator cleanup of a pre-existing orphan `ecommerce-agent-mongo` container from
@@ -367,11 +407,12 @@ This phase is low risk and can land first.
   - `sandbox_executor_url`
   - `sandbox_executor_token` (shared bearer; required in `remote` mode)
 - Keep `docker` as default until the service passes parity tests.
-- §6.4 network isolation is resolved: put the executor on a dedicated `internal: true` Compose
-  network (isolated from Mongo/chart, no egress gateway), `127.0.0.1`-bound port, and localhost-bind
-  the Mongo/chart host ports (§7); verify in a topology test that executed code cannot reach Mongo by
-  service name, bridge gateway, or `host.docker.internal`, and that the host app can still reach the
-  executor's published port.
+- §6.4 network isolation is resolved: put the executor on a dedicated **non-`internal`** Compose
+  network (isolated from Mongo/chart) + `127.0.0.1`-bound port; localhost-bind the Mongo/chart host
+  ports (§7) as defense-in-depth; **enable Mongo authentication (§7) — the primary control**, because
+  `host.docker.internal` bypasses localhost-binding on Docker Desktop. Verify via the topology + auth
+  tests (§9): Mongo unreachable by service name / gateway IP, unauthenticated Mongo access rejected,
+  host app reaches the executor, outbound internet remains (accepted residual).
 - Parity-test `RemoteSandboxClient` against current `DockerSandbox` behavior:
   - execute command
   - upload/download files
@@ -425,12 +466,19 @@ Integration tests, Docker-gated:
 - concurrent execute on the same session is safe or explicitly serialized.
 - DeepAgents `write()`/`edit()` work via the remote client, incl. large-edit temp files and cleanup.
 - `ecommerce_analysis` (helper-kit) is importable in the executor image.
-- network topology (§6.4): executed code in service mode **cannot** reach Mongo/chart by any of
-  service-name resolution (`ecommerce-agent-mongo`), the bridge gateway IP (e.g. `172.17.0.1:27017`),
-  or `host.docker.internal`; **cannot** reach the internet (e.g. `1.1.1.1:53`, matching
-  `test_network_is_isolated`); and the host app **can** still reach the executor's `127.0.0.1`
-  published port (proves inbound publish works on an `internal: true` network — the load-bearing
-  assumption).
+- network topology (§6.4): the host app **can** reach the executor's `127.0.0.1` published port;
+  executed code in service mode **cannot** reach Mongo by service-name resolution
+  (`ecommerce-agent-mongo`) **nor** via the **dynamically discovered** executor-network gateway IP
+  (user-defined Compose bridges do not always use `172.17.0.1` — the test must read the gateway from
+  the executor's default route, not hard-code it); on Docker Desktop `host.docker.internal` **is**
+  reachable and bypasses `127.0.0.1`-binding (documented, not gated) — so the decisive test is the
+  next item. (Executed code **can** still reach the internet `1.1.1.1:53` — accepted egress residual.)
+- Mongo auth gate (decisive, §6.4/§7): an **unauthenticated** connection to Mongo — via any reachable
+  vector including `host.docker.internal` — is **rejected** by auth; the executor cannot read agent
+  data without credentials. This is the load-bearing control.
+- credential isolation (§6.4 hard rule): `RemoteSandboxClient.execute("env")` and a scan of the staged
+  workspace expose no Mongo credentials (`MONGO_URL`, `MONGO_INITDB_ROOT_PASSWORD`, etc.) — proves the
+  executor was not handed creds, so auth actually protects.
 - `RemoteSandboxClient.close()` is synchronous, issues `DELETE`, and removes the workspace.
 - legacy `DockerSandbox` tests remain green until removed.
 
@@ -449,14 +497,17 @@ Manual checks:
   not left to prompt discipline.
 - **Service mode is a new failure boundary.** Keep `DockerSandbox` fallback until parity is proven.
 - **Network isolation in service mode.** `DockerSandbox` guarantees `network_mode=none` per container
-  (no outbound internet, no service reach). Phase B's executor runs on a dedicated `internal: true`
-  Compose network isolated from Mongo/chart (§6.4), which removes the egress gateway — so executed
-  code cannot reach `ecommerce-agent-mongo`/chart by service name, bridge gateway, or
-  `host.docker.internal`, and has no outbound internet. This gets service mode close to
-  `network_mode=none`, not production-grade arbitrary-code isolation. The load-bearing assumption —
-  that host→executor published-port works on an `internal` network — must be verified in the §9
-  topology test; if it fails on the target, keep `docker` as default or document a weaker posture.
-  `docker` stays default; service mode is opt-in until parity + this topology are proven.
+  (no outbound internet, no service reach). Phase B's executor runs on a dedicated **non-`internal`**
+  Compose network isolated from Mongo/chart (§6.4), so executed code cannot reach Mongo by service
+  name, and `127.0.0.1`-binding blocks the raw gateway IP (verified refused). **But on Docker Desktop
+  (this target) `host.docker.internal` auto-resolves and bypasses `127.0.0.1`-binding** — the executor
+  can open a TCP connection to Mongo's published port (verified reached). The primary protection is
+  therefore **Mongo authentication** (§7): the executor is rejected without credentials. The accepted
+  residual is **outbound internet**: service mode is local-dev isolation, not `network_mode=none` and
+  not production-grade arbitrary-code isolation. `internal: true` would close the egress residual but
+  was rejected because it silently breaks published ports on Docker Desktop (verified), so the host app
+  could not reach an internal-only executor. `docker` stays default; service mode is opt-in until
+  parity + auth + topology are proven.
 - **Compose migration of orphan Mongo containers can lose data if rushed.** Treat anonymous-volume
   orphan cleanup as a manual operator choice; fresh setups are already safe.
 - **Not a high-risk arbitrary-code sandbox.** If future scope includes uploaded scripts, package
@@ -465,9 +516,14 @@ Manual checks:
 
 ## 11. Open Questions
 
-1. Should Phase A include migrating data off pre-existing orphan Mongo containers?
-   - Default: document the dump/restore path; do not migrate automatically. Fresh setups need no
-     migration — Mongo is already Compose-managed with a named volume.
+1. Mongo data migration now that auth is load-bearing.
+   - Orphan `ecommerce-agent-mongo` containers (pre-`09e2f15`, anonymous volumes): document the
+     dump/restore path; do not migrate automatically.
+   - **Existing named `mongo-data` volumes require migration to enable auth** (§7): `MONGO_INITDB_ROOT_*`
+     only initializes auth on a fresh `/data/db`, so a volume that already has data stays
+     unauthenticated. Reset the volume, or `mongodump` → recreate with auth → `mongorestore` with
+     credentials. Required, not optional, because auth is load-bearing for service-mode isolation.
+   - Fresh setups still need no migration — the named volume initializes with auth on first start.
 2. ~~Should the sandbox executor be implemented as a small HTTP service in this repo?~~ **Resolved
    by Phase B:** yes — a local sandbox executor service with URL/token/config is specified (§6.2,
    §6.5). The remaining open question is **timing**: build it in Phase B now to exercise the
