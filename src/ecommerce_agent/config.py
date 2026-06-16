@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     sandbox_execute_timeout_seconds: int = Field(default=30, gt=0)
     sandbox_idle_ttl_seconds: int = Field(default=600, gt=0)
 
+    # Sandbox backend selection ("docker" = in-container DockerSandbox,
+    # "remote" = delegate to the sandbox executor service over HTTP).
+    sandbox_backend: str = "docker"
+    sandbox_executor_url: str = ""
+    sandbox_executor_token: str = ""
+
     # M2 session / conversation thread
     mongo_url: str = "mongodb://localhost:27017"
     mongo_db: str = "ecommerce_agent"

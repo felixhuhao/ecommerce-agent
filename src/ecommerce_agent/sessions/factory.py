@@ -16,6 +16,7 @@ from ecommerce_agent.routing.registry import build_specialist_registry
 from ecommerce_agent.routing.router import ClassifierRouter, Router
 from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
+from ecommerce_agent.sandbox.remote import RemoteSandboxClient
 from ecommerce_agent.sessions.registry import RuntimeActor, SessionRuntime
 from ecommerce_agent.specialists.providers import PROVIDERS
 from ecommerce_agent.threads.history import ROUTER_HISTORY_MAX_EXCHANGES, take_last_exchanges
@@ -87,8 +88,29 @@ def _latest_user_text(inputs: dict) -> str:
     return ""
 
 
-def build_session_sandbox(settings: Settings, *, session_id: str) -> DockerSandbox:
-    return DockerSandbox(limits_from_settings(settings), session_id=session_id)
+def build_session_sandbox(settings: Settings, *, session_id: str):
+    """Build the per-session sandbox backend selected by ``sandbox_backend``.
+
+    Returns a DeepAgents ``BaseSandbox``: ``DockerSandbox`` (default) or
+    ``RemoteSandboxClient`` (the sandbox executor service, design doc §6.2/§8).
+    """
+    backend = settings.sandbox_backend.strip().lower()
+    if backend == "remote":
+        if not settings.sandbox_executor_url:
+            raise ValueError("sandbox_executor_url is required when sandbox_backend='remote'")
+        if not settings.sandbox_executor_token:
+            raise ValueError("sandbox_executor_token is required when sandbox_backend='remote'")
+        return RemoteSandboxClient(
+            base_url=settings.sandbox_executor_url,
+            token=settings.sandbox_executor_token,
+            session_id=session_id,
+            timeout_seconds=settings.sandbox_execute_timeout_seconds + 10,
+        )
+    if backend == "docker":
+        return DockerSandbox(limits_from_settings(settings), session_id=session_id)
+    raise ValueError(
+        f"unknown sandbox_backend {backend!r}; expected 'docker' or 'remote'"
+    )
 
 
 async def build_session_runtime(

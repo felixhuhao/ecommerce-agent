@@ -26,7 +26,7 @@ ecommerce-agent = "ecommerce_agent.cli:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["sandbox_image"]
+pythonpath = ["sandbox_image", "sandbox_executor"]
 markers = [
     "docker: tests that require a running Docker daemon",
     "integration: tests that require external services such as the SpringBoot MCP server",

@@ -261,7 +261,7 @@ for Phase B service mode:
 - **Decision: dedicated non-`internal` executor network + Mongo authentication (primary control) +
   localhost-bound Mongo/chart ports (defense-in-depth).** Put `sandbox-executor` on its own Compose
   network (a normal bridge, **not** `internal: true`), not attached to the default network where Mongo
-  and the chart services live; the executor publishes `127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8081}:8081`
+  and the chart services live; the executor publishes `127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8006}:8000`
   for the host Python app. **The primary control is Mongo authentication** (§7): the executor may open
   a TCP connection to Mongo but is rejected without credentials, so it cannot read agent operational
   data (sessions, threads, audit, traces, auth). Auth is load-bearing because network topology alone
@@ -309,7 +309,7 @@ The sandbox executor can execute arbitrary analytical code and delete workspaces
 an explicit Phase B decision, not an accident of the Compose defaults:
 
 - **Decision: localhost-bound + shared token.** Publish the executor port bound to `127.0.0.1` only
-  (`127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8081}:8081`), never `0.0.0.0`. Require a shared bearer token
+  (`127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8006}:8000`), never `0.0.0.0`. Require a shared bearer token
   (header, e.g. `X-Sandbox-Token`) on **every non-health route** — execute, upload, file GET *and*
   DELETE (downloads expose staged business data and generated artifacts), session DELETE, and
   `/maintenance/reap` — validated in constant time. Only `GET /health` is exempt. The Python app
@@ -323,7 +323,7 @@ an explicit Phase B decision, not an accident of the Compose defaults:
   network (still isolated from Mongo/chart), drop the host port entirely, and keep the token only as
   defense-in-depth, or remove it.
 - Bind address and token are config-driven (`sandbox_executor_url`, `sandbox_executor_token`);
-  default URL `http://127.0.0.1:8081`. Startup logs the bind address but never the token.
+  default URL `http://127.0.0.1:8006`. Startup logs the bind address but never the token.
 - **Network topology** is decided in §6.4: the executor runs on its own Compose network, isolated
   from Mongo/chart, so this §6.5 only governs host exposure and auth, not service-to-service reach.
 
@@ -357,14 +357,13 @@ rather than inventing a second mini-architecture:
     location the file API maps `/tmp/.deepagents_edit_*` to, §6.2 — required for edit parity);
   - expose runtime/system files read-only, starting with `--ro-bind /usr /usr` (covers
     `/usr/local` → python, pandas, numpy), `--ro-bind /bin /bin`, `--ro-bind /lib /lib`,
-    `--ro-bind /lib64 /lib64`, and `--ro-bind /opt /opt` (helper-kit path). The final allowlist is
-    **probe-derived**: commit any additional read-only paths the executor image proves necessary for
-    `python`, pandas/numpy, and `ecommerce_analysis`, and do not assume these distro-specific paths are
-    complete without the probe;
+    `--ro-bind /lib64 /lib64`, `--ro-bind /opt /opt` (helper-kit path), and `--ro-bind /etc /etc`.
+    The final allowlist is **probe-derived** (VERIFIED, see below);
   - mount proc with `--proc /proc`;
-  - provide only minimal device nodes needed for Python. Preference order: try a tmpfs/minimal `/dev`
-    first, use `--dev /dev` only if the probe proves it is required, and record the reason if the
-    broader device surface is needed;
+  - provide device nodes with `--dev /dev` (VERIFIED required — Python/numpy need `/dev/urandom`
+    and `/dev/null`; a tmpfs-only `/dev` was not tried since `--dev /dev` worked on first probe);
+  - set the in-namespace working directory with `--chdir /workspace` so absolute `/workspace/...`
+    paths and the `cwd` both resolve to the session workspace;
   - do **not** bind `/workspaces` or any parent that would reveal sibling sessions.
 
   Requirement: the executor container must permit mount-namespace creation (`CAP_SYS_ADMIN` or
@@ -373,6 +372,16 @@ rather than inventing a second mini-architecture:
   Phase B must not enable service mode: either stop at the client/config seam with `docker` still
   default, or explicitly switch the service design to internal per-session containers (rejected alt
   (b), revived as the only other safe option).
+
+  **VERIFIED (Phase B2):** the capability probe PASSED end-to-end through the running executor
+  service (`ecommerce-agent-sandbox-executor:dev`, built on `ecommerce-agent-sandbox:dev`).
+  Required container caps: `--cap-add SYS_ADMIN --security-opt seccomp=unconfined` (unprivileged
+  user namespaces are blocked by Docker Desktop's seccomp profile; `SYS_ADMIN` alone fails at
+  `pivot_root` without `seccomp=unconfined`). With this privilege set, executed code inside the
+  bwrap namespace successfully `import ecommerce_analysis, pandas, numpy`, resolves `/workspace`
+  to the session workspace, and is isolated across sessions (§9 cross-session check passes). The
+  service runs as root in the container so `CAP_SYS_ADMIN` is in the effective set (§10 accepted
+  posture for trusted analytical code).
 - **Image strategy: extend the sandbox image.** Build the executor on `ecommerce-agent-sandbox:dev`
   (python + pandas + numpy + `ecommerce_analysis`) and add only the HTTP service layer + deps on top.
   One source of truth for the helper-kit keeps the import-parity test meaningful.
@@ -485,6 +494,12 @@ service + client) is the seam, gated on the bwrap probe.
 
 #### Phase B2 — Executor service + bwrap probe + client
 
+> **STATUS: implemented (code + integration-verified).** `sandbox_executor/` (FastAPI service +
+> Dockerfile), `compose.sandbox.yml`, `RemoteSandboxClient` + factory seam + config are landed; the
+> bwrap preflight and all §9 B2 parity/auth/isolation checks pass against the running executor. `docker`
+> remains the default backend (`SANDBOX_BACKEND=docker`) until Phase C; opt into service mode by
+> setting `SANDBOX_BACKEND=remote` and starting `compose.sandbox.yml`.
+
 - Add a local sandbox executor service container, exposed per §6.5 (localhost + shared token), on its
   own dedicated **non-`internal`** Compose network (isolated from Mongo/chart).
 - **Run the bwrap capability probe first** (§6.6/§9): it must bind a probe workspace as `/workspace`,
@@ -565,9 +580,14 @@ Phase B2 checks:
   mount `/proc`, provide the minimal runtime/dev surface Python needs, and execute
   `python -c 'import ecommerce_analysis; print("ok")'`. The test records the final read-only bind
   allowlist and whether minimal `/dev` was enough or `--dev /dev` was required. If this fails, service
-  mode remains disabled.
+  mode remains disabled. **VERIFIED (Phase B2):** preflight passes through the running service —
+  `import ecommerce_analysis, pandas, numpy` succeeds inside the bwrap namespace; final read-only binds
+  are `/usr /bin /lib /lib64 /opt /etc`; `--dev /dev` is used; caps are `SYS_ADMIN + seccomp=unconfined`.
 - `RemoteSandboxClient.execute("echo ok")` returns output.
 - file upload/download round-trip works.
+- host-side file APIs reject symlink escapes, including final-path symlinks and a replaced
+  `/workspace/.tmp` root, so executed code cannot make download/upload/delete touch files outside the
+  session workspace.
 - files persist within a session; **absolute** `/workspace/...` paths resolve to that session's
   workspace (proves the namespace mapping, §6.6).
 - **cross-session isolation (§6.6):** executed code in session A cannot list or read session B's
