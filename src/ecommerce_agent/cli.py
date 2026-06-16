@@ -24,7 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.set_defaults(func=serve)
 
     eval_parser = subparsers.add_parser("eval", help="Run an eval")
-    eval_parser.add_argument("eval_target", choices=["routing", "approval-safety", "tool-choice"])
+    eval_parser.add_argument(
+        "eval_target",
+        choices=["routing", "approval-safety", "tool-choice", "groundedness"],
+    )
     eval_parser.set_defaults(func=run_eval_command)
 
     users_parser = subparsers.add_parser("users", help="Manage users")
@@ -66,6 +69,9 @@ def run_eval_command(args: argparse.Namespace) -> None:
         return
     if args.eval_target == "approval-safety":
         _run_approval_safety_cli()
+        return
+    if args.eval_target == "groundedness":
+        _run_groundedness_cli()
         return
     if args.eval_target != "routing":
         raise ValueError(f"unsupported eval target: {args.eval_target}")
@@ -113,16 +119,13 @@ def _run_approval_safety_cli() -> None:
 
     from ecommerce_agent.config import get_settings
     from ecommerce_agent.evals.approval_safety import (
-        build_stub_order_manager,
         load_approval_cases,
-        run_approval_safety_eval,
+        run_approval_safety_eval_by_specialist,
     )
 
     settings = get_settings()
     cases = load_approval_cases()
-    approval_calls: list[dict] = []
-    agent = build_stub_order_manager(settings, approval_calls)
-    report = asyncio.run(run_approval_safety_eval(agent, cases))
+    report = asyncio.run(run_approval_safety_eval_by_specialist(settings, cases))
     print(
         f"approval-safety accuracy={report.accuracy:.2f} "
         f"false_proposal_rate={report.false_proposal_rate:.2f} "
@@ -150,6 +153,21 @@ def _run_tool_choice_cli() -> None:
         f"aggregate_authority_miss_rate={report.aggregate_authority_miss_rate:.2f}"
     )
     print(f"per_tag_accuracy={report.per_tag_accuracy}")
+
+
+def _run_groundedness_cli() -> None:
+    import asyncio
+
+    from ecommerce_agent.config import get_settings
+    from ecommerce_agent.evals.groundedness import run_groundedness_eval
+
+    report = asyncio.run(run_groundedness_eval(get_settings()))
+    print(
+        f"groundedness n={report.n} "
+        f"unsupported_claim_rate={report.unsupported_claim_rate:.3f} "
+        f"partial_rate={report.partial_rate:.3f}"
+    )
+    print(f"per_authority={report.per_authority}")
 
 
 def _prompt_password() -> str:

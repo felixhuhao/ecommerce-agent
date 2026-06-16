@@ -49,4 +49,5 @@ class ThreadMessage(BaseModel):
     tool_name: str | None = None
     status: str | None = None
     result: dict[str, Any] | None = None
+    grounding: dict[str, Any] | None = None
     reason: str | None = None

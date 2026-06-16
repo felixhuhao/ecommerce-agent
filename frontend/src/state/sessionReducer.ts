@@ -1,4 +1,4 @@
-import type { StreamEvent, ThreadMessage } from "../types";
+import type { StreamEvent, ThreadMessage, TurnProgressStep } from "../types";
 
 export type SessionAction =
   | StreamEvent
@@ -12,6 +12,7 @@ export interface SessionState {
   inFlightTurnId: string | null;
   tokenBuffer: string;
   activeTool: string | null;
+  turnProgress: TurnProgressStep[];
   error: string | null;
 }
 
@@ -22,6 +23,7 @@ export function initialSessionState(): SessionState {
     inFlightTurnId: null,
     tokenBuffer: "",
     activeTool: null,
+    turnProgress: [],
     error: null,
   };
 }
@@ -33,7 +35,34 @@ function sortedMessages(bySeq: Record<number, ThreadMessage>): ThreadMessage[] {
 }
 
 function finalize(state: SessionState): SessionState {
-  return { ...state, inFlightTurnId: null, tokenBuffer: "", activeTool: null };
+  return { ...state, inFlightTurnId: null, tokenBuffer: "", activeTool: null, turnProgress: [] };
+}
+
+function completeStartingStep(steps: TurnProgressStep[], incoming: TurnProgressStep): TurnProgressStep[] {
+  if (incoming.stepId.startsWith("start:")) return steps;
+  return steps.map((step) =>
+    step.status === "running" && step.stepId.startsWith("start:")
+      ? { ...step, status: "done" as const }
+      : step,
+  );
+}
+
+function upsertProgress(steps: TurnProgressStep[], step: TurnProgressStep): TurnProgressStep[] {
+  const next = completeStartingStep(steps, step);
+  const index = next.findIndex((existing) => existing.stepId === step.stepId);
+  if (index === -1) return [...next, step];
+  return next.map((existing, existingIndex) =>
+    existingIndex === index ? { ...existing, ...step } : existing,
+  );
+}
+
+function failRunningProgress(steps: TurnProgressStep[]): TurnProgressStep[] {
+  return steps.map((step) => {
+    if (step.status === "running") {
+      return { ...step, status: "failed" as const };
+    }
+    return step;
+  });
 }
 
 export function sessionReducer(state: SessionState, action: SessionAction): SessionState {
@@ -51,6 +80,17 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
         inFlightTurnId: action.turnId,
         tokenBuffer: "",
         activeTool: null,
+        turnProgress: [
+          {
+            turnId: action.turnId,
+            stepId: `start:${action.turnId}`,
+            kind: "start",
+            label: "Starting turn",
+            status: "running",
+            detail: null,
+            ts: null,
+          },
+        ],
         error: null,
       };
     case "thread.append": {
@@ -72,10 +112,21 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
         : state;
     case "tool":
       return { ...state, activeTool: action.phase === "start" ? action.name : null };
+    case "turn.progress":
+      return action.step.turnId === state.inFlightTurnId
+        ? { ...state, turnProgress: upsertProgress(state.turnProgress, action.step) }
+        : state;
     case "done":
       return action.turnId === state.inFlightTurnId ? finalize(state) : state;
     case "error":
-      return { ...finalize(state), error: action.message };
+      return {
+        ...state,
+        inFlightTurnId: null,
+        tokenBuffer: "",
+        activeTool: null,
+        turnProgress: failRunningProgress(state.turnProgress),
+        error: action.message,
+      };
     default:
       return state;
   }

@@ -132,6 +132,7 @@ def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
         SimpleNamespace(name="generate_bar_chart"),
         SimpleNamespace(name="generate_column_chart"),
         SimpleNamespace(name="generate_area_chart"),
+        SimpleNamespace(name="generate_pie_chart"),
         SimpleNamespace(name="some_other_modelscope_tool"),
     ]
 
@@ -141,11 +142,8 @@ def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
         "generate_line_chart",
         "generate_bar_chart",
         "generate_column_chart",
+        "generate_area_chart",
+        "generate_pie_chart",
     }
-    assert VIZ_TOOLS == frozenset(
-        {
-            "generate_line_chart",
-            "generate_bar_chart",
-            "generate_column_chart",
-        }
-    )
+    assert "generate_sankey_chart" in VIZ_TOOLS
+    assert "some_other_modelscope_tool" not in VIZ_TOOLS

@@ -21,7 +21,59 @@ export interface ThreadMessage {
   tool_name: string | null;
   status: string | null;
   result: Record<string, unknown> | null;
+  grounding: Grounding | null;
   reason: string | null;
+}
+
+export type Authority = "authoritative" | "derived" | "unverified" | "not_applicable";
+
+export interface GroundingSource {
+  span_id: string;
+  tool_name: string;
+  args_summary: string | null;
+  result_summary: string | null;
+}
+
+export interface Grounding {
+  authority: Authority;
+  sources: GroundingSource[];
+  diagnostic: string | null;
+}
+
+export type AlertStatus = "open" | "acknowledged" | "closed";
+export type AlertSeverity = "info" | "warning" | "critical";
+
+export interface AlertSource {
+  source_id: string;
+  tool_name: string;
+  args_summary: string | null;
+  result_summary: string | null;
+  evidence: string | null;
+}
+
+export interface AlertGrounding {
+  authority: Authority;
+  sources: AlertSource[];
+  diagnostic: string | null;
+}
+
+export interface Alert {
+  alert_id: string;
+  check_name: string;
+  dedupe_key: string;
+  title: string;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  metric: string;
+  value: number | string | null;
+  threshold: number | string | null;
+  entities: Record<string, unknown>;
+  cause: string | null;
+  grounding: AlertGrounding;
+  created_at: string;
+  updated_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
 }
 
 export interface SessionSummary {
@@ -43,8 +95,21 @@ export type StreamEvent =
   | { kind: "thread.append"; message: ThreadMessage }
   | { kind: "token"; text: string }
   | { kind: "tool"; name: string; phase: string }
+  | { kind: "turn.progress"; step: TurnProgressStep }
   | { kind: "done"; turnId: string }
   | { kind: "error"; message: string };
+
+export type TurnProgressStatus = "pending" | "running" | "done" | "failed";
+
+export interface TurnProgressStep {
+  turnId: string;
+  stepId: string;
+  kind: string;
+  label: string;
+  status: TurnProgressStatus;
+  detail: string | null;
+  ts: number | null;
+}
 
 export interface HealthComponent {
   status: string;
@@ -83,13 +148,14 @@ export interface McpHealth {
 }
 
 export interface TraceSpan {
-  kind: "model_call" | "tool_call";
+  kind: "model_call" | "tool_call" | "route_decision" | "policy_denial";
   name: string | null;
   status: string;
   ts: number;
   duration_ms: number | null;
   args_summary: string | null;
   result_summary: string | null;
+  evidence: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
   span_id: string;
@@ -109,16 +175,4 @@ export interface TraceTimeline {
   tokens_out_total: number | null;
   span_count: number;
   spans: TraceSpan[];
-}
-
-export interface ArtifactSummary {
-  id: string;
-  kind: string;
-  mime_type: string;
-  src: string;
-  tool_name: string | null;
-  turn_id: string | null;
-  trace_id: string | null;
-  created_at: string;
-  message_id: string;
 }

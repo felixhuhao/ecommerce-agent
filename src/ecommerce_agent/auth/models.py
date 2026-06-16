@@ -14,6 +14,7 @@ class Action(StrEnum):
     PROPOSE = "propose"
     APPROVE = "approve"
     AUDIT_SEARCH = "audit_search"
+    MANAGE_ALERTS = "manage_alerts"
 
 
 class User(BaseModel):

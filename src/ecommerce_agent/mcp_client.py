@@ -5,56 +5,43 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from ecommerce_agent.config import Settings, get_settings
+from ecommerce_agent.tools.metadata import select_names
 
 SPRING_SERVER_NAME = "spring"
 MODELSCOPE_SERVER_NAME = "modelscope"
 PYTHON_SERVER_NAME = "python"
 
-READ_ONLY_SPRING_TOOLS: frozenset[str] = frozenset(
-    {
-        "product_query",
-        "product_search",
-        "order_query",
-        "inventory_query",
-        "inventory_low_stock",
-        "user_query",
-        "supplier_query",
-        "supplier_top",
-        "purchase_order_query",
-        "get_statistics",
-    }
-)
-
-APPROVAL_SPRING_TOOLS: frozenset[str] = frozenset({"request_approval"})
-
-WRITE_SPRING_TOOLS: frozenset[str] = frozenset(
-    {
-        "purchase_order_create",
-        "purchase_order_receive",
-        "order_update",
-    }
-)
-
+# Compatibility shims derived from the single source of truth in
+# tools/metadata.py. Prefer tools.metadata directly in new code; these frozensets
+# are kept so existing importers (diagnostics, evals, trace) stay byte-identical.
+# The per-specialist sets mirror the provider tool_tags in specialists/providers.py.
+READ_ONLY_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.read"}))
+APPROVAL_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"approval.request"}))
+WRITE_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.write"}))
 WRITE_OR_APPROVAL_SPRING_TOOLS: frozenset[str] = WRITE_SPRING_TOOLS | APPROVAL_SPRING_TOOLS
-
-ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = frozenset(
-    {
-        "product_query",
-        "purchase_order_query",
-        "order_query",
-        "inventory_query",
-        "supplier_query",
-        "request_approval",
-    }
+# Phase B: order-manager narrowed to order status; purchase-order/supplier tools
+# moved to purchasing.
+ORDER_MANAGER_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset({"orders.query", "approval.request"})
 )
-
-VIZ_TOOLS: frozenset[str] = frozenset(
-    {
-        "generate_line_chart",
-        "generate_bar_chart",
-        "generate_column_chart",
-    }
+PURCHASING_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset(
+        {
+            "products.search",
+            "suppliers.query",
+            "suppliers.top",
+            "purchase_orders.query",
+            "approval.request",
+        }
+    )
 )
+INVENTORY_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset({"products.search", "inventory.query", "inventory.low_stock"})
+)
+CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
+    frozenset({"customers.query", "orders.query", "analytics.aggregate"})
+)
+VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
 
 
 def spring_headers(
@@ -126,6 +113,18 @@ def filter_spring_read_tools(tools: list[BaseTool]) -> list[BaseTool]:
 
 def filter_order_manager_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in ORDER_MANAGER_SPRING_TOOLS]
+
+
+def filter_purchasing_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in PURCHASING_SPRING_TOOLS]
+
+
+def filter_inventory_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in INVENTORY_SPRING_TOOLS]
+
+
+def filter_customer_insights_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in CUSTOMER_INSIGHTS_SPRING_TOOLS]
 
 
 def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:

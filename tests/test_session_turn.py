@@ -6,21 +6,27 @@ import pytest
 from ecommerce_agent.routing.router import RouteDecision
 from ecommerce_agent.sessions.bus import SessionBus
 from ecommerce_agent.sessions.factory import POLICY_DENIED_MESSAGE, RoutedSessionAgent
-from ecommerce_agent.sessions.turn import run_turn
+from ecommerce_agent.sessions.turn import _grounding_payload, run_turn
 from ecommerce_agent.threads.messages import ThreadMessage
 from ecommerce_agent.threads.store import InMemoryThreadStore
+from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 
 class FakeAgent:
     async def astream_events(self, inputs: dict, config: dict, version: str) -> AsyncIterator[dict]:
         assert inputs["messages"][0]["content"] == "hello"
         assert version == "v2"
-        yield {"event": "on_tool_start", "name": "inventory_query", "data": {}}
+        yield {
+            "event": "on_tool_start",
+            "name": "inventory_query",
+            "run_id": "inventory",
+            "data": {},
+        }
         yield {
             "event": "on_chat_model_stream",
             "data": {"chunk": SimpleNamespace(content="Inventory looks healthy.")},
         }
-        yield {"event": "on_tool_end", "name": "inventory_query", "data": {}}
+        yield {"event": "on_tool_end", "name": "inventory_query", "run_id": "inventory", "data": {}}
 
 
 class FakeApprovalClient:
@@ -63,6 +69,76 @@ class ApprovalAgent:
         yield {
             "event": "on_chat_model_stream",
             "data": {"chunk": SimpleNamespace(content="Proposed restock.")},
+        }
+
+
+class ApprovalWithDataAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "inventory_query",
+            "run_id": "inventory",
+            "data": {"input": {"sku": "SKU-9"}},
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "inventory_query",
+            "run_id": "inventory",
+            "data": {"output": [{"sku": "SKU-9", "onHand": 2}]},
+        }
+        yield {
+            "event": "on_tool_start",
+            "name": "request_approval",
+            "data": {
+                "input": {
+                    "toolName": "purchase_order_create",
+                    "operationType": "create",
+                }
+            },
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "data": {"output": {"approvalId": "approval-1"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Proposed restock of 25 units.")},
+        }
+
+
+class NumericApprovalWithoutDataAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "request_approval",
+            "data": {
+                "input": {
+                    "toolName": "purchase_order_create",
+                    "operationType": "create",
+                }
+            },
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "data": {"output": {"approvalId": "approval-1"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Proposed restock of 25 units.")},
         }
 
 
@@ -115,6 +191,32 @@ class ChartAgent:
         }
 
 
+class BigEvidenceAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "get_statistics",
+            "run_id": "stats",
+            "data": {"input": {"metric": "sales"}},
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "get_statistics",
+            "run_id": "stats",
+            "data": {"output": "abcdef"},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Total was $12.")},
+        }
+
+
 class RecordingAgent:
     def __init__(self) -> None:
         self.seen_inputs: dict | None = None
@@ -126,6 +228,49 @@ class RecordingAgent:
             "run_id": "final",
             "data": {"chunk": SimpleNamespace(content="answer")},
         }
+
+
+def test_grounding_payload_for_authoritative_answer() -> None:
+    record = TraceRecord(
+        answer="Total was $42,180.",
+        events=[
+            TraceEvent(
+                event_type="tool_call",
+                name="get_statistics",
+                phase="start",
+                tool_call_id="g1",
+            ),
+            TraceEvent(
+                event_type="tool_call",
+                name="get_statistics",
+                phase="end",
+                tool_call_id="g1",
+                result_summary="rows",
+                evidence="rows",
+                args_summary="{}",
+            ),
+        ],
+    )
+
+    payload = _grounding_payload(record)
+
+    assert payload is not None
+    assert payload["authority"] == "authoritative"
+    assert payload["sources"][0]["span_id"] == "g1"
+    assert "evidence" not in payload["sources"][0]
+
+
+def test_grounding_payload_none_for_not_applicable() -> None:
+    assert _grounding_payload(TraceRecord(answer="Hi there.")) is None
+
+
+def test_grounding_payload_can_suppress_source_less_proposal_noise() -> None:
+    record = TraceRecord(answer="Proposed restock of 25 units.")
+
+    assert _grounding_payload(record) is not None
+    assert (
+        _grounding_payload(record, suppress_unverified_without_sources=True) is None
+    )
 
 
 @pytest.mark.asyncio
@@ -149,15 +294,72 @@ async def test_run_turn_publishes_events_and_appends_answer() -> None:
 
     kinds = [event["event"] for event in seen]
     assert "tool" in kinds
+    assert "turn.progress" in kinds
     assert "token" not in kinds
     assert "thread.append" in kinds
     assert kinds[-1] == "done"
+    progress = [event for event in seen if event["event"] == "turn.progress"]
+    assert progress[0] == {
+        "event": "turn.progress",
+        "turn_id": "t1",
+        "step_id": progress[0]["step_id"],
+        "kind": "tool",
+        "label": "Using inventory_query",
+        "status": "running",
+        "detail": "inventory_query",
+        "ts": progress[0]["ts"],
+    }
+    assert progress[1]["step_id"] == progress[0]["step_id"]
+    assert progress[1]["status"] == "done"
+    assert progress[-1]["label"] == "Preparing answer"
 
     messages = await store.list_messages("s1")
     assert [message.type for message in messages] == ["agent_answer"]
     assert messages[0].content == "Inventory looks healthy."
     assert messages[0].turn_id == "t1"
     assert messages[0].actor_id == "agent"
+    assert messages[0].grounding is not None
+    assert messages[0].grounding["authority"] == "authoritative"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_attaches_grounding_to_agent_answer() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=BigEvidenceAgent(),
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].grounding is not None
+    assert messages[0].grounding["authority"] == "authoritative"
+    assert messages[0].grounding["sources"][0]["tool_name"] == "get_statistics"
+    assert "evidence" not in messages[0].grounding["sources"][0]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_passes_evidence_cap_to_capture() -> None:
+    record = await run_turn(
+        agent=BigEvidenceAgent(),
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=InMemoryThreadStore(),
+        bus=SessionBus(),
+        recursion_limit=80,
+        evidence_max_chars=3,
+    )
+
+    stats = next(
+        event for event in record.events if event.name == "get_statistics" and event.phase == "end"
+    )
+    assert stats.evidence == "abc"
 
 
 @pytest.mark.asyncio
@@ -257,18 +459,30 @@ async def test_run_turn_records_route_decision_event() -> None:
         default_specialist="sales-analyst",
     )
 
-    record = await run_turn(
-        agent=agent,
-        message="what were sales last month?",
-        session_id="s1",
-        turn_id="t1",
-        store=InMemoryThreadStore(),
-        bus=SessionBus(),
-        recursion_limit=5,
-    )
+    bus = SessionBus()
+    seen: list[dict] = []
+    async with bus.subscription("s1") as sub:
+        record = await run_turn(
+            agent=agent,
+            message="what were sales last month?",
+            session_id="s1",
+            turn_id="t1",
+            store=InMemoryThreadStore(),
+            bus=bus,
+            recursion_limit=5,
+        )
+        while not sub.queue.empty():
+            seen.append(sub.queue.get_nowait())
 
     kinds = [(event.event_type, event.name) for event in record.events]
     assert ("route_decision", "sales-analyst") in kinds
+    progress = [event for event in seen if event["event"] == "turn.progress"]
+    assert any(
+        event["kind"] == "specialist"
+        and event["status"] == "done"
+        and event["label"] == "sales-analyst selected"
+        for event in progress
+    )
 
 
 @pytest.mark.asyncio
@@ -377,15 +591,19 @@ async def test_run_turn_attaches_chart_artifacts_to_agent_answer() -> None:
     store = InMemoryThreadStore()
     bus = SessionBus()
 
-    await run_turn(
-        agent=ChartAgent(),
-        message="hello",
-        session_id="s1",
-        turn_id="t1",
-        store=store,
-        bus=bus,
-        recursion_limit=80,
-    )
+    seen: list[dict] = []
+    async with bus.subscription("s1") as sub:
+        await run_turn(
+            agent=ChartAgent(),
+            message="hello",
+            session_id="s1",
+            turn_id="t1",
+            store=store,
+            bus=bus,
+            recursion_limit=80,
+        )
+        while not sub.queue.empty():
+            seen.append(sub.queue.get_nowait())
 
     messages = await store.list_messages("s1")
     assert messages[0].content == "Chart generated."
@@ -400,6 +618,8 @@ async def test_run_turn_attaches_chart_artifacts_to_agent_answer() -> None:
             }
         ]
     }
+    progress = [event for event in seen if event["event"] == "turn.progress"]
+    assert any(event["label"] == "Chart generated" for event in progress)
 
 
 @pytest.mark.asyncio
@@ -407,16 +627,20 @@ async def test_run_turn_appends_agent_proposal_for_request_approval() -> None:
     store = InMemoryThreadStore()
     bus = SessionBus()
 
-    await run_turn(
-        agent=ApprovalAgent(),
-        message="restock product 1",
-        session_id="s1",
-        turn_id="t1",
-        store=store,
-        bus=bus,
-        recursion_limit=80,
-        approval_client=FakeApprovalClient(),
-    )
+    seen: list[dict] = []
+    async with bus.subscription("s1") as sub:
+        await run_turn(
+            agent=ApprovalAgent(),
+            message="restock product 1",
+            session_id="s1",
+            turn_id="t1",
+            store=store,
+            bus=bus,
+            recursion_limit=80,
+            approval_client=FakeApprovalClient(),
+        )
+        while not sub.queue.empty():
+            seen.append(sub.queue.get_nowait())
 
     messages = await store.list_messages("s1")
     assert [message.type for message in messages] == ["agent_proposal"]
@@ -426,6 +650,53 @@ async def test_run_turn_appends_agent_proposal_for_request_approval() -> None:
     assert messages[0].content == "Proposed restock."
     assert messages[0].card is not None
     assert messages[0].card["title"] == "Create purchase order"
+    progress = [event for event in seen if event["event"] == "turn.progress"]
+    assert any(event["label"] == "Approval requested" for event in progress)
+    assert any(event["kind"] == "approval" for event in progress)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_attaches_grounding_to_agent_proposal() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=ApprovalWithDataAgent(),
+        message="restock product 1",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+        approval_client=FakeApprovalClient(),
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].type == "agent_proposal"
+    assert messages[0].grounding is not None
+    assert messages[0].grounding["authority"] == "authoritative"
+    assert [source["tool_name"] for source in messages[0].grounding["sources"]] == [
+        "inventory_query"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_suppresses_source_less_proposal_grounding() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=NumericApprovalWithoutDataAgent(),
+        message="restock product 1",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+        approval_client=FakeApprovalClient(),
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].type == "agent_proposal"
+    assert messages[0].grounding is None
 
 
 @pytest.mark.asyncio
@@ -505,17 +776,27 @@ async def test_run_turn_failure_appends_durable_agent_answer() -> None:
 
     store = InMemoryThreadStore()
     bus = SessionBus()
+    seen: list[dict] = []
 
-    await run_turn(
-        agent=ExplodingAgent(),
-        message="hi",
-        session_id="s1",
-        turn_id="t1",
-        store=store,
-        bus=bus,
-        recursion_limit=80,
-    )
+    async with bus.subscription("s1") as sub:
+        await run_turn(
+            agent=ExplodingAgent(),
+            message="hi",
+            session_id="s1",
+            turn_id="t1",
+            store=store,
+            bus=bus,
+            recursion_limit=80,
+        )
+        while not sub.queue.empty():
+            seen.append(sub.queue.get_nowait())
 
     messages = await store.list_messages("s1")
     assert [message.type for message in messages] == ["agent_answer"]
     assert messages[0].status == "failed"
+    progress = [event for event in seen if event["event"] == "turn.progress"]
+    assert progress[-1]["status"] == "failed"
+    assert progress[-1]["label"] == "Unable to complete request"
+    assert any(event["event"] == "error" for event in seen)
+    kinds = [event["event"] for event in seen]
+    assert kinds.index("error") < kinds.index("thread.append")

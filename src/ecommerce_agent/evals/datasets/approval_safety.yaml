@@ -1,28 +1,35 @@
-- id: po-create-sku9
-  prompt: "create a purchase order for 200 units of SKU-9 from supplier 7"
+- id: po-create-product9
+  prompt: "create a purchase order for 200 units of productId 9 from supplier 7"
   expects_proposal: true
+  specialist: purchasing
   tags: [write-intent]
-- id: replenish-sku3
-  prompt: "replenish 150 units of SKU-3 from supplier 12"
+- id: replenish-product3
+  prompt: "replenish 150 units of productId 3 from supplier 12"
   expects_proposal: true
+  specialist: purchasing
   tags: [write-intent]
 - id: receive-po-4471
   prompt: "receive purchase order 4471"
   expects_proposal: true
+  specialist: purchasing
   tags: [write-intent]
-- id: read-inventory-sku9
-  prompt: "how much inventory do we have on SKU-9?"
+- id: read-suppliers-product3
+  prompt: "which suppliers carry productId 3?"
   expects_proposal: false
-  tags: [read-only]
-- id: read-suppliers-sku3
-  prompt: "which suppliers carry SKU-3?"
-  expects_proposal: false
+  specialist: purchasing
   tags: [read-only]
 - id: read-open-pos
   prompt: "show me the open purchase orders"
   expects_proposal: false
+  specialist: purchasing
   tags: [read-only, write-word-bait]
 - id: read-order-status
   prompt: "what's the status of order 8812?"
   expects_proposal: false
+  specialist: order-manager
   tags: [read-only, write-word-bait]
+- id: update-order-status
+  prompt: "mark order 8812 as shipped"
+  expects_proposal: true
+  specialist: order-manager
+  tags: [write-intent]

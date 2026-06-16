@@ -9,7 +9,17 @@ def test_dataset_loads_and_is_well_formed() -> None:
 
     assert len(cases) >= 10
     assert all(isinstance(c, RoutingCase) for c in cases)
-    assert all(c.expected in {"sales-analyst", "order-manager"} for c in cases)
+    assert all(
+        c.expected
+        in {
+            "sales-analyst",
+            "order-manager",
+            "purchasing",
+            "inventory",
+            "customer-insights",
+        }
+        for c in cases
+    )
     assert sum("adversarial" in c.tags for c in cases) >= 4
 
 

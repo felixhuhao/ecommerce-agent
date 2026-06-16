@@ -1,22 +1,27 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { Activity, RefreshCw, Send, Wrench } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Download, RefreshCw, Send, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { StreamStatus } from "../api/useSessionStream";
-import type { ThreadMessage } from "../types";
+import { extFromMime } from "../lib/mime";
+import { foldApprovals } from "../state/approvals";
+import type { ThreadMessage, TurnProgressStep } from "../types";
+import { ConfidenceBadge } from "./ConfidenceBadge";
+import { SourcesExpander } from "./SourcesExpander";
+import { TurnStatusTracker } from "./TurnStatusTracker";
 
 interface ConversationViewProps {
   messages: ThreadMessage[];
   provisionalAnswer: string | null;
-  activeTool: string | null;
   streamStatus: StreamStatus;
   composerDisabled: boolean;
   busyNote: string | null;
   error: string | null;
   onSend: (message: string) => Promise<void> | void;
-  onInspect?: (turnId: string) => void;
-  focusMessageId?: string | null;
-  onFocusMessageHandled?: () => void;
+  onApprove?: (approvalId: string) => Promise<void> | void;
+  onReject?: (approvalId: string, reason: string | undefined) => Promise<void> | void;
+  pendingApprovalId?: string | null;
+  turnProgress?: TurnProgressStep[];
 }
 
 const LABELS: Record<ThreadMessage["type"], string> = {
@@ -50,6 +55,7 @@ interface ImageArtifact {
   id: string;
   src: string;
   title: string;
+  mimeType: string;
   toolName: string | null;
 }
 
@@ -64,43 +70,142 @@ function imageArtifacts(result: Record<string, unknown> | null): ImageArtifact[]
     if (typeof src !== "string" || !src.startsWith("data:image/")) return [];
     const id = artifact.id;
     const title = artifact.title;
+    const mimeType = artifact.mime_type;
     const toolName = artifact.tool_name;
     return [
       {
         id: typeof id === "string" && id.length > 0 ? id : `chart-${index}`,
         src,
         title: typeof title === "string" && title.length > 0 ? title : "Generated chart",
+        mimeType: typeof mimeType === "string" && mimeType.length > 0 ? mimeType : "image/png",
         toolName: typeof toolName === "string" ? toolName : null,
       },
     ];
   });
 }
 
+interface ApprovalState {
+  status: string | null;
+  reason: string | null;
+}
+
+function approvalStates(messages: ThreadMessage[]): Map<string, ApprovalState> {
+  const states = new Map<string, ApprovalState>();
+  for (const approval of foldApprovals(messages)) {
+    states.set(approval.approvalId, {
+      status: approval.status,
+      reason: approval.reason,
+    });
+  }
+  return states;
+}
+
+function inlineCardTitle(message: ThreadMessage) {
+  const title = message.card?.title;
+  if (typeof title === "string" && title.trim()) return title;
+  return message.tool_name ?? "Approval";
+}
+
+function headerStatus(message: ThreadMessage) {
+  if (message.type === "agent_proposal" && message.approval_id && message.card) {
+    return null;
+  }
+  return message.status;
+}
+
+function InlineApprovalCard({
+  message,
+  state,
+  pendingApprovalId,
+  onApprove,
+  onReject,
+}: {
+  message: ThreadMessage;
+  state: ApprovalState | null;
+  pendingApprovalId: string | null;
+  onApprove?: (approvalId: string) => Promise<void> | void;
+  onReject?: (approvalId: string, reason: string | undefined) => Promise<void> | void;
+}) {
+  const [reason, setReason] = useState("");
+  if (message.type !== "agent_proposal" || !message.approval_id || !message.card) {
+    return null;
+  }
+
+  const status = state?.status ?? message.status ?? "pending";
+  const isPending = status === "pending";
+  const approvalId = message.approval_id;
+  const isBusy = pendingApprovalId === approvalId;
+
+  return (
+    <section className="inline-approval" aria-label="Approval card">
+      <div className="inline-approval-head">
+        <div>
+          <span className="inline-approval-kicker">Approval card</span>
+          <strong>{inlineCardTitle(message)}</strong>
+          <code>{approvalId}</code>
+        </div>
+        <span className={`status-pill status-${status}`}>{status}</span>
+      </div>
+      {state?.reason ? (
+        <p className="inline-approval-note">
+          <span>Reason</span>
+          {state.reason}
+        </p>
+      ) : null}
+      {isPending && onApprove && onReject ? (
+        <div className="inline-approval-actions">
+          <input
+            aria-label={`Reject reason for ${approvalId}`}
+            value={reason}
+            onChange={(event) => setReason(event.currentTarget.value)}
+            disabled={isBusy}
+          />
+          <button
+            className="icon-button danger"
+            type="button"
+            onClick={() => onReject(approvalId, reason.trim() || undefined)}
+            disabled={isBusy}
+            title="Reject"
+          >
+            <X size={17} aria-hidden="true" />
+            <span className="sr-only">Reject</span>
+          </button>
+          <button
+            className="icon-button success"
+            type="button"
+            onClick={() => onApprove(approvalId)}
+            disabled={isBusy}
+            title="Approve"
+          >
+            <Check size={17} aria-hidden="true" />
+            <span className="sr-only">Approve</span>
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function ConversationView({
   messages,
   provisionalAnswer,
-  activeTool,
   streamStatus,
   composerDisabled,
   busyNote,
   error,
   onSend,
-  onInspect,
-  focusMessageId,
-  onFocusMessageHandled,
+  onApprove,
+  onReject,
+  pendingApprovalId = null,
+  turnProgress = [],
 }: ConversationViewProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const approvals = useMemo(() => approvalStates(messages), [messages]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
-  }, [messages.length, provisionalAnswer, activeTool, busyNote, error]);
-
-  useEffect(() => {
-    if (!focusMessageId) return;
-    document.querySelector(`[data-message-id="${focusMessageId}"]`)?.scrollIntoView({ block: "center" });
-    onFocusMessageHandled?.();
-  }, [focusMessageId, onFocusMessageHandled]);
+  }, [messages.length, provisionalAnswer, busyNote, error]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -124,12 +229,6 @@ export function ConversationView({
               <span>Reconnecting</span>
             </div>
           ) : null}
-          {activeTool ? (
-            <div className="tool-chip" title="Active tool">
-              <Wrench size={15} aria-hidden="true" />
-              <span>{activeTool}</span>
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -139,6 +238,7 @@ export function ConversationView({
         ) : null}
         {messages.map((message) => {
           const artifacts = imageArtifacts(message.result);
+          const status = headerStatus(message);
           return (
             <article
               className={messageClass(message.type)}
@@ -146,27 +246,44 @@ export function ConversationView({
               data-message-id={message.message_id}
             >
               <header>
-                <span>{LABELS[message.type]}</span>
-                {message.status ? <span className={`status-pill status-${message.status}`}>{message.status}</span> : null}
-                {onInspect && message.turn_id && (message.type === "agent_answer" || message.type === "agent_proposal") ? (
-                  <button
-                    type="button"
-                    className="inspect-button"
-                    onClick={() => onInspect(message.turn_id as string)}
-                  >
-                    <Activity size={13} aria-hidden="true" /> Inspect
-                  </button>
-                ) : null}
+                <div className="message-header-left">
+                  <span>{LABELS[message.type]}</span>
+                  {message.type !== "agent_proposal" && message.grounding ? (
+                    <ConfidenceBadge authority={message.grounding.authority} />
+                  ) : null}
+                </div>
+                {status ? <span className={`status-pill status-${status}`}>{status}</span> : null}
               </header>
               <MessageBody type={message.type} content={message.content} />
+              <InlineApprovalCard
+                message={message}
+                state={message.approval_id ? approvals.get(message.approval_id) ?? null : null}
+                pendingApprovalId={pendingApprovalId}
+                onApprove={onApprove}
+                onReject={onReject}
+              />
+              {message.grounding ? (
+                <SourcesExpander
+                  grounding={message.grounding}
+                />
+              ) : null}
               {artifacts.length > 0 ? (
                 <div className="message-artifacts">
                   {artifacts.map((artifact) => (
                     <figure className="chart-artifact" key={artifact.id}>
                       <img src={artifact.src} alt={artifact.title} />
                       <figcaption>
-                        <span>{artifact.title}</span>
-                        {artifact.toolName ? <span>{artifact.toolName}</span> : null}
+                        <span className="chart-artifact-title">{artifact.title}</span>
+                        <span className="chart-artifact-meta">
+                          {artifact.toolName ? <span>{artifact.toolName}</span> : null}
+                          <a
+                            className="artifact-download"
+                            href={artifact.src}
+                            download={`${artifact.id}.${extFromMime(artifact.mimeType)}`}
+                          >
+                            <Download size={14} aria-hidden="true" /> Download
+                          </a>
+                        </span>
                       </figcaption>
                     </figure>
                   ))}
@@ -186,6 +303,8 @@ export function ConversationView({
         ) : null}
         <div ref={endRef} />
       </div>
+
+      <TurnStatusTracker steps={turnProgress} />
 
       <div className="notice-stack">
         {busyNote ? <div className="notice notice-warn">{busyNote}</div> : null}

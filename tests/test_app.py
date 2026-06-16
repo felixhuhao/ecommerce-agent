@@ -1,5 +1,6 @@
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from ecommerce_agent.auth.models import Actor, Role, User
 from ecommerce_agent.auth.passwords import hash_password
 from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
+from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.store import InMemoryThreadStore
@@ -71,12 +73,7 @@ class HealthySpringAndModelscopeFakeMcpClient:
         if server_name == "spring":
             return spring_mcp_tools()
         if server_name == "modelscope":
-            return [
-                FakeTool("generate_line_chart"),
-                FakeTool("generate_bar_chart"),
-                FakeTool("generate_column_chart"),
-                FakeTool("generate_area_chart"),
-            ]
+            return [FakeTool(name) for name in sorted(VIZ_TOOLS)]
         raise AssertionError(f"unexpected server: {server_name}")
 
 
@@ -85,8 +82,22 @@ class FailingFakeMcpClient:
         raise TimeoutError(f"{server_name} timed out")
 
 
+def _local_mongo_settings() -> dict[str, object]:
+    """Pick up MONGO_URL/MONGO_DB from the local .env so the app/health tests run
+    against the authenticated dev Mongo (slice-11 B1). No credentials live in source."""
+    overrides: dict[str, object] = {}
+    env_path = Path(".env")
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("MONGO_URL="):
+                overrides["mongo_url"] = line.split("=", 1)[1].strip()
+            elif line.startswith("MONGO_DB="):
+                overrides["mongo_db"] = line.split("=", 1)[1].strip()
+    return overrides
+
+
 def make_settings(**overrides: object) -> Settings:
-    return Settings(_env_file=None, **overrides)
+    return Settings(_env_file=None, **{**_local_mongo_settings(), **overrides})
 
 
 TEST_USER = User(
@@ -158,14 +169,27 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     assert spring["sales_analyst_allowed_tool_count"] == 10
     assert "inventory_query" in spring["sales_analyst_allowed_tools"]
     assert "request_approval" not in spring["sales_analyst_allowed_tools"]
-    assert spring["order_manager_allowed_tool_count"] == 6
-    assert spring["order_manager_allowed_tools"] == [
-        "inventory_query",
-        "order_query",
-        "product_query",
+    assert spring["order_manager_allowed_tool_count"] == 2
+    assert spring["order_manager_allowed_tools"] == ["order_query", "request_approval"]
+    assert spring["purchasing_allowed_tool_count"] == 5
+    assert spring["purchasing_allowed_tools"] == [
+        "product_search",
         "purchase_order_query",
         "request_approval",
         "supplier_query",
+        "supplier_top",
+    ]
+    assert spring["inventory_allowed_tool_count"] == 3
+    assert spring["inventory_allowed_tools"] == [
+        "inventory_low_stock",
+        "inventory_query",
+        "product_search",
+    ]
+    assert spring["customer_insights_allowed_tool_count"] == 3
+    assert spring["customer_insights_allowed_tools"] == [
+        "get_statistics",
+        "order_query",
+        "user_query",
     ]
     assert spring["blocked_write_tools"] == [
         "order_update",
@@ -175,6 +199,9 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     assert spring["approval_tools"] == ["request_approval"]
     assert spring["missing_expected_read_tools"] == []
     assert spring["missing_expected_order_manager_tools"] == []
+    assert spring["missing_expected_purchasing_tools"] == []
+    assert spring["missing_expected_inventory_tools"] == []
+    assert spring["missing_expected_customer_insights_tools"] == []
 
 
 def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
@@ -192,13 +219,9 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
     assert body["status"] == "ok"
     modelscope = body["servers"]["modelscope"]
     assert modelscope["status"] == "ok"
-    assert modelscope["tool_count"] == 4
-    assert modelscope["agent_allowed_tool_count"] == 3
-    assert modelscope["agent_allowed_tools"] == [
-        "generate_bar_chart",
-        "generate_column_chart",
-        "generate_line_chart",
-    ]
+    assert modelscope["tool_count"] == len(VIZ_TOOLS)
+    assert modelscope["agent_allowed_tool_count"] == len(VIZ_TOOLS)
+    assert modelscope["agent_allowed_tools"] == sorted(VIZ_TOOLS)
     assert modelscope["missing_expected_viz_tools"] == []
 
 
@@ -398,7 +421,11 @@ def test_session_lifecycle_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_health_reports_components(monkeypatch: pytest.MonkeyPatch) -> None:
     import ecommerce_agent.api.health as health_module
 
-    monkeypatch.setattr(health_module, "probe_sandbox", lambda settings: {"status": "ok"})
+    monkeypatch.setattr(
+        health_module,
+        "probe_sandbox",
+        lambda settings: {"status": "ok", "backend": "remote"},
+    )
 
     app = create_app(settings=make_settings(llm_api_key="k"))
     use_in_memory_stores(app)
@@ -409,8 +436,55 @@ def test_health_reports_components(monkeypatch: pytest.MonkeyPatch) -> None:
     components = body["components"]
     assert components["mongo"]["status"] == "ok"
     assert components["sandbox"]["status"] == "ok"
+    assert components["sandbox"]["backend"] == "remote"
     assert components["model"]["status"] == "ok"
     assert components["model"]["checked"] == "config-only"
+
+
+def test_sandbox_health_probes_remote_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.health as health_module
+
+    seen: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            seen["raised"] = False
+
+    def fake_get(url: str, *, timeout: float) -> Response:
+        seen["url"] = url
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(health_module.httpx, "get", fake_get)
+
+    status = health_module.probe_sandbox(
+        make_settings(
+            sandbox_backend="remote",
+            sandbox_executor_url="http://executor:8000/",
+        )
+    )
+
+    assert status == {"status": "ok", "backend": "remote"}
+    assert seen["url"] == "http://executor:8000/health"
+    assert seen["timeout"] == 1.0
+
+
+def test_sandbox_health_reports_remote_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ecommerce_agent.api.health as health_module
+
+    def fake_get(url: str, *, timeout: float):  # noqa: ANN001
+        raise TimeoutError("nope")
+
+    monkeypatch.setattr(health_module.httpx, "get", fake_get)
+
+    status = health_module.probe_sandbox(
+        make_settings(
+            sandbox_backend="remote",
+            sandbox_executor_url="http://executor:8000",
+        )
+    )
+
+    assert status == {"status": "unavailable", "backend": "remote"}
 
 
 def test_health_model_unconfigured_without_key(monkeypatch: pytest.MonkeyPatch) -> None:

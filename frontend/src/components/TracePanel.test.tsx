@@ -23,6 +23,7 @@ function timeline(overrides: Partial<TraceTimeline> = {}): TraceTimeline {
         duration_ms: 12,
         args_summary: "series",
         result_summary: "data:image/...",
+        evidence: null,
         tokens_in: null,
         tokens_out: null,
         span_id: "x1",
@@ -36,20 +37,23 @@ function timeline(overrides: Partial<TraceTimeline> = {}): TraceTimeline {
 }
 
 const base = {
-  inspectedTurnId: "t1" as string | null,
+  selectedTurnId: "t1" as string | null,
+  turnOptions: [{ turnId: "t1", label: "Latest answer" }],
   isLoading: false,
   isError: false,
   exportHref: "/api/sessions/s1/turns/t1/trace/export",
-  onViewArtifacts: vi.fn(),
+  onSelectTurn: vi.fn(),
   onViewApproval: vi.fn(),
 };
 
 describe("TracePanel", () => {
   it("renders spans, duration and the export link", () => {
     render(<TracePanel {...base} timeline={timeline()} />);
+    expect(screen.getByRole("combobox", { name: "Trace turn" })).toHaveValue("t1");
     expect(screen.getByText("generate_line_chart")).toBeInTheDocument();
     expect(screen.getByText("12 ms")).toBeInTheDocument();
-    expect(screen.getByText("1 spans")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("span")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /JSON/i })).toHaveAttribute(
       "href",
       "/api/sessions/s1/turns/t1/trace/export",
@@ -70,6 +74,7 @@ describe("TracePanel", () => {
               duration_ms: 80,
               args_summary: null,
               result_summary: "answer chunk",
+              evidence: null,
               tokens_in: 12,
               tokens_out: 8,
               span_id: "model-1",
@@ -87,11 +92,10 @@ describe("TracePanel", () => {
     expect(screen.getByText("tokens 12 in / 8 out")).toBeInTheDocument();
   });
 
-  it("links an artifact span to the Artifacts tab", () => {
-    const onViewArtifacts = vi.fn();
-    render(<TracePanel {...base} onViewArtifacts={onViewArtifacts} timeline={timeline()} />);
-    fireEvent.click(screen.getByRole("button", { name: /View in Artifacts/i }));
-    expect(onViewArtifacts).toHaveBeenCalled();
+  it("shows artifact ids on artifact spans", () => {
+    render(<TracePanel {...base} timeline={timeline()} />);
+    fireEvent.click(screen.getByText("generate_line_chart"));
+    expect(screen.getByText(/chart-x1/)).toBeInTheDocument();
   });
 
   it("links an approval span to its specific card by id", () => {
@@ -111,6 +115,7 @@ describe("TracePanel", () => {
               duration_ms: 5,
               args_summary: null,
               result_summary: null,
+              evidence: null,
               tokens_in: null,
               tokens_out: null,
               span_id: "rq",
@@ -126,9 +131,68 @@ describe("TracePanel", () => {
     expect(onViewApproval).toHaveBeenCalledWith("appr-7");
   });
 
-  it("prompts to select a turn when none is inspected", () => {
-    render(<TracePanel {...base} inspectedTurnId={null} timeline={undefined} />);
-    expect(screen.getByText(/Select an answer's Inspect/i)).toBeInTheDocument();
+  it("renders full evidence when a span carries it", () => {
+    render(
+      <TracePanel
+        {...base}
+        timeline={timeline({
+          spans: [
+            {
+              kind: "tool_call",
+              name: "get_statistics",
+              status: "ok",
+              ts: 1,
+              duration_ms: 5,
+              args_summary: null,
+              result_summary: "summary",
+              evidence: "full evidence payload",
+              tokens_in: null,
+              tokens_out: null,
+              span_id: "stats",
+              artifact_id: null,
+              approval_id: null,
+              error_message: null,
+            },
+          ],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("get_statistics"));
+    expect(screen.getByText(/full evidence payload/)).toBeInTheDocument();
+  });
+
+  it("selects a trace turn from the tab-owned selector", () => {
+    const onSelectTurn = vi.fn();
+    render(
+      <TracePanel
+        {...base}
+        onSelectTurn={onSelectTurn}
+        selectedTurnId="t2"
+        turnOptions={[
+          { turnId: "t2", label: "Second answer" },
+          { turnId: "t1", label: "First answer" },
+        ]}
+        timeline={timeline({ turn_id: "t2" })}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Trace turn" }), {
+      target: { value: "t1" },
+    });
+    expect(onSelectTurn).toHaveBeenCalledWith("t1");
+  });
+
+  it("shows an empty state when no completed trace turns exist", () => {
+    render(
+      <TracePanel
+        {...base}
+        selectedTurnId={null}
+        turnOptions={[]}
+        timeline={undefined}
+      />,
+    );
+    expect(screen.getByText(/No completed turns with traces yet/i)).toBeInTheDocument();
   });
 
   it("shows empty-activity and error states", () => {

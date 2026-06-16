@@ -37,20 +37,14 @@ class SpecialistRegistry:
 
 
 def build_specialist_registry() -> SpecialistRegistry:
+    """Build the registry from the authoritative provider list in specialists.providers.
+
+    ``PROVIDERS`` is imported lazily so this module stays importable without pulling
+    in the agent builders / DeepAgents runtime wiring — the descriptor registry is
+    meant to stay lightweight for routing and eval code.
+    """
+    from ecommerce_agent.specialists.providers import PROVIDERS
+
     return SpecialistRegistry(
-        [
-            Specialist(
-                "sales-analyst",
-                (
-                    "read-only sales analytics: querying business data, trends, "
-                    "forecasts, and charts."
-                ),
-                default=True,
-            ),
-            Specialist(
-                "order-manager",
-                "approval-only business writes: purchase orders, replenishment, "
-                "receiving, and order-status changes.",
-            ),
-        ]
+        [Specialist(p.name, p.description, default=p.default) for p in PROVIDERS]
     )

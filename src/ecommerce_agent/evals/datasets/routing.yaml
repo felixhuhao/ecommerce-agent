@@ -8,11 +8,11 @@
   tags: [adversarial, keyword-false-positive]
 - id: buy-more-units
   prompt: we should buy 500 more units of SKU-12 from the cheapest supplier
-  expected: order-manager
+  expected: purchasing
   tags: [adversarial, keyword-false-negative]
 - id: low-stock-reorder
   prompt: stock is low on blue widgets, can you set up a reorder?
-  expected: order-manager
+  expected: purchasing
   tags: [adversarial, keyword-false-negative]
 - id: sales-by-category
   prompt: what were total sales by category last month?
@@ -28,15 +28,15 @@
   tags: [straightforward]
 - id: inventory-snapshot
   prompt: how much inventory do we have on hand right now?
-  expected: sales-analyst
+  expected: inventory
   tags: [straightforward]
 - id: create-po
   prompt: create a purchase order for 200 units of SKU-9
-  expected: order-manager
+  expected: purchasing
   tags: [straightforward]
 - id: receive-po
   prompt: receive purchase order 4471
-  expected: order-manager
+  expected: purchasing
   tags: [straightforward]
 - id: update-order-status
   prompt: mark order 8812 as shipped
@@ -44,5 +44,65 @@
   tags: [straightforward]
 - id: replenish-supplier
   prompt: replenish our stock of SKU-3 from supplier 12
-  expected: order-manager
+  expected: purchasing
   tags: [straightforward]
+# Phase B boundary cases: order <-> purchasing <-> sales-analyst
+- id: cancel-order
+  prompt: cancel order 5012
+  expected: order-manager
+  tags: [boundary]
+- id: order-status-read
+  prompt: what's the status of order 8812?
+  expected: order-manager
+  tags: [boundary]
+- id: po-status-read
+  prompt: what's the status of purchase order 4471?
+  expected: purchasing
+  tags: [boundary]
+- id: top-suppliers
+  prompt: who are our top suppliers by order volume?
+  expected: purchasing
+  tags: [boundary]
+- id: supplier-lead-report
+  prompt: report on supplier lead times and how they affect reorder timing
+  expected: sales-analyst
+  tags: [boundary]
+# Phase C: inventory read specialist
+- id: stock-level-sku
+  prompt: what's the current stock level for SKU-119?
+  expected: inventory
+  tags: [straightforward]
+- id: low-stock-items
+  prompt: which items are below their reorder point right now?
+  expected: inventory
+  tags: [straightforward]
+- id: stockout-risk
+  prompt: which products are at risk of running out of stock this week?
+  expected: inventory
+  tags: [straightforward]
+- id: restock-recommendation
+  prompt: based on current stock levels, what should we consider reordering?
+  expected: inventory
+  tags: [adversarial, keyword-false-negative]
+# Phase C: customer-insights read specialist
+- id: top-customers-spend
+  prompt: who are our top customers by total spend?
+  expected: customer-insights
+  tags: [straightforward]
+- id: repeat-vs-onetime
+  prompt: how many repeat vs one-time buyers did we have last quarter?
+  expected: customer-insights
+  tags: [straightforward]
+# Phase C: get_statistics boundary cases (per-pair subject disambiguation)
+- id: inventory-turnover-trend
+  prompt: chart the inventory turnover rate trend over the last 6 months
+  expected: sales-analyst
+  tags: [boundary, get-statistics-shared]
+- id: customer-segment-ltv
+  prompt: break down customers into segments and analyze their lifetime value
+  expected: customer-insights
+  tags: [boundary, get-statistics-shared]
+- id: customer-order-history
+  prompt: what's customer 88's order history?
+  expected: customer-insights
+  tags: [boundary]

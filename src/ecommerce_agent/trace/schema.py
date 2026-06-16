@@ -29,6 +29,7 @@ class TraceEvent:
     duration_ms: float | None = None
     args_summary: str | None = None
     result_summary: str | None = None
+    evidence: str | None = None
     error_message: str | None = None
     tokens_in: int | None = None
     tokens_out: int | None = None

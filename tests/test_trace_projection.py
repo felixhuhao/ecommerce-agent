@@ -43,6 +43,24 @@ def _record_with_spans() -> TraceRecord:
             artifact={"id": "chart-x1", "src": "data:image/svg+xml,<svg/>"},
             ts=2.01,
         ),
+        TraceEvent(
+            event_type="tool_call",
+            name="get_statistics",
+            phase="start",
+            tool_call_id="g1",
+            args_summary='{"metric":"sales"}',
+            ts=3.0,
+        ),
+        TraceEvent(
+            event_type="tool_call",
+            name="get_statistics",
+            phase="end",
+            tool_call_id="g1",
+            result_summary="sales rows",
+            evidence="full sales evidence",
+            duration_ms=20.0,
+            ts=3.02,
+        ),
     ]
     record.finish()
     return record
@@ -52,11 +70,11 @@ def test_project_timeline_merges_spans_and_drops_artifact_src() -> None:
     timeline = project_timeline(_record_with_spans())
 
     assert timeline["turn_id"] == "t1"
-    assert timeline["span_count"] == 2
+    assert timeline["span_count"] == 3
     assert timeline["tokens_in_total"] == 10
     assert timeline["tokens_out_total"] == 20
 
-    model, tool = timeline["spans"]
+    model, tool, data_tool = timeline["spans"]
     assert model["kind"] == "model_call"
     assert model["args_summary"] == "prompt"
     assert model["result_summary"] == "resp"
@@ -69,6 +87,9 @@ def test_project_timeline_merges_spans_and_drops_artifact_src() -> None:
     assert tool["artifact_id"] == "chart-x1"
     assert "artifact" not in tool
     assert "src" not in tool
+
+    assert data_tool["name"] == "get_statistics"
+    assert data_tool["evidence"] == "full sales evidence"
 
 
 def test_project_timeline_orders_by_ts_and_handles_start_only() -> None:

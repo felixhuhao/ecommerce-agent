@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 from ecommerce_agent.config import Settings
 
+SANDBOX_LABEL = "com.ecommerce-agent.sandbox"
+SANDBOX_NAME_PREFIX = "ecommerce-sandbox-"
+
 
 @dataclass(frozen=True)
 class SandboxLimits:
@@ -49,4 +52,5 @@ def container_run_kwargs(limits: SandboxLimits, name: str) -> dict:
         "nano_cpus": limits.nano_cpus,
         "pids_limit": limits.pids_limit,
         "auto_remove": False,
+        "labels": {SANDBOX_LABEL: "true"},
     }

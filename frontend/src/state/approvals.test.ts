@@ -18,6 +18,7 @@ const m = (overrides: Partial<ThreadMessage>): ThreadMessage => ({
   tool_name: null,
   status: null,
   result: null,
+  grounding: null,
   reason: null,
   ...overrides,
 });

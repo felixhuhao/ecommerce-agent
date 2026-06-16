@@ -1,29 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "./components/AppShell";
+import { AlertCenter } from "./components/AlertCenter";
 import { ApprovalWorkspace } from "./components/ApprovalWorkspace";
-import { ArtifactPanel } from "./components/ArtifactPanel";
 import { ConversationView } from "./components/ConversationView";
 import { HealthPanel } from "./components/HealthPanel";
 import { RightRail, type RailTab } from "./components/RightRail";
 import { SessionSidebar } from "./components/SessionSidebar";
-import { TracePanel } from "./components/TracePanel";
+import { TracePanel, type TraceTurnOption } from "./components/TracePanel";
 import {
   ApiError,
   type Me,
+  acknowledgeAlert,
   approveApproval,
   createSession,
-  getArtifacts,
   getHealth,
   getMe,
   getMcpHealth,
   getThread,
   getTrace,
+  listAlerts,
   login,
   logout,
   listSessions,
   postMessage,
   rejectApproval,
+  runMonitor,
   shouldRetryTrace,
   traceExportUrl,
 } from "./api/client";
@@ -31,10 +33,36 @@ import { useSessionStream } from "./api/useSessionStream";
 import { performApprove, performReject } from "./state/approvalActions";
 import { foldApprovals } from "./state/approvals";
 import { performSend } from "./state/sendMessage";
-import type { ArtifactSummary, SessionSummary } from "./types";
+import type { Alert, SessionSummary, ThreadMessage } from "./types";
 
 const EMPTY_SESSIONS: SessionSummary[] = [];
-const EMPTY_ARTIFACTS: ArtifactSummary[] = [];
+const EMPTY_ALERTS: Alert[] = [];
+
+function traceTurnOptions(messages: ThreadMessage[]): TraceTurnOption[] {
+  const seen = new Set<string>();
+  const questionsByTurn = new Map<string, string>();
+  for (const message of messages) {
+    if (message.type === "user" && message.turn_id) {
+      const question = message.content.trim().replace(/\s+/g, " ");
+      if (question) questionsByTurn.set(message.turn_id, question);
+    }
+  }
+  return messages
+    .filter(
+      (message) =>
+        (message.type === "agent_answer" || message.type === "agent_proposal") && message.turn_id,
+    )
+    .slice()
+    .reverse()
+    .flatMap((message) => {
+      const turnId = message.turn_id as string;
+      if (seen.has(turnId)) return [];
+      seen.add(turnId);
+      const fallback = message.content.trim().replace(/\s+/g, " ");
+      const label = (questionsByTurn.get(turnId) ?? fallback).slice(0, 64);
+      return [{ turnId, label: label || `Turn ${message.seq}` }];
+    });
+}
 
 function isNotFound(error: unknown) {
   return isApiStatus(error, 404);
@@ -171,16 +199,18 @@ function OperatorConsole({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [alertActionError, setAlertActionError] = useState<string | null>(null);
+  const [alertRunNote, setAlertRunNote] = useState<string | null>(null);
   const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null);
+  const [pendingAlertId, setPendingAlertId] = useState<string | null>(null);
   const [pendingSendSessionId, setPendingSendSessionId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<RailTab>("approvals");
-  const [inspectedTurnId, setInspectedTurnId] = useState<string | null>(null);
-  const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
+  const [selectedTraceTurnId, setSelectedTraceTurnId] = useState<string | null>(null);
   const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const pendingSendSessionIdRef = useRef<string | null>(null);
   const busyNoteTimeoutRef = useRef<number | null>(null);
-  const wasInFlight = useRef(false);
+  const canManageAlerts = actor.role === "operator";
   activeIdRef.current = activeId;
   pendingSendSessionIdRef.current = pendingSendSessionId;
 
@@ -202,21 +232,23 @@ function OperatorConsole({
     refetchInterval: 10000,
     retry: false,
   });
-  const artifactsQuery = useQuery({
-    queryKey: ["artifacts", activeId],
-    queryFn: () => getArtifacts(activeId as string),
-    enabled: !!activeId,
-    retry: false,
-  });
   const traceQuery = useQuery({
-    queryKey: ["trace", activeId, inspectedTurnId],
-    queryFn: () => getTrace(activeId as string, inspectedTurnId as string),
-    enabled: activeTab === "trace" && !!activeId && !!inspectedTurnId,
+    queryKey: ["trace", activeId, selectedTraceTurnId],
+    queryFn: () => getTrace(activeId as string, selectedTraceTurnId as string),
+    enabled: activeTab === "trace" && !!activeId && !!selectedTraceTurnId,
     retry: shouldRetryTrace,
     retryDelay: 400,
   });
+  const alertsQuery = useQuery({
+    queryKey: ["alerts"],
+    queryFn: () => listAlerts(),
+    enabled: canManageAlerts,
+    refetchInterval: canManageAlerts ? 30000 : false,
+    retry: false,
+  });
 
   const sessions = sessionsQuery.data ?? EMPTY_SESSIONS;
+  const alerts = canManageAlerts ? alertsQuery.data ?? EMPTY_ALERTS : EMPTY_ALERTS;
 
   useEffect(() => {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].session_id);
@@ -224,6 +256,8 @@ function OperatorConsole({
 
   const { state, streamStatus, markTurnStarted, applyThread } = useSessionStream(activeId);
   const approvals = useMemo(() => foldApprovals(state.messages), [state.messages]);
+  const traceTurns = useMemo(() => traceTurnOptions(state.messages), [state.messages]);
+  const openAlertCount = alerts.filter((alert) => alert.status === "open").length;
 
   const handleAuthExpired = useCallback(() => {
     applyThread([]);
@@ -233,18 +267,35 @@ function OperatorConsole({
   }, [applyThread, onUnauthorized]);
 
   useEffect(() => {
-    setInspectedTurnId(null);
-    setFocusMessageId(null);
+    setSelectedTraceTurnId(null);
     setFocusApprovalId(null);
   }, [activeId]);
 
   useEffect(() => {
-    const inFlight = state.inFlightTurnId !== null;
-    if (wasInFlight.current && !inFlight && activeIdRef.current) {
-      queryClient.invalidateQueries({ queryKey: ["artifacts", activeIdRef.current] });
+    if (traceTurns.length === 0) {
+      if (selectedTraceTurnId !== null) setSelectedTraceTurnId(null);
+      return;
     }
-    wasInFlight.current = inFlight;
-  }, [state.inFlightTurnId, queryClient]);
+    if (!selectedTraceTurnId || !traceTurns.some((turn) => turn.turnId === selectedTraceTurnId)) {
+      setSelectedTraceTurnId(traceTurns[0].turnId);
+    }
+  }, [selectedTraceTurnId, traceTurns]);
+
+  useEffect(() => {
+    if (!canManageAlerts && activeTab === "alerts") setActiveTab("approvals");
+  }, [activeTab, canManageAlerts]);
+
+  useEffect(() => {
+    if (!canManageAlerts) return;
+    if (typeof EventSource === "undefined") return;
+    const events = new EventSource("/api/alerts/stream", { withCredentials: true });
+    const invalidateAlerts = () => {
+      void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    };
+    events.addEventListener("alert.created", invalidateAlerts);
+    events.addEventListener("alert.updated", invalidateAlerts);
+    return () => events.close();
+  }, [canManageAlerts, queryClient]);
 
   const clearBusyNoteTimeout = useCallback(() => {
     if (busyNoteTimeoutRef.current !== null) {
@@ -277,14 +328,14 @@ function OperatorConsole({
   useEffect(() => {
     const errors = [
       sessionsQuery.error,
-      artifactsQuery.error,
       traceQuery.error,
       createMutation.error,
+      alertsQuery.error,
     ];
     if (errors.some(isUnauthorized)) handleAuthExpired();
   }, [
-    artifactsQuery.error,
     createMutation.error,
+    alertsQuery.error,
     handleAuthExpired,
     sessionsQuery.error,
     traceQuery.error,
@@ -395,6 +446,52 @@ function OperatorConsole({
     [activeId, handleAuthExpired, reconcileThread],
   );
 
+  const runMonitorMutation = useMutation({
+    mutationFn: runMonitor,
+    onMutate: () => {
+      setAlertActionError(null);
+      setAlertRunNote(null);
+    },
+    onSuccess: async (result) => {
+      if (result.status === "already_running") {
+        setAlertRunNote("Monitor is already running.");
+      } else {
+        const created = result.created_count ?? 0;
+        const skipped = result.skipped_count ?? 0;
+        setAlertRunNote(`Monitor complete. Created ${created}; skipped ${skipped}.`);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    },
+    onError: (error) => {
+      if (isUnauthorized(error)) {
+        handleAuthExpired();
+        return;
+      }
+      setAlertActionError(error instanceof Error ? error.message : "Monitor run failed");
+    },
+  });
+
+  const acknowledgeAlertMutation = useMutation({
+    mutationFn: acknowledgeAlert,
+    onMutate: (alertId) => {
+      setPendingAlertId(alertId);
+      setAlertActionError(null);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    },
+    onError: (error) => {
+      if (isUnauthorized(error)) {
+        handleAuthExpired();
+        return;
+      }
+      setAlertActionError(error instanceof Error ? error.message : "Acknowledge failed");
+    },
+    onSettled: () => {
+      setPendingAlertId(null);
+    },
+  });
+
   const handleSelectSession = useCallback((sessionId: string) => {
     setActiveId(sessionId);
     setActionError(null);
@@ -402,26 +499,9 @@ function OperatorConsole({
     setBusyNote(null);
   }, [clearBusyNoteTimeout]);
 
-  const handleInspect = useCallback((turnId: string) => {
-    setInspectedTurnId(turnId);
-    setActiveTab("trace");
-  }, []);
-
   const handleViewApproval = useCallback((approvalId: string) => {
     setActiveTab("approvals");
     setFocusApprovalId(approvalId);
-  }, []);
-
-  const handleViewArtifacts = useCallback(() => {
-    setActiveTab("artifacts");
-  }, []);
-
-  const handleJumpToMessage = useCallback((messageId: string) => {
-    setFocusMessageId(messageId);
-  }, []);
-
-  const handleFocusMessageHandled = useCallback(() => {
-    setFocusMessageId(null);
   }, []);
 
   const handleFocusApprovalHandled = useCallback(() => {
@@ -459,7 +539,6 @@ function OperatorConsole({
         <ConversationView
           messages={state.messages}
           provisionalAnswer={state.inFlightTurnId ? state.tokenBuffer : null}
-          activeTool={state.activeTool}
           streamStatus={streamStatus}
           composerDisabled={
             !activeId ||
@@ -469,9 +548,10 @@ function OperatorConsole({
           busyNote={busyNote}
           error={state.error}
           onSend={handleSend}
-          onInspect={handleInspect}
-          focusMessageId={focusMessageId}
-          onFocusMessageHandled={handleFocusMessageHandled}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          pendingApprovalId={pendingApprovalId}
+          turnProgress={state.turnProgress}
         />
       }
       rail={
@@ -479,6 +559,21 @@ function OperatorConsole({
           activeTab={activeTab}
           onTabChange={setActiveTab}
           approvalCount={approvals.filter((approval) => approval.status === "pending").length}
+          alertCount={openAlertCount}
+          showAlerts={canManageAlerts}
+          alerts={
+            <AlertCenter
+              alerts={alerts}
+              isLoading={alertsQuery.isLoading}
+              isError={alertsQuery.isError}
+              isRunning={runMonitorMutation.isPending}
+              isAcknowledgingId={pendingAlertId}
+              actionError={alertActionError}
+              runNote={alertRunNote}
+              onRun={() => runMonitorMutation.mutate()}
+              onAcknowledge={(alertId) => acknowledgeAlertMutation.mutate(alertId)}
+            />
+          }
           approvals={
             <ApprovalWorkspace
               approvals={approvals}
@@ -490,22 +585,19 @@ function OperatorConsole({
               onFocusApprovalHandled={handleFocusApprovalHandled}
             />
           }
-          artifacts={
-            <ArtifactPanel
-              artifacts={artifactsQuery.data ?? EMPTY_ARTIFACTS}
-              isLoading={artifactsQuery.isLoading}
-              isError={artifactsQuery.isError}
-              onJumpToMessage={handleJumpToMessage}
-            />
-          }
           trace={
             <TracePanel
               timeline={traceQuery.data}
-              inspectedTurnId={inspectedTurnId}
+              selectedTurnId={selectedTraceTurnId}
+              turnOptions={traceTurns}
               isLoading={traceQuery.isLoading}
               isError={traceQuery.isError}
-              exportHref={activeId && inspectedTurnId ? traceExportUrl(activeId, inspectedTurnId) : null}
-              onViewArtifacts={handleViewArtifacts}
+              exportHref={
+                activeId && selectedTraceTurnId
+                  ? traceExportUrl(activeId, selectedTraceTurnId)
+                  : null
+              }
+              onSelectTurn={setSelectedTraceTurnId}
               onViewApproval={handleViewApproval}
             />
           }

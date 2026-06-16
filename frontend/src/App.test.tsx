@@ -68,6 +68,7 @@ function threadMessage(overrides: Partial<ThreadMessage> = {}): ThreadMessage {
     tool_name: null,
     status: null,
     result: null,
+    grounding: null,
     reason: null,
     ...overrides,
   };
@@ -282,9 +283,9 @@ describe("App", () => {
       (source) => source.url === "/api/sessions/s1/stream",
     );
     act(() => firstStream?.emit("thread.append", { message: staleProposal }));
-    expect(await screen.findByText("approval-1")).toBeInTheDocument();
+    expect(await screen.findAllByText("approval-1")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0]);
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/sessions/s1/approvals/approval-1/approve",
@@ -303,7 +304,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("approval-1")).not.toBeInTheDocument());
   });
 
-  it("inspecting an answer opens its trace in the rail", async () => {
+  it("Trace tab defaults to the latest completed agent turn", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const sessions: SessionSummary[] = [
       {
@@ -319,9 +320,6 @@ describe("App", () => {
       if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
-      if (url === "/api/sessions/s1/artifacts") {
-        return jsonResponse({ session_id: "s1", artifacts: [] });
-      }
       if (url === "/api/sessions/s1/turns/turn-1/trace") {
         return jsonResponse({
           trace_id: "tr",
@@ -342,6 +340,7 @@ describe("App", () => {
               duration_ms: 3,
               args_summary: null,
               result_summary: null,
+              evidence: null,
               tokens_in: null,
               tokens_out: null,
               span_id: "x",
@@ -380,7 +379,18 @@ describe("App", () => {
     act(() =>
       stream?.emit("thread.append", {
         message: threadMessage({
+          message_id: "u1",
+          type: "user",
+          content: "Show me sales for the last 30 days",
+          turn_id: "turn-1",
+        }),
+      }),
+    );
+    act(() =>
+      stream?.emit("thread.append", {
+        message: threadMessage({
           message_id: "m1",
+          seq: 2,
           type: "agent_answer",
           content: "done",
           turn_id: "turn-1",
@@ -388,12 +398,19 @@ describe("App", () => {
       }),
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /Inspect/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Trace" }));
+    expect(screen.getByRole("combobox", { name: "Trace turn" })).toHaveTextContent(
+      "Show me sales for the last 30 days",
+    );
     expect(await screen.findByText("order_query")).toBeInTheDocument();
   });
 
-  it("refetches artifacts when a running turn finishes", async () => {
+  it("keeps the active rail tab when a pending proposal arrives inline", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
     const sessions: SessionSummary[] = [
       {
         session_id: "s1",
@@ -403,19 +420,11 @@ describe("App", () => {
         message_count: 0,
       },
     ];
-    let artifactFetches = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/me") return jsonResponse(AUTH_ME);
       if (url === "/api/sessions") return jsonResponse({ sessions });
       if (url === "/api/sessions/s1/thread") return jsonResponse({ messages: [] });
-      if (url === "/api/sessions/s1/artifacts") {
-        artifactFetches += 1;
-        return jsonResponse({ session_id: "s1", artifacts: [] });
-      }
-      if (url === "/api/sessions/s1/messages" && init?.method === "POST") {
-        return jsonResponse({ turn_id: "turn-1", user_message_id: "m-user" }, 202);
-      }
       if (url === "/health") {
         return jsonResponse({
           status: "ok",
@@ -435,20 +444,34 @@ describe("App", () => {
 
     renderApp();
 
-    await waitFor(() => expect(artifactFetches).toBe(1));
     await waitFor(() =>
       expect(FakeEventSource.sources.some((source) => source.url === "/api/sessions/s1/stream")).toBe(
         true,
       ),
     );
-
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "make chart" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/messages", expect.anything()));
+    fireEvent.click(screen.getByRole("tab", { name: "Trace" }));
+    expect(screen.getByRole("tab", { name: "Trace" })).toHaveAttribute("aria-selected", "true");
 
     const stream = FakeEventSource.sources.find((source) => source.url === "/api/sessions/s1/stream");
-    act(() => stream?.emit("done", { turn_id: "turn-1" }));
+    act(() =>
+      stream?.emit("thread.append", {
+        message: threadMessage({
+          message_id: "proposal-1",
+          seq: 2,
+          type: "agent_proposal",
+          content: "Create a purchase order",
+          approval_id: "approval-1",
+          card: { title: "Create purchase order", totalCost: 9000 },
+          tool_name: "purchase_order_create",
+          status: "pending",
+        }),
+      }),
+    );
 
-    await waitFor(() => expect(artifactFetches).toBeGreaterThanOrEqual(2));
+    expect(screen.getByRole("tab", { name: "Trace" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Approval card")).toBeInTheDocument();
+    expect(screen.getByText("Create purchase order")).toBeInTheDocument();
+    expect(screen.getByText("approval-1")).toBeInTheDocument();
   });
+
 });

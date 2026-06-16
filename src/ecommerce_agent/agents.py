@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from deepagents.middleware._tool_exclusion import _ToolExclusionMiddleware
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -18,19 +19,46 @@ _ANALYST_DESCRIPTION = (
 )
 
 _ORDER_MANAGER_DESCRIPTION = (
-    "Approval-only order manager: reads orders, inventory, suppliers, and purchase "
-    "orders, then requests human approval for proposed business writes."
+    "Approval-only order manager: reads customer-order status, then requests "
+    "human approval for proposed order-status writes (ship, cancel, update)."
+)
+
+_INVENTORY_DESCRIPTION = (
+    "Read-only inventory manager: checks stock levels, identifies low-stock "
+    "items, and recommends reordering without executing writes."
+)
+
+_CUSTOMER_INSIGHTS_DESCRIPTION = (
+    "Read-only customer insights: analyzes customer behavior, segments, "
+    "lifetime value, and customer order history."
 )
 
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
+_PLANNING_EXCLUDED_TOOLS = frozenset({"task", "write_todos"})
+_NON_ANALYST_EXCLUDED_TOOLS = frozenset(
+    {
+        *_PLANNING_EXCLUDED_TOOLS,
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob",
+        "grep",
+        "execute",
+    }
+)
+_MONITOR_CAUSE_EXCLUDED_TOOLS = _NON_ANALYST_EXCLUDED_TOOLS
 
 
-def _reliability_middleware() -> list[Any]:
-    return [
+def _reliability_middleware(excluded_tools: frozenset[str] = frozenset()) -> list[Any]:
+    middleware: list[Any] = [
         ModelCallLimitMiddleware(run_limit=_MAX_MODEL_CALLS_PER_RUN, exit_behavior="end"),
         ToolCallLimitMiddleware(run_limit=_MAX_TOOL_CALLS_PER_RUN, exit_behavior="end"),
     ]
+    if excluded_tools:
+        middleware.append(_ToolExclusionMiddleware(excluded=excluded_tools))
+    return middleware
 
 
 def build_sales_analyst(
@@ -48,7 +76,7 @@ def build_sales_analyst(
         tools,
         system_prompt=get_prompt("sales_analyst"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_PLANNING_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
     )
@@ -66,9 +94,83 @@ def build_order_manager(
         list(order_manager_tools),
         system_prompt=get_prompt("order_manager"),
         subagents=[],
-        middleware=_reliability_middleware(),
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
         backend=backend,
+    )
+
+
+def build_purchasing(
+    model: BaseChatModel,
+    *,
+    purchasing_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the procurement specialist: supplier/PO reads + approval-only writes."""
+    return build_agent(
+        model,
+        list(purchasing_tools),
+        system_prompt=get_prompt("purchasing"),
+        subagents=[],
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
+        skills=[],
+        backend=backend,
+    )
+
+
+def build_inventory(
+    model: BaseChatModel,
+    *,
+    inventory_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the read-only inventory specialist: stock health + reorder flags."""
+    return build_agent(
+        model,
+        list(inventory_tools),
+        system_prompt=get_prompt("inventory"),
+        subagents=[],
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
+        skills=[],
+        backend=backend,
+    )
+
+
+def build_customer_insights(
+    model: BaseChatModel,
+    *,
+    customer_insights_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the read-only customer insights specialist: customer analytics."""
+    return build_agent(
+        model,
+        list(customer_insights_tools),
+        system_prompt=get_prompt("customer_insights"),
+        subagents=[],
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
+        skills=[],
+        backend=backend,
+    )
+
+
+def build_monitor_cause_agent(
+    model: BaseChatModel,
+    *,
+    spring_read_tools: Sequence[BaseTool],
+) -> Any:
+    """Build the read-only cause explainer for proactive alerts."""
+    return build_agent(
+        model,
+        list(spring_read_tools),
+        system_prompt=get_prompt("monitor_cause"),
+        subagents=[],
+        middleware=[
+            *_reliability_middleware(),
+            _ToolExclusionMiddleware(excluded=_MONITOR_CAUSE_EXCLUDED_TOOLS),
+        ],
+        skills=[],
+        backend=None,
     )
 
 

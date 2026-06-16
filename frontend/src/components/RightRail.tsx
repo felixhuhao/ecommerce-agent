@@ -1,20 +1,22 @@
 import type { ReactNode } from "react";
 
-export type RailTab = "approvals" | "artifacts" | "trace" | "health";
+export type RailTab = "alerts" | "approvals" | "trace" | "health";
 
 interface RightRailProps {
   activeTab: RailTab;
   onTabChange: (tab: RailTab) => void;
   approvalCount: number;
+  alertCount: number;
+  showAlerts?: boolean;
+  alerts: ReactNode;
   approvals: ReactNode;
-  artifacts: ReactNode;
   trace: ReactNode;
   health: ReactNode;
 }
 
 const TABS: { id: RailTab; label: string }[] = [
+  { id: "alerts", label: "Alerts" },
   { id: "approvals", label: "Approvals" },
-  { id: "artifacts", label: "Artifacts" },
   { id: "trace", label: "Trace" },
   { id: "health", label: "Health" },
 ];
@@ -23,16 +25,20 @@ export function RightRail({
   activeTab,
   onTabChange,
   approvalCount,
+  alertCount,
+  showAlerts = true,
+  alerts,
   approvals,
-  artifacts,
   trace,
   health,
 }: RightRailProps) {
-  const panels: Record<RailTab, ReactNode> = { approvals, artifacts, trace, health };
+  const panels: Record<RailTab, ReactNode> = { alerts, approvals, trace, health };
+  const tabs = showAlerts ? TABS : TABS.filter((tab) => tab.id !== "alerts");
+
   return (
     <div className="rail-tabbed">
       <div className="rail-tabs" role="tablist">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -42,6 +48,9 @@ export function RightRail({
             onClick={() => onTabChange(tab.id)}
           >
             {tab.label}
+            {tab.id === "alerts" && alertCount > 0 ? (
+              <span className="rail-tab-badge">{alertCount}</span>
+            ) : null}
             {tab.id === "approvals" && approvalCount > 0 ? (
               <span className="rail-tab-badge">{approvalCount}</span>
             ) : null}

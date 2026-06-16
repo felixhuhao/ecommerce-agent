@@ -1,16 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  acknowledgeAlert,
   approveApproval,
   createSession,
-  getArtifacts,
   getMe,
   getMcpHealth,
   getTrace,
+  listAlerts,
   listSessions,
   login,
   logout,
   postMessage,
+  runMonitor,
   shouldRetryTrace,
   traceExportUrl,
 } from "./client";
@@ -147,26 +149,68 @@ describe("api client", () => {
     await expect(getTrace("s1", "missing")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("getArtifacts returns the artifacts array", async () => {
+  it("listAlerts returns alerts from the alert center endpoint", async () => {
     mockFetch(200, {
-      session_id: "s1",
-      artifacts: [
+      alerts: [
         {
-          id: "c0",
-          kind: "image",
-          mime_type: "image/png",
-          src: "data:image/png;base64,AA",
-          tool_name: "generate_bar_chart",
-          turn_id: "t1",
-          trace_id: "tr",
+          alert_id: "a1",
+          check_name: "low_stock",
+          dedupe_key: "low_stock:SKU-9",
+          title: "Low stock",
+          severity: "warning",
+          status: "open",
+          metric: "inventory",
+          value: 12,
+          threshold: 50,
+          entities: {},
+          cause: null,
+          grounding: { authority: "authoritative", sources: [], diagnostic: null },
           created_at: "x",
-          message_id: "m1",
+          updated_at: "x",
+          acknowledged_at: null,
+          acknowledged_by: null,
         },
       ],
     });
 
-    const artifacts = await getArtifacts("s1");
-    expect(artifacts[0].id).toBe("c0");
+    const alerts = await listAlerts("open");
+    expect(alerts[0].alert_id).toBe("a1");
+    expect(fetch).toHaveBeenCalledWith("/api/alerts?status=open", { credentials: "include" });
+  });
+
+  it("acknowledgeAlert posts to the alert endpoint", async () => {
+    mockFetch(200, {
+      alert: {
+        alert_id: "a1",
+        check_name: "low_stock",
+        dedupe_key: "low_stock:SKU-9",
+        title: "Low stock",
+        severity: "warning",
+        status: "acknowledged",
+        metric: "inventory",
+        value: 12,
+        threshold: 50,
+        entities: {},
+        cause: null,
+        grounding: { authority: "authoritative", sources: [], diagnostic: null },
+        created_at: "x",
+        updated_at: "x",
+        acknowledged_at: "x",
+        acknowledged_by: "op1",
+      },
+    });
+
+    const alert = await acknowledgeAlert("a1");
+    expect(alert.status).toBe("acknowledged");
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/a1/acknowledge", {
+      method: "POST",
+      credentials: "include",
+    });
+  });
+
+  it("runMonitor treats already-running 409 as a result", async () => {
+    mockFetch(409, { detail: { status: "already_running" } });
+    await expect(runMonitor()).resolves.toEqual({ status: "already_running" });
   });
 
   it("traceExportUrl builds the export path", () => {

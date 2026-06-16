@@ -11,6 +11,7 @@ from ecommerce_agent.sessions.factory import (
     build_session_runtime,
 )
 from ecommerce_agent.sessions.registry import RuntimeActor
+from ecommerce_agent.specialists import providers as providers_module
 
 
 class FakeAgent:
@@ -60,6 +61,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
             self.calls.append(server_name)
             return [
                 FakeTool("product_query"),
+                FakeTool("product_search"),
                 FakeTool("order_query"),
                 FakeTool("request_approval"),
             ]
@@ -92,13 +94,35 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         captured["direct_order_manager_backend"] = backend
         return FakeAgent("ORDER_MANAGER")
 
+    def fake_build_purchasing(model, *, purchasing_tools, backend):
+        captured["direct_purchasing_tools"] = [tool.name for tool in purchasing_tools]
+        captured["direct_purchasing_backend"] = backend
+        return FakeAgent("PURCHASING")
+
+    def fake_build_inventory(model, *, inventory_tools, backend):
+        captured["direct_inventory_tools"] = [tool.name for tool in inventory_tools]
+        captured["direct_inventory_backend"] = backend
+        return FakeAgent("INVENTORY")
+
+    def fake_build_customer_insights(model, *, customer_insights_tools, backend):
+        captured["direct_customer_insights_tools"] = [tool.name for tool in customer_insights_tools]
+        captured["direct_customer_insights_backend"] = backend
+        return FakeAgent("CUSTOMER_INSIGHTS")
+
     monkeypatch.setattr(factory_module, "build_mcp_client", fake_build_mcp_client)
     monkeypatch.setattr(factory_module, "build_session_sandbox", fake_build_sandbox)
-    monkeypatch.setattr(factory_module, "build_sales_analysis_staging_tool", fake_build_stage_tool)
+    monkeypatch.setattr(
+        providers_module, "build_sales_analysis_staging_tool", fake_build_stage_tool
+    )
     monkeypatch.setattr(factory_module, "get_primary_model", lambda settings: object())
     monkeypatch.setattr(factory_module, "get_classifier_model", lambda settings: object())
-    monkeypatch.setattr(factory_module, "build_sales_analyst", fake_build_sales_analyst)
-    monkeypatch.setattr(factory_module, "build_order_manager", fake_build_order_manager)
+    monkeypatch.setattr(providers_module, "build_sales_analyst", fake_build_sales_analyst)
+    monkeypatch.setattr(providers_module, "build_order_manager", fake_build_order_manager)
+    monkeypatch.setattr(providers_module, "build_purchasing", fake_build_purchasing)
+    monkeypatch.setattr(providers_module, "build_inventory", fake_build_inventory)
+    monkeypatch.setattr(
+        providers_module, "build_customer_insights", fake_build_customer_insights
+    )
 
     settings = Settings(_env_file=None, llm_api_key="k", spring_mcp_user_id="9")
 
@@ -113,16 +137,23 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["session_id"] == "sess-1"
     assert captured["user_id"] == "42"
     assert captured["sandbox_session_id"] == "sess-1"
-    assert captured["stage_tool_inputs"] == ["product_query", "order_query"]
+    assert captured["stage_tool_inputs"] == ["product_query", "product_search", "order_query"]
     assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]
-    assert captured["direct_analyst_tools"] == ["product_query", "order_query"]
+    assert captured["direct_analyst_tools"] == ["product_query", "product_search", "order_query"]
     assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
     assert captured["direct_order_manager_tools"] == [
-        "product_query",
         "order_query",
         "request_approval",
     ]
     assert captured["direct_order_manager_backend"] is captured["direct_analyst_backend"]
+    # purchasing owns product identity + supplier/PO reads + request_approval.
+    assert captured["direct_purchasing_tools"] == ["product_search", "request_approval"]
+    assert captured["direct_purchasing_backend"] is captured["direct_analyst_backend"]
+    assert captured["direct_inventory_tools"] == ["product_search"]
+    assert captured["direct_inventory_backend"] is captured["direct_analyst_backend"]
+    # customer-insights: order_query matches; product_query and request_approval don't
+    assert captured["direct_customer_insights_tools"] == ["order_query"]
+    assert captured["direct_customer_insights_backend"] is captured["direct_analyst_backend"]
     assert mcp_client.calls == ["spring"]
 
 

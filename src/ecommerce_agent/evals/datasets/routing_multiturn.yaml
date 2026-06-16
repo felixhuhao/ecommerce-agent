@@ -1,6 +1,6 @@
 - id: mt-confirm-po-500
   prompt: "yes, do that for 500 units"
-  expected: order-manager
+  expected: purchasing
   tags: [multi-turn, follow-up-confirm]
   history:
     - role: user
@@ -9,7 +9,7 @@
       content: "SKU-12 is low. I can propose a purchase order to replenish it."
 - id: mt-confirm-submit
   prompt: "go ahead and submit it"
-  expected: order-manager
+  expected: purchasing
   tags: [multi-turn, follow-up-confirm]
   history:
     - role: user
@@ -18,7 +18,7 @@
       content: "Proposed purchase order PO #4471 for SKU-9."
 - id: mt-replenish-same
   prompt: "do the same for SKU-7"
-  expected: order-manager
+  expected: purchasing
   tags: [multi-turn, follow-up-reference]
   history:
     - role: user

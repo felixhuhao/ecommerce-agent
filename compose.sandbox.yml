@@ -1,0 +1,37 @@
+# Sandbox executor service (design doc §6.2/§6.5/§6.6).
+#
+# Start the full local stack with:
+#   docker compose -f docker-compose.yml -f compose.chart-mcp.yml -f compose.sandbox.yml up -d
+#
+# The host agent reaches it via SANDBOX_EXECUTOR_URL=http://localhost:${SANDBOX_EXECUTOR_PORT:-8006}
+# and authenticates with SANDBOX_EXECUTOR_TOKEN (shared bearer, set in .env).
+services:
+  sandbox-executor:
+    build:
+      context: ./sandbox_executor
+    image: ecommerce-agent-sandbox-executor:dev
+    container_name: ecommerce-agent-sandbox-executor
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN}
+      SANDBOX_EXECUTE_TIMEOUT_SECONDS: ${SANDBOX_EXECUTE_TIMEOUT_SECONDS:-30}
+      SESSION_IDLE_TTL_SECONDS: ${SESSION_IDLE_TTL_SECONDS:-1800}
+    ports:
+      - "127.0.0.1:${SANDBOX_EXECUTOR_PORT:-8006}:8000"
+    volumes:
+      - sandbox-workspaces:/workspaces
+    networks:
+      - sandbox-net
+    restart: unless-stopped
+
+volumes:
+  sandbox-workspaces:
+
+networks:
+  sandbox-net:
+    driver: bridge
+    # Deliberately NOT `internal: true`: that silently breaks published ports on
+    # Docker Desktop (verified), so the host app could not reach the executor.

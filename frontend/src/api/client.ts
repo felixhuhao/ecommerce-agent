@@ -1,5 +1,5 @@
 import type {
-  ArtifactSummary,
+  Alert,
   HealthStatus,
   McpHealth,
   SessionDetail,
@@ -128,11 +128,33 @@ export async function getTrace(sessionId: string, turnId: string): Promise<Trace
   return json(await apiFetch(`/api/sessions/${sessionId}/turns/${turnId}/trace`));
 }
 
-export async function getArtifacts(sessionId: string): Promise<ArtifactSummary[]> {
-  const body = await json<{ artifacts: ArtifactSummary[] }>(
-    await apiFetch(`/api/sessions/${sessionId}/artifacts`),
+export async function listAlerts(status?: string): Promise<Alert[]> {
+  const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+  const body = await json<{ alerts: Alert[] }>(await apiFetch(`/api/alerts${suffix}`));
+  return body.alerts;
+}
+
+export async function acknowledgeAlert(alertId: string): Promise<Alert> {
+  const body = await json<{ alert: Alert }>(
+    await apiFetch(`/api/alerts/${alertId}/acknowledge`, { method: "POST" }),
   );
-  return body.artifacts;
+  return body.alert;
+}
+
+export interface MonitorRunResult {
+  status: string;
+  created_count?: number;
+  skipped_count?: number;
+  errors?: { check: string; error: string }[];
+}
+
+export async function runMonitor(): Promise<MonitorRunResult> {
+  const res = await apiFetch("/api/monitor/run", { method: "POST" });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({ detail: { status: "already_running" } }));
+    return body.detail ?? { status: "already_running" };
+  }
+  return json<MonitorRunResult>(res);
 }
 
 export function traceExportUrl(sessionId: string, turnId: string): string {

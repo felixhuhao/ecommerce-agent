@@ -38,6 +38,14 @@ def test_sandbox_settings_have_safe_defaults() -> None:
     assert settings.sandbox_idle_ttl_seconds == 600
 
 
+def test_sandbox_backend_falls_back_to_docker_without_env() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.sandbox_backend == "docker"
+    assert settings.sandbox_executor_url == ""
+    assert settings.sandbox_executor_token == ""
+
+
 def test_settings_expose_m2_session_defaults() -> None:
     settings = Settings(_env_file=None)
 
@@ -60,3 +68,21 @@ def test_auth_and_audit_defaults() -> None:
     assert settings.auth_cookie_secure is False
     assert settings.auth_session_ttl_seconds == 28800
     assert settings.audit_retention_days == 90
+
+
+def test_grounding_evidence_default() -> None:
+    assert Settings(_env_file=None).grounding_evidence_max_chars == 2000
+
+
+def test_monitoring_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.monitor_enabled is False
+    assert settings.monitor_interval_seconds == 900
+    assert settings.monitor_low_stock_threshold == 50
+    assert settings.monitor_sales_drop_pct == 0.25
+    assert settings.monitor_cooldown_seconds == 86400
+    assert settings.monitor_cause_enabled is False
+    assert settings.alert_retention_days == 90
+    assert settings.monitor_spring_user_id == "1"
+    assert settings.monitor_spring_session_id == "monitor"
