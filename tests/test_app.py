@@ -15,6 +15,7 @@ from ecommerce_agent.auth.passwords import hash_password
 from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import VIZ_TOOLS
+from ecommerce_agent.monitoring.store import InMemoryAlertStore
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
 from ecommerce_agent.threads.store import InMemoryThreadStore
@@ -124,6 +125,7 @@ def use_in_memory_auth_stores(app) -> None:  # noqa: ANN001
     app.state.user_store._by_username[TEST_USER.username] = TEST_USER.user_id
     app.state.login_session_store = InMemoryLoginSessionStore()
     app.state.audit_store = InMemoryAuditStore()
+    app.state.alert_store = InMemoryAlertStore()
     app.dependency_overrides[current_actor] = lambda: TEST_ACTOR
 
 
