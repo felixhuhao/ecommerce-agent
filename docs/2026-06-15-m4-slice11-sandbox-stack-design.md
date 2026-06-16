@@ -77,7 +77,7 @@ bounded sandbox lifetime
 | One-command local startup | Provide a thin documented command/script that starts both stacks, not one giant Compose file | Keeps ownership clean while reducing operator friction. |
 | Sandbox target | Long-lived local sandbox service/substitute for remote executor, not a fresh container per command | Matches code-interpreter products and avoids cold-start churn. |
 | Workspace isolation | Session-scoped workspace first; optional turn subdirectories where the backend has turn context | Matches current `BaseSandbox` shape without forcing a broad turn-context refactor. |
-| Security posture | Trusted local/dev analytical code, with resource limits and no direct business-data access from sandbox | Current scripts are model-generated for internal analytics, not arbitrary uploaded user code. |
+| Security posture | Trusted local/dev analytical code; sandbox has no business-data access, and agent operational data (Mongo) is guarded by auth + the executor never receiving Mongo creds | Current scripts are model-generated for internal analytics, not arbitrary uploaded user code. |
 | Current DockerSandbox | Keep as compatibility path until the service client is proven | Limits blast radius and preserves existing integration tests. |
 
 ## 5. Target Local Stack
@@ -181,6 +181,10 @@ Both client and server apply the normalization rule already proven in `_sandbox_
 - the leading `/` is restored; `posixpath.normpath` is applied;
 - a path is accepted only if it normalizes **under `/workspace/`** *or* the DeepAgents edit-temp
   prefix `/tmp/.deepagents_edit_*` (required by inherited `write()`/`edit()`, see §8 parity);
+- `/tmp/.deepagents_edit_*` resolves to `/workspaces/{session_id}/.tmp/...` for **both** the file API
+  and `execute` — the same per-session location the bwrap namespace binds as `/tmp` (§6.6). This is
+  required because DeepAgents `_edit_via_upload` writes these temps via `upload_files()` then reads
+  them via `execute()`; a service-global `/tmp` would break large-edit parity.
 - anything outside those two roots, any `..` traversal, the bare roots themselves, or an empty
   basename is rejected; the server re-validates identically (defense-in-depth) and returns `400`.
 
@@ -202,7 +206,8 @@ sync method that calls `sandbox.close()`, and `_close_evicted` runs it inside
 container). Therefore `RemoteSandboxClient` MUST also be a fully **synchronous** `BaseSandbox` —
 `execute`, `upload_files`, `download_files`, and `close()` all blocking (use a sync HTTP client such
 as `httpx.Client`, or bridge an async client to blocking). `close()` issues
-`DELETE /sessions/{session_id}` synchronously and returns only after the server confirms deletion.
+`DELETE /sessions/{session_id}` synchronously and returns only after the server confirms deletion,
+bounded by a timeout so a hanging executor cannot block the registry's `asyncio.gather` close path.
 
 Why this is a hard rule: if `RemoteSandboxClient.close()` were `async` (e.g. built on
 `httpx.AsyncClient`), the sync `SessionRuntime.close()` would invoke it, receive an un-awaited
@@ -278,8 +283,9 @@ for Phase B service mode:
   rejects it without credentials. External-internet reach is acceptable for trusted model-generated
   analytical code; data still enters via staging tools and approval gates live outside the sandbox.
 - **`internal: true` was tried and rejected (empirically).** `internal: true` does block egress, but on
-  Docker 29.5.3/Linux it **silently drops published ports** — `docker port` reports no mapping and the
-  host gets `Connection refused`, so the host app cannot reach an internal-only executor.
+  Docker Desktop (Linux/WSL2, Docker 29.5.3) it **silently drops published ports** — `docker port`
+  reports no mapping and the host gets `Connection refused`, so the host app cannot reach an
+  internal-only executor.
   `enable_ip_masquerade=false` was also tried: it keeps published ports but does **not** block egress
   (internet still reachable), so it is no better than the chosen posture. There is no static-topology
   way to get both host-reachability and no-egress on this target. Eliminating the internet residual
@@ -321,6 +327,72 @@ an explicit Phase B decision, not an accident of the Compose defaults:
 - **Network topology** is decided in §6.4: the executor runs on its own Compose network, isolated
   from Mongo/chart, so this §6.5 only governs host exposure and auth, not service-to-service reach.
 
+### 6.6 Executor Implementation Contract
+
+These defaults pin down how the executor service is built, so Phase B implements one architecture
+rather than inventing a second mini-architecture:
+
+- **Execution model: subprocess per `execute`, in its own process group.** Each
+  `POST /sessions/{id}/execute` runs the command as an isolated subprocess — closest to
+  `DockerSandbox`'s `container.exec_run` (simple output capture/truncation, no persistent shell
+  state). Session persistence is **filesystem-only** (files in the workspace); there is no long-lived
+  shell or kernel state across executes. **Timeout kills the full process tree**, not just the shell
+  parent: the subprocess is started in its own session/process group (`start_new_session=True`) and the
+  whole group is signaled on timeout, so a background child cannot survive and keep modifying the
+  workspace.
+- **Filesystem namespace: per-execute mount namespace (bubblewrap).** A long-lived shared container
+  has one global `/workspace`, so `cwd` alone is insufficient — model code and DeepAgents helpers use
+  **absolute** `/workspace/...` paths, and without isolation session A's subprocess could read
+  `/workspaces/<session_B>`. Each `execute` therefore runs inside a bubblewrap (`bwrap`) mount
+  namespace that **binds `/workspaces/{session_id}` as `/workspace`** plus a per-session `/tmp`
+  (covering the `/tmp/.deepagents_edit_*` prefix), with the `/workspaces/` parent **not exposed**. This
+  makes absolute `/workspace/...` paths resolve to the session's files (parity with `DockerSandbox`'s
+  per-container tmpfs) **and** prevents cross-session reads (the process cannot see other sessions'
+  directories).
+
+  Minimal bwrap shape for Phase B, finalized by the capability probe rather than by prose alone:
+
+  - bind the session workspace read-write: `--bind /workspaces/{session_id} /workspace`;
+  - bind a per-session temp dir read-write: `--bind /workspaces/{session_id}/.tmp /tmp` (the same
+    location the file API maps `/tmp/.deepagents_edit_*` to, §6.2 — required for edit parity);
+  - expose runtime/system files read-only, starting with `--ro-bind /usr /usr` (covers
+    `/usr/local` → python, pandas, numpy), `--ro-bind /bin /bin`, `--ro-bind /lib /lib`,
+    `--ro-bind /lib64 /lib64`, and `--ro-bind /opt /opt` (helper-kit path). The final allowlist is
+    **probe-derived**: commit any additional read-only paths the executor image proves necessary for
+    `python`, pandas/numpy, and `ecommerce_analysis`, and do not assume these distro-specific paths are
+    complete without the probe;
+  - mount proc with `--proc /proc`;
+  - provide only minimal device nodes needed for Python. Preference order: try a tmpfs/minimal `/dev`
+    first, use `--dev /dev` only if the probe proves it is required, and record the reason if the
+    broader device surface is needed;
+  - do **not** bind `/workspaces` or any parent that would reveal sibling sessions.
+
+  Requirement: the executor container must permit mount-namespace creation (`CAP_SYS_ADMIN` or
+  unprivileged user namespaces) — a privilege `DockerSandbox` got for free via separate containers;
+  this must be **empirically verified** in the executor image. If the bwrap probe fails on the target,
+  Phase B must not enable service mode: either stop at the client/config seam with `docker` still
+  default, or explicitly switch the service design to internal per-session containers (rejected alt
+  (b), revived as the only other safe option).
+- **Image strategy: extend the sandbox image.** Build the executor on `ecommerce-agent-sandbox:dev`
+  (python + pandas + numpy + `ecommerce_analysis`) and add only the HTTP service layer + deps on top.
+  One source of truth for the helper-kit keeps the import-parity test meaningful.
+- **Code location: top-level service package.** `sandbox_executor/` (sibling to `sandbox_image/`),
+  containing `app.py` (the FastAPI service) and `Dockerfile`, plus `compose.sandbox.yml` at the repo
+  root — visually separate from the agent runtime (`src/ecommerce_agent/`), same repo.
+- **Session semantics: lazy on first use.** A session's workspace is created on first
+  `execute`/`upload`; there is no explicit create route (matches `DockerSandbox`'s lazy container
+  creation). `DELETE /sessions/{id}` is **idempotent** — deleting a nonexistent workspace is a
+  success/no-op (chosen for cleanup friendliness).
+- **Environment: explicit minimal allowlist.** The per-execute subprocess receives only an allowlist —
+  positively `PATH`, `PYTHONPATH` (so `import ecommerce_analysis` works), `HOME`, `LANG` — and **no**
+  app/Mongo variables (`MONGO_URL`, `MONGO_INITDB_ROOT_PASSWORD`, etc.). This is the mechanism for the
+  §6.4 hard rule that the executor never receives Mongo credentials; the §9 `execute("env")` test
+  checks both sides (allowed vars present, Mongo creds absent).
+- **Concurrency: per-session serialization (v1).** Concurrent `execute`s for the same session are
+  serialized with a per-session lock. Subprocess-per-execute over a shared workspace can race if the
+  agent issues parallel tool calls; serializing is the boring, sane choice for v1 (revisit true
+  parallelism later).
+
 ## 7. Compose Organization
 
 Update this repo so the normal local command is:
@@ -349,12 +421,11 @@ ambiguity. **This puts root credentials directly in the app — acceptable for l
 such.** The least-privilege upgrade (out of scope for this slice) is to let the root env vars
 initialize Mongo and create an app-scoped user, then set
 `mongo_url=mongodb://ecommerce_agent_app:<pass>@localhost:27017/ecommerce_agent?authSource=ecommerce_agent`;
-note this is app-hardening, not sandbox-isolation (the executor lacks creds
-either way). Every store (threads, audit, auth, trace, sessions) authenticates
-via `mongo_url`. Auth is load-bearing: on Docker Desktop `host.docker.internal`
-bypasses `127.0.0.1`-binding (verified), so the executor can open a TCP
-connection to Mongo's port but is rejected without credentials. This is good
-hygiene regardless of the sandbox — Mongo is currently exposed unauthenticated.
+note this is app-hardening, not sandbox-isolation (the executor lacks creds either way). Every store
+(threads, audit, auth, trace, sessions) authenticates via `mongo_url`. Auth is load-bearing: on
+Docker Desktop `host.docker.internal` bypasses `127.0.0.1`-binding (verified), so the executor can
+open a TCP connection to Mongo's port but is rejected without credentials. This is good hygiene
+regardless of the sandbox — Mongo is currently exposed unauthenticated.
 
 `MONGO_INITDB_ROOT_*` only creates the root user on a **fresh** `/data/db`. An existing `mongo-data`
 named volume from a current dev setup already has data and no auth, so the init script will **not**
@@ -398,37 +469,58 @@ This phase is low risk and can land first.
 
 ### Phase B — Sandbox Executor Service Seam
 
-- Add a local sandbox executor service container, exposed per §6.5 (localhost + shared token).
-- Add `RemoteSandboxClient(BaseSandbox)` in Python — a fully **synchronous** client — implementing
-  blocking `close()` → `DELETE /sessions/{id}` (see the `close()` contract in §6.2).
-- Widen `build_session_sandbox` return type from `DockerSandbox` to `BaseSandbox`.
-- Add config:
-  - `sandbox_backend = docker | remote`
-  - `sandbox_executor_url`
-  - `sandbox_executor_token` (shared bearer; required in `remote` mode)
-- Keep `docker` as default until the service passes parity tests.
-- §6.4 network isolation is resolved: put the executor on a dedicated **non-`internal`** Compose
-  network (isolated from Mongo/chart) + `127.0.0.1`-bound port; localhost-bind the Mongo/chart host
-  ports (§7) as defense-in-depth; **enable Mongo authentication (§7) — the primary control**, because
-  `host.docker.internal` bypasses localhost-binding on Docker Desktop. Verify via the topology + auth
-  tests (§9): Mongo unreachable by service name / gateway IP, unauthenticated Mongo access rejected,
-  host app reaches the executor, outbound internet remains (accepted residual).
-- Parity-test `RemoteSandboxClient` against current `DockerSandbox` behavior:
+Phase B is split into two tasks for blast-radius control. **B1** (Mongo auth + port-binding) is
+security hygiene that lands first and is valuable regardless of whether B2 ships; **B2** (executor
+service + client) is the seam, gated on the bwrap probe.
+
+#### Phase B1 — Mongo auth + port-binding cleanup
+
+- Enable Mongo authentication per §7: `MONGO_INITDB_ROOT_*` + `mongo_url` with `authSource=admin`, and
+  migrate any existing `mongo-data` volume (§7/§11) — auth only initializes on a fresh `/data/db`.
+- Bind the Mongo + chart host ports to `127.0.0.1` only (§7) — defense-in-depth (blocks gateway reach,
+  stops LAN exposure of unauthenticated Mongo).
+- Verify with the §9 B1 checks: Mongo starts with auth, unauthenticated access is rejected, authenticated
+  app access works, and host-facing ports are bound to `127.0.0.1` only. `docker` remains the sandbox
+  backend; no executor or executor-network topology check exists yet.
+
+#### Phase B2 — Executor service + bwrap probe + client
+
+- Add a local sandbox executor service container, exposed per §6.5 (localhost + shared token), on its
+  own dedicated **non-`internal`** Compose network (isolated from Mongo/chart).
+- **Run the bwrap capability probe first** (§6.6/§9): it must bind a probe workspace as `/workspace`,
+  hide the `/workspaces` parent, mount the runtime/helper-kit read-only, and run
+  `python -c 'import ecommerce_analysis'` inside the executor image with its capability set. **If the
+  probe fails, stop**: keep `docker` default and do not ship remote service mode unless the design is
+  explicitly changed to internal per-session containers (rejected alt (b), revived as the only other
+  safe option).
+- Build the service per the §6.6 implementation contract — subprocess-per-execute in a per-execute
+  **bubblewrap namespace** (path-mapping + cross-session isolation), process-group timeout kill, extend
+  the sandbox image, top-level `sandbox_executor/` package + `compose.sandbox.yml`, lazy sessions with
+  idempotent `DELETE`, explicit env allowlist, per-session execute lock. Do not invent a second
+  architecture.
+- Add `RemoteSandboxClient(BaseSandbox)` — a fully **synchronous** client — implementing blocking
+  `close()` → `DELETE /sessions/{id}` (§6.2). Widen `build_session_sandbox` return type from
+  `DockerSandbox` to `BaseSandbox`.
+- Add config: `sandbox_backend = docker | remote`, `sandbox_executor_url`,
+  `sandbox_executor_token` (shared bearer; required in `remote` mode).
+- Keep `docker` as default until the service passes parity.
+- Parity-test `RemoteSandboxClient` against current `DockerSandbox` behavior (§9):
   - execute command
   - upload/download files
   - path confinement
   - output truncation
-  - timeout
-  - session workspace persistence
-  - session deletion cleanup
-  - concurrent first-use / concurrent execute on the same session is safe or explicitly serialized
-    (parity with `tests/integration/test_docker_sandbox.py` concurrent test)
+  - timeout (kills the full process tree)
+  - session workspace persistence + absolute `/workspace/...` mapping
+  - cross-session isolation (A cannot read B)
+  - session deletion cleanup (idempotent `DELETE`)
+  - concurrent first-use is safe; concurrent execute on the same session is serialized via a
+    per-session lock (v1, §6.6)
   - DeepAgents inherited `write()`/`edit()` behavior, including large-edit via the
-    `/tmp/.deepagents_edit_*` temp prefix and its cleanup afterward (parity with
+    `/tmp/.deepagents_edit_*` temp prefix and its cleanup (parity with
     `tests/integration/test_docker_sandbox.py::test_large_edit_via_deepagents_temp_upload`). This
     is the actual analysis-runtime contract — without it a remote executor could pass
     echo/upload/download but break forecast/chart authoring.
-  - helper-kit `ecommerce_analysis` is importable in the executor image (parity with
+  - helper-kit `ecommerce_analysis` importable via `RemoteSandboxClient.execute` (parity with
     `tests/integration/test_docker_sandbox.py::test_helper_kit_is_importable_in_sandbox`), so the
     forecast/chart code paths can run.
 
@@ -451,21 +543,43 @@ Unit/default tests:
 
 Integration tests, Docker-gated:
 
+Phase B1 checks:
+
 - Compose-managed Mongo starts with the expected named volume.
+- Mongo auth gate (§6.4/§7): unauthenticated Mongo access is rejected; authenticated app access through
+  `mongo_url` succeeds.
+- Existing named `mongo-data` migration path is exercised or documented in the test fixture setup
+  (reset volume, or dump/restore into an auth-enabled fresh volume).
+- Mongo and chart host ports are bound to `127.0.0.1` only, not `0.0.0.0`.
+
+Phase B2 checks:
+
 - sandbox executor `/health` is healthy.
 - Token/auth contract (§6.5):
   - `GET /health` succeeds **without** a token.
   - execute, upload, file GET, file DELETE, session DELETE, and `/maintenance/reap` each reject a
     **missing** token and a **wrong** token (401/403).
   - `RemoteSandboxClient` sends `X-Sandbox-Token` (from `sandbox_executor_token`) on every request.
+- bubblewrap capability preflight (§6.6): the executor image can run `bwrap` with the intended,
+  probe-derived mount layout, bind a probe workspace as `/workspace`, hide the `/workspaces` parent,
+  mount `/proc`, provide the minimal runtime/dev surface Python needs, and execute
+  `python -c 'import ecommerce_analysis; print("ok")'`. The test records the final read-only bind
+  allowlist and whether minimal `/dev` was enough or `--dev /dev` was required. If this fails, service
+  mode remains disabled.
 - `RemoteSandboxClient.execute("echo ok")` returns output.
 - file upload/download round-trip works.
-- files persist within a session.
-- deleting a session removes the workspace.
-- timeout is enforced.
-- concurrent execute on the same session is safe or explicitly serialized.
+- files persist within a session; **absolute** `/workspace/...` paths resolve to that session's
+  workspace (proves the namespace mapping, §6.6).
+- **cross-session isolation (§6.6):** executed code in session A cannot list or read session B's
+  files (e.g. `execute` in A cannot `cat /workspaces/<B>/...` nor escape via absolute paths).
+- deleting a session removes the workspace; `DELETE` is idempotent (deleting a nonexistent workspace
+  is a success/no-op, §6.6).
+- timeout is enforced and **kills the full process tree**: a command that spawns a background child
+  leaves no surviving child after timeout (§6.6).
+- concurrent execute on the same session is serialized via a per-session lock (v1, §6.6).
 - DeepAgents `write()`/`edit()` work via the remote client, incl. large-edit temp files and cleanup.
-- `ecommerce_analysis` (helper-kit) is importable in the executor image.
+- `ecommerce_analysis` (helper-kit) is importable **via `RemoteSandboxClient.execute`** end-to-end
+  (the raw-bwrap preflight above checks the namespace directly; this checks client→service parity).
 - network topology (§6.4): the host app **can** reach the executor's `127.0.0.1` published port;
   executed code in service mode **cannot** reach Mongo by service-name resolution
   (`ecommerce-agent-mongo`) **nor** via the **dynamically discovered** executor-network gateway IP
@@ -476,9 +590,13 @@ Integration tests, Docker-gated:
 - Mongo auth gate (decisive, §6.4/§7): an **unauthenticated** connection to Mongo — via any reachable
   vector including `host.docker.internal` — is **rejected** by auth; the executor cannot read agent
   data without credentials. This is the load-bearing control.
-- credential isolation (§6.4 hard rule): `RemoteSandboxClient.execute("env")` and a scan of the staged
-  workspace expose no Mongo credentials (`MONGO_URL`, `MONGO_INITDB_ROOT_PASSWORD`, etc.) — proves the
-  executor was not handed creds, so auth actually protects.
+- credential isolation (§6.4 hard rule, two layers):
+  - **container layer:** the `sandbox-executor` service container's own environment
+    (`docker exec sandbox-executor env` / compose inspect) exposes no Mongo credentials — catches a
+    misconfigured `env_file` / `.env` mount that the per-execute allowlist would otherwise hide.
+  - **subprocess + workspace layer:** `RemoteSandboxClient.execute("env")` and a scan of the staged
+    workspace expose no Mongo credentials (`MONGO_URL`, `MONGO_INITDB_ROOT_PASSWORD`, etc.).
+  Both must pass so auth actually protects — creds neither in the container nor handed to executed code.
 - `RemoteSandboxClient.close()` is synchronous, issues `DELETE`, and removes the workspace.
 - legacy `DockerSandbox` tests remain green until removed.
 
@@ -513,6 +631,12 @@ Manual checks:
 - **Not a high-risk arbitrary-code sandbox.** If future scope includes uploaded scripts, package
   installs, shell access, or strict multi-tenant production isolation, revisit gVisor/microVM or
   per-session container isolation.
+- **Executor needs mount-namespace privilege.** Per-execute filesystem isolation (§6.6) requires the
+  executor container to create mount namespaces (`CAP_SYS_ADMIN` or unprivileged user namespaces) —
+  more privilege than `DockerSandbox`'s `cap_drop: ALL` per-container model got for free. Acceptable
+  for trusted analytical code only if the bwrap probe passes. If it fails, keep `docker` default and
+  do not enable service mode without switching to internal per-session containers or another proven
+  filesystem-isolation mechanism.
 
 ## 11. Open Questions
 
@@ -524,11 +648,12 @@ Manual checks:
      unauthenticated. Reset the volume, or `mongodump` → recreate with auth → `mongorestore` with
      credentials. Required, not optional, because auth is load-bearing for service-mode isolation.
    - Fresh setups still need no migration — the named volume initializes with auth on first start.
-2. ~~Should the sandbox executor be implemented as a small HTTP service in this repo?~~ **Resolved
-   by Phase B:** yes — a local sandbox executor service with URL/token/config is specified (§6.2,
-   §6.5). The remaining open question is **timing**: build it in Phase B now to exercise the
-   remote-executor seam, or defer until the real remote executor API shape firms up. Default: build
-   it in Phase B only if we are ready to exercise the seam; otherwise keep `docker` default.
+2. B2 timing for the sandbox executor service.
+   - The design is resolved: a local sandbox executor service with URL/token/config is specified
+     (§6.2, §6.5, §6.6). The remaining open question is whether to run B2 immediately after B1 or
+     defer until we are ready to exercise the remote-executor seam. Default: B1 can land alone; run
+     B2 only when ready for the bwrap probe + service/client parity work. `docker` stays default until
+     B2 passes.
 3. Should local default remain `DockerSandbox` after Phase A?
    - Default: yes, until `RemoteSandboxClient` parity tests pass.
 4. Should the one-command startup script also start the Java MCP/MySQL stack?
