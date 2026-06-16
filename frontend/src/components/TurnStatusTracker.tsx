@@ -49,18 +49,29 @@ function StepIcon({ status }: { status: TurnProgressStep["status"] }) {
 export function TurnStatusTracker({ steps }: TurnStatusTrackerProps) {
   if (steps.length === 0) return null;
   const compactSteps = displaySteps(steps);
+  const isRunning = compactSteps.some((step) => step.status === "running");
 
   return (
     <section className="turn-status" aria-label="Turn status">
       <div className="turn-status-head">
         <span className="eyebrow">Working</span>
+        <span
+          className={`turn-status-live ${isRunning ? "is-running" : "is-idle"}`}
+          aria-hidden="true"
+        />
       </div>
       <ol className="turn-status-steps">
         {compactSteps.map((step) => (
           <li className={`turn-status-step status-${step.status}`} key={step.key}>
-            <StepIcon status={step.status} />
-            <span>{step.label}</span>
-            {step.count > 1 ? <span className="turn-status-count">x{step.count}</span> : null}
+            <span className="turn-status-node">
+              <StepIcon status={step.status} />
+            </span>
+            <span className="turn-status-label">
+              {step.label}
+              {step.count > 1 ? (
+                <span className="turn-status-count">x{step.count}</span>
+              ) : null}
+            </span>
           </li>
         ))}
       </ol>

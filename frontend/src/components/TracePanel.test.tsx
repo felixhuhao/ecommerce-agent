@@ -52,7 +52,8 @@ describe("TracePanel", () => {
     expect(screen.getByRole("combobox", { name: "Trace turn" })).toHaveValue("t1");
     expect(screen.getByText("generate_line_chart")).toBeInTheDocument();
     expect(screen.getByText("12 ms")).toBeInTheDocument();
-    expect(screen.getByText("1 spans")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("span")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /JSON/i })).toHaveAttribute(
       "href",
       "/api/sessions/s1/turns/t1/trace/export",

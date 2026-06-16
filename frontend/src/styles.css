@@ -886,52 +886,131 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+/* Live indicator beside the "Working" eyebrow. */
+.turn-status-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.turn-status-live.is-running {
+  background: var(--emerald);
+  box-shadow: 0 0 7px var(--emerald-glow);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.turn-status-live.is-idle {
+  background: var(--ink-faint);
+  opacity: 0.5;
+}
+
 .turn-status-steps {
-  display: grid;
-  gap: 7px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .turn-status-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
+  padding: 5px 0 5px 26px;
   color: var(--ink-dim);
   font-size: 0.86rem;
+  line-height: 1.35;
 }
 
-.turn-status-step svg {
-  flex: 0 0 auto;
+/* Connector segment from the previous node down into this one. Reached steps
+   render it solid emerald, so the rail visibly fills up to the live frontier. */
+.turn-status-step:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: -50%;
+  height: 100%;
+  width: 2px;
+  background: var(--rule-strong);
+}
+.turn-status-step.status-done::before,
+.turn-status-step.status-running::before,
+.turn-status-step.status-failed::before {
+  background: var(--emerald);
 }
 
-.turn-status-step.status-running {
-  color: var(--emerald-deep);
-  font-weight: 600;
+.turn-status-node {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--paper-raised);
+  border: 1.5px solid var(--rule-strong);
+  color: var(--ink-faint);
+}
+.turn-status-node svg {
+  width: 11px;
+  height: 11px;
 }
 
-.turn-status-step.status-running svg {
+.turn-status-step.status-done .turn-status-node {
+  background: var(--emerald);
+  border-color: var(--emerald);
+  color: var(--paper-raised);
+}
+
+.turn-status-step.status-running .turn-status-node {
+  border-color: var(--emerald);
+  color: var(--emerald);
+  animation: turn-node-ping 1.6s ease-out infinite;
+}
+.turn-status-step.status-running .turn-status-node svg {
   animation: spin 0.9s linear infinite;
 }
 
-.turn-status-step.status-done {
-  color: var(--ink-faint);
+.turn-status-step.status-failed .turn-status-node {
+  background: var(--oxblood);
+  border-color: var(--oxblood);
+  color: var(--paper-raised);
 }
 
-.turn-status-step.status-failed {
+.turn-status-label {
+  display: inline;
+}
+
+.turn-status-step.status-running .turn-status-label {
+  color: var(--emerald-deep);
+  font-weight: 600;
+}
+.turn-status-step.status-done .turn-status-label {
+  color: var(--ink-faint);
+}
+.turn-status-step.status-failed .turn-status-label {
   color: var(--oxblood);
   font-weight: 600;
 }
 
 .turn-status-count {
-  margin-left: auto;
-  padding: 1px 6px;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
+  margin-left: 7px;
   color: var(--ink-faint);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes turn-node-ping {
+  0% {
+    box-shadow: 0 0 0 0 var(--emerald-glow);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 5px rgba(15, 122, 90, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-status-node,
+  .turn-status-live.is-running {
+    animation: none;
+  }
 }
 
 .confidence-badge {
@@ -1891,16 +1970,47 @@ button:disabled {
 
 .trace-summary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-bottom: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--rule);
-  color: var(--ink-dim);
+  margin-bottom: 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-inset);
+  overflow: hidden;
+}
+
+.trace-stat {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  border-left: 1px solid var(--rule);
+}
+.trace-stat:first-child {
+  border-left: none;
+}
+
+.trace-stat-num {
+  color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.98rem;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.trace-stat-sep {
+  margin: 0 1px;
+  color: var(--ink-faint);
+}
+
+.trace-stat-label {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
 }
 
 .trace-timeline {
@@ -1927,9 +2037,9 @@ button:disabled {
 
 .trace-span summary {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 6px 7px 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 6px 9px 0;
   list-style: none;
   cursor: pointer;
   color: var(--ink);
@@ -1937,19 +2047,37 @@ button:disabled {
 .trace-span summary::-webkit-details-marker {
   display: none;
 }
+/* Spine marker, color-coded by span status (ok / pending / failed). */
 .trace-span summary::before {
   content: "";
   position: absolute;
   left: 2.5px;
+  top: 10px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--paper);
   border: 1.5px solid var(--gold);
 }
+.trace-span[data-status="ok"] summary::before {
+  border-color: var(--emerald);
+}
+.trace-span[data-status="warn"] summary::before {
+  border-color: var(--amber);
+}
+.trace-span[data-status="bad"] summary::before {
+  border-color: var(--oxblood);
+  background: var(--oxblood);
+}
 .trace-span summary svg {
   flex: 0 0 auto;
   color: var(--ink-dim);
+}
+
+.trace-span-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .trace-span-name {
@@ -1969,6 +2097,46 @@ button:disabled {
   font-family: var(--font-mono);
   font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* Latency waterfall: bar width is the span's share of the slowest span. */
+.trace-span-track {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--paper-sunken);
+  overflow: hidden;
+}
+.trace-span-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--gold-line);
+  transform-origin: left center;
+  animation: trace-bar-grow 0.45s ease both;
+}
+.trace-span[data-status="ok"] .trace-span-bar {
+  background: var(--emerald);
+}
+.trace-span[data-status="warn"] .trace-span-bar {
+  background: var(--amber);
+}
+.trace-span[data-status="bad"] .trace-span-bar {
+  background: var(--oxblood);
+}
+
+@keyframes trace-bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trace-span-bar {
+    animation: none;
+  }
 }
 
 .trace-span-body {

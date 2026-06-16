@@ -23,22 +23,50 @@ function statusClass(status: string) {
   return "bad";
 }
 
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  return `${seconds.toFixed(seconds < 10 ? 2 : 1)} s`;
+}
+
+function formatCount(n: number) {
+  return n.toLocaleString("en-US");
+}
+
 function SpanRow({
   span,
+  maxDuration,
   onViewApproval,
 }: {
   span: TraceSpan;
+  maxDuration: number;
   onViewApproval: (approvalId: string) => void;
 }) {
   const Icon = span.kind === "tool_call" ? Wrench : Cpu;
+  // Width is proportional to this span's slice of the slowest span, so the
+  // dominant model call reads at a glance. Tiny spans keep a visible sliver.
+  const fraction =
+    maxDuration > 0 && span.duration_ms != null
+      ? Math.max(0.04, span.duration_ms / maxDuration)
+      : 0;
   return (
-    <details className="trace-span" data-trace-span-id={span.span_id}>
+    <details
+      className="trace-span"
+      data-status={statusClass(span.status)}
+      data-trace-span-id={span.span_id}
+    >
       <summary>
-        <Icon size={14} aria-hidden="true" />
-        <span className="trace-span-name">{span.name ?? span.kind}</span>
-        <span className={`status-dot ${statusClass(span.status)}`} aria-hidden="true" />
-        {span.duration_ms != null ? (
-          <span className="trace-span-dur">{Math.round(span.duration_ms)} ms</span>
+        <span className="trace-span-head">
+          <Icon size={14} aria-hidden="true" />
+          <span className="trace-span-name">{span.name ?? span.kind}</span>
+          {span.duration_ms != null ? (
+            <span className="trace-span-dur">{formatDuration(span.duration_ms)}</span>
+          ) : null}
+        </span>
+        {fraction > 0 ? (
+          <span className="trace-span-track" aria-hidden="true">
+            <span className="trace-span-bar" style={{ width: `${fraction * 100}%` }} />
+          </span>
         ) : null}
       </summary>
       <div className="trace-span-body">
@@ -92,6 +120,9 @@ export function TracePanel({
   onSelectTurn,
   onViewApproval,
 }: TracePanelProps) {
+  const maxDuration = timeline
+    ? timeline.spans.reduce((max, span) => Math.max(max, span.duration_ms ?? 0), 0)
+    : 0;
   return (
     <section className="rail-panel trace-panel">
       <div className="pane-header compact">
@@ -130,14 +161,29 @@ export function TracePanel({
       ) : (
         <>
           <div className="trace-summary">
-            <span>{timeline.span_count} spans</span>
+            <div className="trace-stat">
+              <span className="trace-stat-num">{formatCount(timeline.span_count)}</span>
+              <span className="trace-stat-label">
+                {timeline.span_count === 1 ? "span" : "spans"}
+              </span>
+            </div>
             {timeline.duration_ms != null ? (
-              <span>{Math.round(timeline.duration_ms)} ms</span>
+              <div className="trace-stat">
+                <span className="trace-stat-num">
+                  {formatDuration(timeline.duration_ms)}
+                </span>
+                <span className="trace-stat-label">latency</span>
+              </div>
             ) : null}
             {timeline.tokens_in_total != null || timeline.tokens_out_total != null ? (
-              <span>
-                {timeline.tokens_in_total ?? 0}/{timeline.tokens_out_total ?? 0} tok
-              </span>
+              <div className="trace-stat">
+                <span className="trace-stat-num">
+                  {formatCount(timeline.tokens_in_total ?? 0)}
+                  <span className="trace-stat-sep">/</span>
+                  {formatCount(timeline.tokens_out_total ?? 0)}
+                </span>
+                <span className="trace-stat-label">tokens in·out</span>
+              </div>
             ) : null}
           </div>
           {timeline.spans.length === 0 ? (
@@ -148,6 +194,7 @@ export function TracePanel({
                 <SpanRow
                   key={span.span_id}
                   span={span}
+                  maxDuration={maxDuration}
                   onViewApproval={onViewApproval}
                 />
               ))}
