@@ -19,7 +19,11 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 from docker.errors import APIError, NotFound
 
-from ecommerce_agent.sandbox.config import SandboxLimits, container_run_kwargs
+from ecommerce_agent.sandbox.config import (
+    SANDBOX_NAME_PREFIX,
+    SandboxLimits,
+    container_run_kwargs,
+)
 
 _OUTPUT_LIMIT = 64 * 1024
 _MAX_UPLOAD_BYTES = 512 * 1024
@@ -72,7 +76,7 @@ class DockerSandbox(BaseSandbox):
 
     @property
     def id(self) -> str:
-        return f"ecommerce-sandbox-{self._session_id}"
+        return f"{SANDBOX_NAME_PREFIX}{self._session_id}"
 
     def _ensure_container(self):
         with self._container_lock:

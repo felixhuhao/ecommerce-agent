@@ -67,9 +67,21 @@ and set `MODELSCOPE_MCP_URL=http://127.0.0.1:1123/mcp`.
 
 ## Agent-Owned Infrastructure
 
-M2 adds a server-owned conversation thread backed by MongoDB. Mongo is owned by
-this repo; the Java MCP server and MySQL remain external in
-`../ecommerce-mcp-server`.
+M2 adds a server-owned conversation thread backed by MongoDB. This repo owns the
+agent-side stack — Mongo, the chart MCP server, and the chart renderer — as
+Compose projects. The Java MCP server and MySQL remain a separate backend stack
+in `../ecommerce-mcp-server` with their own lifecycle; this repo does not start,
+seed, or reset them.
+
+Start the full agent-owned stack with one command:
+
+```bash
+docker compose -f docker-compose.yml -f compose.chart-mcp.yml up -d
+```
+
+This brings up Mongo (`docker-compose.yml`, named volume `mongo-data`) plus the
+chart MCP server and renderer (`compose.chart-mcp.yml`). To start only what a
+given task needs, target individual services instead.
 
 Start Mongo when exercising sessions or the approval workflow:
 
@@ -92,6 +104,22 @@ MONGO_PORT=27018 docker compose up -d mongo
 ```
 
 and set `MONGO_URL=mongodb://localhost:27018`.
+
+## Sandbox Container Cleanup
+
+The agent runs analytical code in per-session sandbox containers named
+`ecommerce-sandbox-*` (labeled `com.ecommerce-agent.sandbox=true`). They are
+removed when their session is closed or evicted, but containers left over from
+debugging or crashes can linger. Remove all stale agent sandbox containers:
+
+```bash
+uv run python -m ecommerce_agent.sandbox.cleanup
+```
+
+This force-removes only containers carrying the `com.ecommerce-agent.sandbox=true`
+label or whose name starts with `ecommerce-sandbox-` (so legacy unlabeled
+containers are caught too). It never touches Mongo, the chart services, or any
+other container.
 
 ## Local App
 
