@@ -88,10 +88,9 @@ def _nl2sql_configured(settings: Settings) -> bool:
     return settings.nl2sql_enabled and bool(settings.nl2sql_mcp_url.strip())
 
 
-async def _gate_nl2sql(settings: Settings) -> bool:
+async def _gate_nl2sql(settings: Settings) -> None:
     if not _nl2sql_configured(settings):
         pytest.skip("NL2SQL MCP is not configured")
-        return False
 
     client = build_mcp_client(settings)
     try:
@@ -100,11 +99,9 @@ async def _gate_nl2sql(settings: Settings) -> bool:
         _gate_unreachable(
             f"NL2SQL MCP is unreachable at {settings.nl2sql_mcp_url}: {exc}"
         )
-        return False
-    return True
 
 
-def _spring_tool(tools: Iterable, name: str):
+def _find_tool(tools: Iterable, name: str):
     return next(tool for tool in tools if tool.name == name)
 
 
@@ -273,7 +270,7 @@ async def test_nl2sql_mcp_exposes_guarded_read_surface_when_configured() -> None
         f"NL2SQL tool surface {sorted(actual)} != expected {sorted(NL2SQL_TOOLS)}"
     )
 
-    query_readonly = _spring_tool(tools, "query_readonly")
+    query_readonly = _find_tool(tools, "query_readonly")
     try:
         result = await query_readonly.ainvoke({"sql": "DELETE FROM fact_orders"})
     except Exception as exc:
@@ -293,7 +290,7 @@ async def test_nl2sql_mcp_exposes_guarded_read_surface_when_configured() -> None
 
 
 async def _invoke_get_statistics(read_tools) -> str:
-    stats = _spring_tool(read_tools, "get_statistics")
+    stats = _find_tool(read_tools, "get_statistics")
     try:
         result = await stats.ainvoke({})
     except Exception as exc:
@@ -359,7 +356,7 @@ async def test_inventory_low_stock_returns_readable_rows() -> None:
     except Exception as exc:
         _fail_on_spring_tool_error(exc, settings, "Spring read-tool discovery")
         return
-    low_stock = _spring_tool(read_tools, "inventory_low_stock")
+    low_stock = _find_tool(read_tools, "inventory_low_stock")
     try:
         result = await low_stock.ainvoke({})
     except Exception as exc:
@@ -391,7 +388,7 @@ async def test_product_search_resolves_low_stock_sku() -> None:
     except Exception as exc:
         _fail_on_spring_tool_error(exc, settings, "Spring read-tool discovery")
         return
-    product_search = _spring_tool(read_tools, "product_search")
+    product_search = _find_tool(read_tools, "product_search")
     try:
         result = await product_search.ainvoke({"keyword": "SKU-LOW-003"})
     except Exception as exc:
