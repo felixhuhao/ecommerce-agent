@@ -1,7 +1,8 @@
 """Tier 0 deterministic demo contract smoke.
 
-No live LLM. Proves the local Spring MCP and ModelScope chart MCP expose the tools and
-data shapes the demo depends on, before spending LLM tokens in Tier 1.
+No live LLM. Proves the local Spring MCP, optional NL2SQL MCP, and first-party
+ECharts artifact contract expose the tools and data shapes the demo depends on,
+before spending LLM tokens in Tier 1.
 
 Run mode:
 - default: each check skips cleanly when the service it needs is unreachable.
@@ -22,8 +23,8 @@ from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     CUSTOMER_INSIGHTS_SPRING_TOOLS,
     INVENTORY_SPRING_TOOLS,
-    MODELSCOPE_SERVER_NAME,
-    MODELSCOPE_VIZ_TOOLS,
+    NL2SQL_SERVER_NAME,
+    NL2SQL_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     PURCHASING_SPRING_TOOLS,
     READ_ONLY_SPRING_TOOLS,
@@ -33,13 +34,19 @@ from ecommerce_agent.mcp_client import (
     build_mcp_client,
     filter_customer_insights_tools,
     filter_inventory_tools,
+    filter_nl2sql_tools,
     filter_order_manager_tools,
     filter_purchasing_tools,
     filter_spring_read_tools,
-    filter_viz_tools,
     load_spring_read_tools,
     tool_names,
 )
+from ecommerce_agent.tools.charting import (
+    CREATE_CHART_SPEC_TOOL_NAME,
+    build_create_chart_spec_tool,
+)
+from ecommerce_agent.trace.capture import capture
+from ecommerce_agent.trace.schema import TraceRecord
 from tests.integration.helpers import skip_on_spring_mcp_auth_error, spring_health_url
 
 pytestmark = [pytest.mark.integration]
@@ -77,17 +84,24 @@ async def _gate_spring(settings: Settings) -> None:
         )
 
 
-async def _gate_chart_mcp(settings: Settings) -> None:
-    if not settings.modelscope_mcp_url:
-        _gate_unreachable("MODELSCOPE_MCP_URL is not configured")
-        return
+def _nl2sql_configured(settings: Settings) -> bool:
+    return settings.nl2sql_enabled and bool(settings.nl2sql_mcp_url.strip())
+
+
+async def _gate_nl2sql(settings: Settings) -> bool:
+    if not _nl2sql_configured(settings):
+        pytest.skip("NL2SQL MCP is not configured")
+        return False
+
     client = build_mcp_client(settings)
     try:
-        await client.get_tools(server_name=MODELSCOPE_SERVER_NAME)
+        await client.get_tools(server_name=NL2SQL_SERVER_NAME)
     except Exception as exc:
         _gate_unreachable(
-            f"chart/modelscope MCP is unreachable at {settings.modelscope_mcp_url}: {exc}"
+            f"NL2SQL MCP is unreachable at {settings.nl2sql_mcp_url}: {exc}"
         )
+        return False
+    return True
 
 
 def _spring_tool(tools: Iterable, name: str):
@@ -159,24 +173,54 @@ def _extract_rows(value: object) -> list[dict]:
     return []
 
 
+def _extract_mapping(value: object) -> dict:
+    parsed = _parse_content(value)
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError:
+            return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 async def test_spring_mcp_is_reachable() -> None:
     await _gate_spring(_settings())
 
 
-async def test_chart_mcp_exposes_viz_surface() -> None:
-    settings = _settings()
-    await _gate_chart_mcp(settings)
-    client = build_mcp_client(settings)
-    try:
-        tools = await client.get_tools(server_name=MODELSCOPE_SERVER_NAME)
-    except Exception as exc:
-        _gate_unreachable(
-            f"chart/modelscope MCP discovery failed at {settings.modelscope_mcp_url}: {exc}"
-        )
-        return
-    discovered = tool_names(filter_viz_tools(tools))
-    missing = MODELSCOPE_VIZ_TOOLS - discovered
-    assert not missing, f"chart MCP is missing viz tools from VIZ_TOOL_NAMES: {sorted(missing)}"
+async def test_echarts_tool_output_is_captured_as_artifact() -> None:
+    tool = build_create_chart_spec_tool()
+    result = await tool.ainvoke(
+        {
+            "title": "Revenue by Category",
+            "chart_type": "bar",
+            "x_axis": {"label": "Category", "type": "category"},
+            "y_axis": {"label": "Revenue", "type": "value", "unit": "USD"},
+            "series": [
+                {
+                    "name": "Revenue",
+                    "data": [
+                        {"x": "Electronics", "y": 75997},
+                        {"x": "Clothing", "y": 3731.85},
+                    ],
+                }
+            ],
+            "notes": ["Unknown category excluded from ranking."],
+        }
+    )
+    assert result["kind"] == "echarts"
+
+    async def raw_events():
+        yield {
+            "event": "on_tool_end",
+            "name": CREATE_CHART_SPEC_TOOL_NAME,
+            "run_id": "chart-run",
+            "data": {"output": result},
+        }
+
+    record = TraceRecord()
+    events = [event async for event in capture(raw_events(), record)]
+    assert events[0].artifact == result
+    assert events[0].artifact_id == result["id"]
 
 
 async def test_spring_exposes_specialist_tool_groups() -> None:
@@ -210,6 +254,42 @@ async def test_spring_exposes_specialist_tool_groups() -> None:
         )
         missing = expected - names
         assert not missing, f"{label}: Spring MCP is missing tools {sorted(missing)}"
+
+
+async def test_nl2sql_mcp_exposes_guarded_read_surface_when_configured() -> None:
+    settings = _settings()
+    await _gate_nl2sql(settings)
+    client = build_mcp_client(settings)
+    try:
+        tools = await client.get_tools(server_name=NL2SQL_SERVER_NAME)
+    except Exception as exc:
+        _gate_unreachable(
+            f"NL2SQL MCP discovery failed at {settings.nl2sql_mcp_url}: {exc}"
+        )
+        return
+
+    actual = tool_names(filter_nl2sql_tools(tools))
+    assert actual == NL2SQL_TOOLS, (
+        f"NL2SQL tool surface {sorted(actual)} != expected {sorted(NL2SQL_TOOLS)}"
+    )
+
+    query_readonly = _spring_tool(tools, "query_readonly")
+    try:
+        result = await query_readonly.ainvoke({"sql": "DELETE FROM fact_orders"})
+    except Exception as exc:
+        pytest.fail(f"NL2SQL query_readonly guard invocation failed: {exc}")
+        return
+
+    payload = _extract_mapping(result)
+    assert payload.get("ok") is True, f"unexpected query_readonly response: {payload}"
+    data = payload.get("data")
+    assert isinstance(data, dict), f"query_readonly response missing data: {payload}"
+    assert data.get("allowed") is False, (
+        f"query_readonly must reject DELETE through operation_guard: {payload}"
+    )
+    assert data.get("stage") == "operation_guard", (
+        f"query_readonly rejected at unexpected stage: {payload}"
+    )
 
 
 async def _invoke_get_statistics(read_tools) -> str:

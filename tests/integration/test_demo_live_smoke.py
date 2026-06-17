@@ -27,10 +27,12 @@ from ecommerce_agent.api.app import create_app
 from ecommerce_agent.auth.dependencies import current_actor
 from ecommerce_agent.auth.models import Actor, Role
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import VIZ_TOOLS, WRITE_SPRING_TOOLS
+from ecommerce_agent.mcp_client import NL2SQL_TOOLS, VIZ_TOOLS, WRITE_SPRING_TOOLS
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from tests.integration.helpers import (
     skip_unless_docker_available,
     skip_unless_mongo_is_running,
+    skip_unless_nl2sql_mcp_is_running,
     skip_unless_spring_mcp_is_running,
 )
 
@@ -51,9 +53,11 @@ MAX_SAME_TOOL_CALLS = {
     "product_search": 2,
     "inventory_query": 2,
     "stage_sales_analysis_inputs": 2,
+    "query_readonly": 2,
 }
 ALWAYS_FORBIDDEN = frozenset({"task", "write_todos"})
 SANDBOX_TOOLS = frozenset({"execute", "stage_sales_analysis_inputs"})
+LEGACY_CHART_TOOLS = VIZ_TOOLS - {CREATE_CHART_SPEC_TOOL_NAME}
 
 _DIAG_PATH = Path(".pytest_cache") / "demo_live_smoke_diagnostics.jsonl"
 
@@ -69,8 +73,11 @@ class Case:
     needs_sandbox: bool = False
     expects_artifact: bool = False
     expects_no_artifact: bool = False
+    expected_artifact_kind: str | None = None
+    expected_chart_types: frozenset[str] = field(default_factory=frozenset)
     expects_proposal: bool = False
     authorities: tuple[str, ...] | None = None
+    requires_nl2sql: bool = False
 
 
 CASES = [
@@ -79,7 +86,7 @@ CASES = [
         prompt="is SKU-LOW-003 below safety stock?",
         specialists=("inventory",),
         required_any_of=(frozenset({"inventory_low_stock", "inventory_query"}),),
-        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS,
+        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
     ),
     Case(
@@ -94,18 +101,25 @@ CASES = [
         id="sales_category_chart",
         prompt="compare sales by category and chart it",
         specialists=("sales-analyst",),
-        required_all_of=("get_statistics",),
-        required_any_of=(VIZ_TOOLS,),
-        forbidden=WRITE_SPRING_TOOLS | {"generate_line_chart"},
+        required_all_of=("get_statistics", CREATE_CHART_SPEC_TOOL_NAME),
+        forbidden=WRITE_SPRING_TOOLS | LEGACY_CHART_TOOLS,
         expects_artifact=True,
+        expected_artifact_kind="echarts",
+        expected_chart_types=frozenset({"bar", "column", "pie"}),
         authorities=("authoritative",),
     ),
     Case(
         id="forecast_chart",
         prompt="forecast SKU-LOW-003 sales next month and chart it",
         specialists=("sales-analyst",),
-        required_all_of=("stage_sales_analysis_inputs", "execute"),
+        required_all_of=(
+            "stage_sales_analysis_inputs",
+            "execute",
+            CREATE_CHART_SPEC_TOOL_NAME,
+        ),
         expects_artifact=True,
+        expected_artifact_kind="echarts",
+        expected_chart_types=frozenset({"line", "area", "bar", "column"}),
         needs_sandbox=True,
         authorities=("derived", "authoritative"),
     ),
@@ -131,6 +145,36 @@ CASES = [
         specialists=("sales-analyst", "inventory"),
         forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS,
         expects_no_artifact=True,
+    ),
+    Case(
+        id="warehouse_cohort",
+        prompt="show repeat purchase rate by customer cohort over the last 12 months",
+        specialists=("data-warehouse-analyst",),
+        required_all_of=("query_readonly",),
+        forbidden=WRITE_SPRING_TOOLS | {"request_approval"},
+        authorities=("authoritative",),
+        requires_nl2sql=True,
+    ),
+    Case(
+        id="warehouse_region_channel_chart",
+        prompt="break down last 90 days revenue by region and channel as a chart",
+        specialists=("data-warehouse-analyst",),
+        required_all_of=("query_readonly", CREATE_CHART_SPEC_TOOL_NAME),
+        forbidden=WRITE_SPRING_TOOLS | LEGACY_CHART_TOOLS | {"request_approval"},
+        expects_artifact=True,
+        expected_artifact_kind="echarts",
+        expected_chart_types=frozenset({"bar", "column", "pie"}),
+        authorities=("authoritative",),
+        requires_nl2sql=True,
+    ),
+    Case(
+        id="warehouse_current_stock_boundary",
+        prompt="current stock from the data warehouse for SKU-LOW-003",
+        specialists=("inventory",),
+        required_any_of=(frozenset({"inventory_low_stock", "inventory_query"}),),
+        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | NL2SQL_TOOLS,
+        authorities=("authoritative",),
+        requires_nl2sql=True,
     ),
 ]
 
@@ -287,6 +331,21 @@ def _assert_case(case: Case, ctx: dict) -> None:
 
     if case.expects_artifact:
         assert ctx["artifacts"], "expected a chart artifact but none was attached"
+    if case.expected_artifact_kind:
+        kinds = {artifact.get("kind") for artifact in ctx["artifacts"]}
+        assert case.expected_artifact_kind in kinds, (
+            f"expected artifact kind {case.expected_artifact_kind!r}; got {ctx['artifacts']}"
+        )
+    if case.expected_chart_types:
+        chart_types = {
+            artifact.get("chart_type")
+            for artifact in ctx["artifacts"]
+            if artifact.get("kind") == "echarts"
+        }
+        assert chart_types & set(case.expected_chart_types), (
+            f"expected ECharts type in {sorted(case.expected_chart_types)}; "
+            f"got {sorted(t for t in chart_types if t)}"
+        )
     if case.expects_no_artifact:
         assert not ctx["artifacts"], (
             f"expected no artifact for no-data prompt; got: {ctx['artifacts']}"
@@ -305,6 +364,7 @@ def _write_diagnostic(case: Case, ctx: dict, exc: BaseException) -> None:
     tools = ctx.get("tools") or []
     counts = Counter(tools)
     sandbox_counts = {name: counts.get(name, 0) for name in sorted(SANDBOX_TOOLS)}
+    warehouse_counts = {name: counts.get(name, 0) for name in sorted(NL2SQL_TOOLS)}
     line = {
         "case_id": case.id,
         "prompt": case.prompt,
@@ -319,6 +379,7 @@ def _write_diagnostic(case: Case, ctx: dict, exc: BaseException) -> None:
             "counts": sandbox_counts,
             "wall_ms": ctx.get("sandbox_ms"),
         },
+        "warehouse": {"counts": warehouse_counts},
         "authority": ctx.get("authority"),
         "artifacts": len(ctx.get("artifacts") or []),
         "proposal_status": (ctx.get("proposal") or {}).get("status"),
@@ -337,6 +398,8 @@ async def test_demo_live_case(case: Case) -> None:
     if not settings.llm_api_key:
         pytest.skip("LLM_API_KEY required")
     await skip_unless_spring_mcp_is_running(settings)
+    if case.requires_nl2sql:
+        await skip_unless_nl2sql_mcp_is_running(settings)
     await skip_unless_mongo_is_running(settings)
     if case.needs_sandbox:
         _skip_unless_sandbox_image(settings)

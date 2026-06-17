@@ -57,6 +57,18 @@ async def skip_unless_spring_mcp_is_running(settings: Settings) -> None:
         )
 
 
+async def skip_unless_nl2sql_mcp_is_running(settings: Settings) -> None:
+    if not settings.nl2sql_enabled or not settings.nl2sql_mcp_url.strip():
+        pytest.skip("NL2SQL MCP is not configured")
+
+    from ecommerce_agent.mcp_client import NL2SQL_SERVER_NAME, build_mcp_client
+
+    try:
+        await build_mcp_client(settings).get_tools(server_name=NL2SQL_SERVER_NAME)
+    except Exception as exc:
+        pytest.skip(f"NL2SQL MCP is not reachable at {settings.nl2sql_mcp_url}: {exc}")
+
+
 async def skip_unless_mongo_is_running(settings: Settings) -> None:
     try:
         from motor.motor_asyncio import AsyncIOMotorClient
