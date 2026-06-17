@@ -27,8 +27,9 @@ This is a tripwire, not a replacement for the deeper routing/tool-choice/grounde
   `create_chart_spec` -> ECharts artifact path. Legacy external chart MCP checks are
   optional only if that server remains part of local startup.
 - No NL2SQL requirement for the default Spring-only smoke. NL2SQL checks run when
-  `NL2SQL_ENABLED=true` and `NL2SQL_MCP_URL` is configured; in strict mode, configured
-  but unreachable NL2SQL is a failure.
+  `NL2SQL_ENABLED=true` and `NL2SQL_MCP_URL` is configured; in strict mode
+  (`RUN_DEMO_CONTRACT_SMOKE=1`, see §8), configured but unreachable NL2SQL is a
+  failure.
 
 ## 3. Test Tiers
 
@@ -194,6 +195,9 @@ Column semantics — do NOT treat the table as a loose "any tool satisfies the c
   neither allowed nor forbidden here — they live in §5.
 - **Chart tools** means `create_chart_spec` plus legacy external chart MCP tools from
   `VIZ_TOOL_NAMES`; cases that do not ask for a chart should call none of them.
+- Warehouse cases are conditional on NL2SQL being configured. They skip in Spring-only
+  runs; in NL2SQL-enabled runs, `warehouse_current_stock_boundary` is the key
+  source-boundary tripwire.
 
 | ID | Prompt | Expected Specialist | Expected Tools (allowed) | Forbidden Tools | Expected Output |
 | --- | --- | --- | --- | --- | --- |
@@ -331,8 +335,16 @@ Strict closeout with NL2SQL enabled:
 RUN_DEMO_CONTRACT_SMOKE=1 \
 NL2SQL_ENABLED=true \
 NL2SQL_MCP_URL=http://127.0.0.1:8001/mcp/ \
+NL2SQL_MCP_SERVICE_TOKEN=secret \
 uv run pytest tests/integration/test_demo_contract_smoke.py -q
 ```
+
+`NL2SQL_MCP_SERVICE_TOKEN` must match the token configured on the NL2SQL server.
+The example uses `8001` because this workspace runs NL2SQL through a local
+Compose override that maps the backend container's `8000` to host `8001`, leaving
+host `8000` for ecommerce-agent. If your NL2SQL backend is exposed directly on
+`8000`, use `http://127.0.0.1:8000/mcp/`. Keep the trailing `/mcp/` path to avoid
+POST redirects.
 
 Live API smoke:
 
