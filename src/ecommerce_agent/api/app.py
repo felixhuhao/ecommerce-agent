@@ -24,12 +24,12 @@ from ecommerce_agent.mcp_client import (
     CUSTOMER_INSIGHTS_SPRING_TOOLS,
     INVENTORY_SPRING_TOOLS,
     MODELSCOPE_SERVER_NAME,
+    MODELSCOPE_VIZ_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     PURCHASING_SPRING_TOOLS,
     PYTHON_SERVER_NAME,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
-    VIZ_TOOLS,
     WRITE_SPRING_TOOLS,
     build_mcp_client,
     filter_customer_insights_tools,
@@ -337,7 +337,7 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
             {
                 "agent_allowed_tool_count": len(viz_tools),
                 "agent_allowed_tools": sorted(tool_names(viz_tools)),
-                "missing_expected_viz_tools": sorted(VIZ_TOOLS - names),
+                "missing_expected_viz_tools": sorted(MODELSCOPE_VIZ_TOOLS - names),
             }
         )
 

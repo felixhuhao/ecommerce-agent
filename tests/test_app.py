@@ -14,7 +14,7 @@ from ecommerce_agent.auth.models import Actor, Role, User
 from ecommerce_agent.auth.passwords import hash_password
 from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import VIZ_TOOLS
+from ecommerce_agent.mcp_client import MODELSCOPE_VIZ_TOOLS
 from ecommerce_agent.monitoring.store import InMemoryAlertStore
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
@@ -74,7 +74,7 @@ class HealthySpringAndModelscopeFakeMcpClient:
         if server_name == "spring":
             return spring_mcp_tools()
         if server_name == "modelscope":
-            return [FakeTool(name) for name in sorted(VIZ_TOOLS)]
+            return [FakeTool(name) for name in sorted(MODELSCOPE_VIZ_TOOLS)]
         raise AssertionError(f"unexpected server: {server_name}")
 
 
@@ -227,9 +227,9 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
     assert body["status"] == "ok"
     modelscope = body["servers"]["modelscope"]
     assert modelscope["status"] == "ok"
-    assert modelscope["tool_count"] == len(VIZ_TOOLS)
-    assert modelscope["agent_allowed_tool_count"] == len(VIZ_TOOLS)
-    assert modelscope["agent_allowed_tools"] == sorted(VIZ_TOOLS)
+    assert modelscope["tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
+    assert modelscope["agent_allowed_tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
+    assert modelscope["agent_allowed_tools"] == sorted(MODELSCOPE_VIZ_TOOLS)
     assert modelscope["missing_expected_viz_tools"] == []
 
 

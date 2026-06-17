@@ -1,7 +1,31 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConversationView } from "./ConversationView";
 import type { ThreadMessage } from "../types";
+import { ConversationView } from "./ConversationView";
+
+vi.mock("echarts/core", () => ({
+  use: vi.fn(),
+  init: vi.fn(() => ({
+    setOption: vi.fn(),
+    resize: vi.fn(),
+    dispose: vi.fn(),
+  })),
+}));
+vi.mock("echarts/charts", () => ({
+  BarChart: {},
+  LineChart: {},
+  PieChart: {},
+  ScatterChart: {},
+}));
+vi.mock("echarts/components", () => ({
+  GridComponent: {},
+  LegendComponent: {},
+  TitleComponent: {},
+  TooltipComponent: {},
+}));
+vi.mock("echarts/renderers", () => ({
+  SVGRenderer: {},
+}));
 
 function baseProps() {
   return {
@@ -107,6 +131,62 @@ describe("ConversationView", () => {
       "chart-1.svg",
     );
     expect(downloads[1]).toHaveAttribute("download", "chart-2.png");
+  });
+
+  it("renders ECharts artifacts from agent message results", async () => {
+    render(
+      <ConversationView
+        messages={[
+          message({
+            result: {
+              artifacts: [
+                {
+                  id: "chart-1",
+                  kind: "echarts",
+                  title: "Sales by Category",
+                  chart_type: "bar",
+                  x_axis: { label: "Category", type: "category" },
+                  y_axis: { label: "Sales", type: "value", unit: "USD" },
+                  series: [
+                    {
+                      name: "Sales",
+                      data: [{ x: "Electronics", y: 75997 }],
+                    },
+                  ],
+                  tool_name: "create_chart_spec",
+                },
+              ],
+            },
+          }),
+        ]}
+        provisionalAnswer={null}
+        streamStatus="open"
+        composerDisabled={false}
+        busyNote={null}
+        error={null}
+        onSend={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("img", { name: "Sales by Category" })).toBeInTheDocument();
+    expect(await screen.findByText("create_chart_spec")).toBeInTheDocument();
+  });
+
+  it("renders unsupported artifacts as compact fallback", () => {
+    render(
+      <ConversationView
+        {...baseProps()}
+        messages={[
+          message({
+            result: {
+              artifacts: [{ id: "a1", kind: "mystery" }],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Chart artifact unavailable")).toBeInTheDocument();
   });
 
   it("renders agent markdown (bold + GFM table) as HTML", () => {

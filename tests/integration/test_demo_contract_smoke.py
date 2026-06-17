@@ -23,11 +23,11 @@ from ecommerce_agent.mcp_client import (
     CUSTOMER_INSIGHTS_SPRING_TOOLS,
     INVENTORY_SPRING_TOOLS,
     MODELSCOPE_SERVER_NAME,
+    MODELSCOPE_VIZ_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     PURCHASING_SPRING_TOOLS,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
-    VIZ_TOOLS,
     WRITE_OR_APPROVAL_SPRING_TOOLS,
     WRITE_SPRING_TOOLS,
     build_mcp_client,
@@ -175,7 +175,7 @@ async def test_chart_mcp_exposes_viz_surface() -> None:
         )
         return
     discovered = tool_names(filter_viz_tools(tools))
-    missing = VIZ_TOOLS - discovered
+    missing = MODELSCOPE_VIZ_TOOLS - discovered
     assert not missing, f"chart MCP is missing viz tools from VIZ_TOOL_NAMES: {sorted(missing)}"
 
 

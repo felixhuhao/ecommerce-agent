@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
+    MODELSCOPE_VIZ_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
@@ -16,6 +17,7 @@ from ecommerce_agent.mcp_client import (
     spring_headers,
     tool_names,
 )
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -146,4 +148,6 @@ def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
         "generate_pie_chart",
     }
     assert "generate_sankey_chart" in VIZ_TOOLS
+    assert CREATE_CHART_SPEC_TOOL_NAME in VIZ_TOOLS
+    assert CREATE_CHART_SPEC_TOOL_NAME not in MODELSCOPE_VIZ_TOOLS
     assert "some_other_modelscope_tool" not in VIZ_TOOLS

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.metadata import (
     TOOL_META,
     VIZ_TOOL_NAMES,
@@ -35,7 +36,7 @@ _ORDER_MANAGER = frozenset(
         "request_approval",
     }
 )
-_VIZ = frozenset(VIZ_TOOL_NAMES)
+_VIZ = frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
 _WRITE = frozenset(
     {"order_update", "purchase_order_create", "purchase_order_receive"}
 )
@@ -126,6 +127,11 @@ def test_live_label_fields_match_today_strings() -> None:
     assert viz is not None
     assert viz.live_label_start == "Generating chart"
     assert viz.live_label_end == "Chart generated"
+
+    echarts = get_tool_meta(CREATE_CHART_SPEC_TOOL_NAME)
+    assert echarts is not None
+    assert echarts.live_label_start == "Generating chart"
+    assert echarts.live_label_end == "Chart generated"
 
     approval = get_tool_meta("request_approval")
     assert approval is not None

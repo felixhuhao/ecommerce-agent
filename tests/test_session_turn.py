@@ -191,6 +191,41 @@ class ChartAgent:
         }
 
 
+class EChartsAgent:
+    async def astream_events(
+        self,
+        inputs: dict,
+        config: dict,
+        version: str,
+    ) -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_end",
+            "name": "create_chart_spec",
+            "run_id": "chart-run",
+            "data": {
+                "output": {
+                    "id": "chart-1",
+                    "kind": "echarts",
+                    "title": "Sales by Category",
+                    "chart_type": "bar",
+                    "x_axis": {"label": "Category", "type": "category"},
+                    "y_axis": {"label": "Sales", "type": "value", "unit": "USD"},
+                    "series": [
+                        {
+                            "name": "Sales",
+                            "data": [{"x": "Electronics", "y": 75997.0}],
+                        }
+                    ],
+                }
+            },
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "run_id": "final",
+            "data": {"chunk": SimpleNamespace(content="Chart generated.")},
+        }
+
+
 class BigEvidenceAgent:
     async def astream_events(
         self,
@@ -620,6 +655,42 @@ async def test_run_turn_attaches_chart_artifacts_to_agent_answer() -> None:
     }
     progress = [event for event in seen if event["event"] == "turn.progress"]
     assert any(event["label"] == "Chart generated" for event in progress)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_attaches_echarts_artifacts_to_agent_answer() -> None:
+    store = InMemoryThreadStore()
+
+    await run_turn(
+        agent=EChartsAgent(),
+        message="hello",
+        session_id="s1",
+        turn_id="t1",
+        store=store,
+        bus=SessionBus(),
+        recursion_limit=80,
+    )
+
+    messages = await store.list_messages("s1")
+    assert messages[0].result == {
+        "artifacts": [
+            {
+                "id": "chart-1",
+                "kind": "echarts",
+                "title": "Sales by Category",
+                "chart_type": "bar",
+                "x_axis": {"label": "Category", "type": "category"},
+                "y_axis": {"label": "Sales", "type": "value", "unit": "USD"},
+                "series": [
+                    {
+                        "name": "Sales",
+                        "data": [{"x": "Electronics", "y": 75997.0}],
+                    }
+                ],
+                "tool_name": "create_chart_spec",
+            }
+        ]
+    }
 
 
 @pytest.mark.asyncio

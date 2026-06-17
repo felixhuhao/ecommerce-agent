@@ -9,6 +9,13 @@ import type { ThreadMessage, TurnProgressStep } from "../types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import { SourcesExpander } from "./SourcesExpander";
 import { TurnStatusTracker } from "./TurnStatusTracker";
+import {
+  EChartsArtifact,
+  type EChartsArtifactSpec,
+  UnsupportedChartArtifact,
+  isEChartsArtifact,
+  isValidEChartsArtifact,
+} from "./EChartsArtifact";
 
 interface ConversationViewProps {
   messages: ThreadMessage[];
@@ -59,28 +66,46 @@ interface ImageArtifact {
   toolName: string | null;
 }
 
-function imageArtifacts(result: Record<string, unknown> | null): ImageArtifact[] {
+type RenderableArtifact =
+  | { kind: "image"; artifact: ImageArtifact }
+  | { kind: "echarts"; artifact: EChartsArtifactSpec }
+  | { kind: "unsupported"; id: string };
+
+function imageArtifact(item: unknown, index: number): ImageArtifact | null {
+  if (!item || typeof item !== "object") return null;
+  const artifact = item as Record<string, unknown>;
+  const src = artifact.src;
+  if (typeof src !== "string" || !src.startsWith("data:image/")) return null;
+  const id = artifact.id;
+  const title = artifact.title;
+  const mimeType = artifact.mime_type;
+  const toolName = artifact.tool_name;
+  return {
+    id: typeof id === "string" && id.length > 0 ? id : `chart-${index}`,
+    src,
+    title: typeof title === "string" && title.length > 0 ? title : "Generated chart",
+    mimeType: typeof mimeType === "string" && mimeType.length > 0 ? mimeType : "image/png",
+    toolName: typeof toolName === "string" ? toolName : null,
+  };
+}
+
+function renderableArtifacts(result: Record<string, unknown> | null): RenderableArtifact[] {
   const artifacts = result?.artifacts;
   if (!Array.isArray(artifacts)) return [];
 
-  return artifacts.flatMap((item, index) => {
-    if (!item || typeof item !== "object") return [];
-    const artifact = item as Record<string, unknown>;
-    const src = artifact.src;
-    if (typeof src !== "string" || !src.startsWith("data:image/")) return [];
-    const id = artifact.id;
-    const title = artifact.title;
-    const mimeType = artifact.mime_type;
-    const toolName = artifact.tool_name;
-    return [
-      {
-        id: typeof id === "string" && id.length > 0 ? id : `chart-${index}`,
-        src,
-        title: typeof title === "string" && title.length > 0 ? title : "Generated chart",
-        mimeType: typeof mimeType === "string" && mimeType.length > 0 ? mimeType : "image/png",
-        toolName: typeof toolName === "string" ? toolName : null,
-      },
-    ];
+  return artifacts.flatMap((item, index): RenderableArtifact[] => {
+    if (isValidEChartsArtifact(item)) {
+      return [{ kind: "echarts", artifact: item }];
+    }
+    const image = imageArtifact(item, index);
+    if (image) {
+      return [{ kind: "image", artifact: image }];
+    }
+    if (isEChartsArtifact(item) || (item && typeof item === "object")) {
+      const id = (item as Record<string, unknown>).id;
+      return [{ kind: "unsupported", id: typeof id === "string" ? id : `artifact-${index}` }];
+    }
+    return [];
   });
 }
 
@@ -237,7 +262,7 @@ export function ConversationView({
           <p className="empty-note">No messages</p>
         ) : null}
         {messages.map((message) => {
-          const artifacts = imageArtifacts(message.result);
+          const artifacts = renderableArtifacts(message.result);
           const status = headerStatus(message);
           return (
             <article
@@ -269,24 +294,33 @@ export function ConversationView({
               ) : null}
               {artifacts.length > 0 ? (
                 <div className="message-artifacts">
-                  {artifacts.map((artifact) => (
-                    <figure className="chart-artifact" key={artifact.id}>
-                      <img src={artifact.src} alt={artifact.title} />
-                      <figcaption>
-                        <span className="chart-artifact-title">{artifact.title}</span>
-                        <span className="chart-artifact-meta">
-                          {artifact.toolName ? <span>{artifact.toolName}</span> : null}
-                          <a
-                            className="artifact-download"
-                            href={artifact.src}
-                            download={`${artifact.id}.${extFromMime(artifact.mimeType)}`}
-                          >
-                            <Download size={14} aria-hidden="true" /> Download
-                          </a>
-                        </span>
-                      </figcaption>
-                    </figure>
-                  ))}
+                  {artifacts.map((item) => {
+                    if (item.kind === "echarts") {
+                      return <EChartsArtifact artifact={item.artifact} key={item.artifact.id} />;
+                    }
+                    if (item.kind === "unsupported") {
+                      return <UnsupportedChartArtifact key={item.id} />;
+                    }
+                    const artifact = item.artifact;
+                    return (
+                      <figure className="chart-artifact" key={artifact.id}>
+                        <img src={artifact.src} alt={artifact.title} />
+                        <figcaption>
+                          <span className="chart-artifact-title">{artifact.title}</span>
+                          <span className="chart-artifact-meta">
+                            {artifact.toolName ? <span>{artifact.toolName}</span> : null}
+                            <a
+                              className="artifact-download"
+                              href={artifact.src}
+                              download={`${artifact.id}.${extFromMime(artifact.mimeType)}`}
+                            >
+                              <Download size={14} aria-hidden="true" /> Download
+                            </a>
+                          </span>
+                        </figcaption>
+                      </figure>
+                    );
+                  })}
                 </div>
               ) : null}
             </article>

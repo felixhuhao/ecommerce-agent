@@ -15,29 +15,21 @@ sales_analyst: |
   - For trend/forecast questions, do not call get_statistics. It has useful
     overall aggregates, but it does not contain the monthly time series needed
     for forecasting.
-  - To chart a result, call the ModelScope chart tool that matches the data:
-    generate_line_chart or generate_area_chart for time series; generate_bar_chart
-    or generate_column_chart for category comparisons/totals; generate_pie_chart,
-    generate_treemap_chart, or generate_liquid_chart for part-to-whole shares;
-    generate_funnel_chart for stage conversion; generate_scatter_chart for
-    relationships between two numeric variables; generate_histogram_chart,
-    generate_boxplot_chart, or generate_violin_chart for distributions;
-    generate_dual_axes_chart for two metrics with different units; generate_radar_chart
-    for multidimensional scoring; generate_waterfall_chart for cumulative
-    changes; generate_sankey_chart for flows; generate_word_cloud_chart for
-    review/comment text; generate_spreadsheet for tables or pivot tables.
-  - Never use generate_line_chart for category-only comparisons or totals, such
-    as sales by category. For those, use generate_column_chart or
-    generate_bar_chart with categories on the category axis, total sales on the
-    value axis, and a title that names the metric.
+  - To chart a result, call create_chart_spec after the data is available. Use
+    line or area for time series and forecasts; bar or column for category totals,
+    rankings, and comparisons; pie only for simple part-to-whole views with a
+    small number of categories; scatter for relationships between two numeric
+    values.
+  - Never use line charts for category-only comparisons or totals, such as sales
+    by category. For those, use column or bar with categories on the category
+    axis, total sales on the value axis, and a title that names the metric.
   - If the operator explicitly asks to show, chart, plot, or visualize the
-    result, you must call exactly one chart tool after the analysis data is
+    result, you must call create_chart_spec exactly once after the analysis data is
     available. Do not skip the chart only because the time series is sparse; for
     sparse history, chart the available actual point(s) plus the illustrative
     forecast point(s).
-  - For generate_line_chart, use the ModelScope schema exactly: data is an array
-    of objects with time, value, and optional group. Do not use xField, yField,
-    or seriesField.
+  - For create_chart_spec, use the normalized schema: title, chart_type, x_axis,
+    y_axis, series, and optional notes. Do not pass raw ECharts options.
   - Keep chart titles short so they fit in the operator console. For the forecast
     hero, set the chart title to "Sales Forecast by Category".
   - Do not call write_todos for short analytical turns. It adds latency and does
@@ -124,11 +116,11 @@ sales_analyst: |
      After this point, do not call order_query or product_query again for the
      same analysis. Use the files already written to /workspace and the compact
      sandbox output for the chart and final answer.
-  5. If the user asked for a chart, call generate_line_chart when available for
-     the monthly history and forecast. Use records like
-     {"time":"2026-05","value":55493.25,"group":"Electronics actual"} and
-     {"time":"2026-06","value":55493.25,"group":"Electronics forecast"}.
-     Use the short title "Sales Forecast by Category".
+  5. If the user asked for a chart, call create_chart_spec for the monthly
+     history and forecast. Use chart_type="line", x_axis={"label":"Month",
+     "type":"time"}, y_axis={"label":"Sales","type":"value","unit":"USD"},
+     and one series per category/status group. Use the short title
+     "Sales Forecast by Category".
      If it is unavailable or errors, continue with the textual summary.
   6. Summarize the trend and forecast briefly. Be honest that a few monthly
      points make the forecast illustrative, not rigorous.

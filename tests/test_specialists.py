@@ -10,6 +10,7 @@ from ecommerce_agent.specialists.providers import (
     get_default_provider,
     get_provider,
 )
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.metadata import select_names
 
 
@@ -77,6 +78,7 @@ def test_propose_provider_is_gated_on_can_propose() -> None:
 def test_sales_analyst_tags_select_reads_viz_staging_without_writes_or_approval() -> None:
     selected = select_names(get_provider("sales-analyst").tool_tags)
     assert "get_statistics" in selected
+    assert CREATE_CHART_SPEC_TOOL_NAME in selected
     assert "generate_line_chart" in selected
     assert "stage_sales_analysis_inputs" in selected
     assert "order_update" not in selected
@@ -192,6 +194,30 @@ def test_build_selects_tools_from_provider_tool_tags() -> None:
     # are excluded because tool_tags names only reads.
     assert [t.name for t in captured["spring_tools"]] == ["product_query"]
     assert captured["viz_tools"] == []
+
+
+def test_sales_analyst_builds_first_party_chart_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    def record_analyst(model, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return "AGENT"
+
+    import ecommerce_agent.specialists.providers as providers
+
+    monkeypatch.setattr(providers, "build_sales_analyst", record_analyst)
+    get_provider("sales-analyst").build(
+        model="m",
+        spring_tools=[
+            SimpleNamespace(name="get_statistics"),
+            SimpleNamespace(name="order_query"),
+            SimpleNamespace(name="product_query"),
+        ],
+        viz_tools=[],
+        backend="b",
+    )
+
+    assert [tool.name for tool in captured["viz_tools"]] == [CREATE_CHART_SPEC_TOOL_NAME]
 
 
 def test_removing_analysis_staging_tag_omits_staging_tool(

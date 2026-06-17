@@ -844,6 +844,25 @@ button:disabled {
   box-shadow: 0 0 0 1px var(--rule), 0 10px 24px -18px rgba(60, 44, 16, 0.45);
 }
 
+.chart-artifact-echarts {
+  padding: 0;
+}
+
+.echarts-canvas {
+  width: 100%;
+  min-height: 340px;
+  border-radius: 6px 6px 0 0;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px var(--rule), 0 10px 24px -18px rgba(60, 44, 16, 0.45);
+}
+
+.artifact-error {
+  padding: 18px;
+  color: var(--ink-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
 .chart-artifact figcaption {
   display: flex;
   align-items: center;
@@ -854,6 +873,14 @@ button:disabled {
   color: var(--ink-dim);
   font-family: var(--font-mono);
   font-size: 0.72rem;
+}
+
+.chart-artifact-caption-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
 }
 
 .chart-artifact-title {
@@ -868,6 +895,16 @@ button:disabled {
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+}
+
+.chart-artifact-notes {
+  width: 100%;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-dim);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .turn-status {

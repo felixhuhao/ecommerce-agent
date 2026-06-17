@@ -5,7 +5,7 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from ecommerce_agent.config import Settings, get_settings
-from ecommerce_agent.tools.metadata import select_names
+from ecommerce_agent.tools.metadata import VIZ_TOOL_NAMES, select_names
 
 SPRING_SERVER_NAME = "spring"
 MODELSCOPE_SERVER_NAME = "modelscope"
@@ -42,6 +42,7 @@ CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
     frozenset({"customers.query", "orders.query", "analytics.aggregate"})
 )
 VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
+MODELSCOPE_VIZ_TOOLS: frozenset[str] = frozenset(VIZ_TOOL_NAMES)
 
 
 def spring_headers(
@@ -128,7 +129,7 @@ def filter_customer_insights_tools(tools: list[BaseTool]) -> list[BaseTool]:
 
 
 def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:
-    return [tool for tool in tools if tool.name in VIZ_TOOLS]
+    return [tool for tool in tools if tool.name in MODELSCOPE_VIZ_TOOLS]
 
 
 async def load_spring_read_tools(client: MultiServerMCPClient) -> list[BaseTool]:
@@ -141,6 +142,8 @@ async def load_order_manager_tools(client: MultiServerMCPClient) -> list[BaseToo
     return filter_order_manager_tools(tools)
 
 
+# Retained for optional/legacy ModelScope chart MCP diagnostics; the default
+# session runtime uses the first-party create_chart_spec tool.
 async def load_modelscope_viz_tools(client: MultiServerMCPClient) -> list[BaseTool]:
     tools = await client.get_tools(server_name=MODELSCOPE_SERVER_NAME)
     return filter_viz_tools(tools)

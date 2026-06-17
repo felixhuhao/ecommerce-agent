@@ -39,8 +39,9 @@ X-Session-Id: local-session
 ```
 
 Copy `.env.example` to `.env` and adjust values for your local MCP servers.
-Week 1 requires only the SpringBoot business MCP server. The optional
-ModelScope/AntV chart MCP server can be enabled for chart-tool smoke tests:
+Week 1 requires only the SpringBoot business MCP server. Charts now render through
+first-party ECharts artifacts. The optional legacy ModelScope/AntV chart MCP
+server can still be enabled for chart-tool smoke tests:
 
 ```bash
 docker compose -f compose.chart-mcp.yml up chart-mcp
@@ -52,12 +53,12 @@ Then set:
 MODELSCOPE_MCP_URL=http://127.0.0.1:1122/mcp
 ```
 
-The agent allowlists a small chart surface from that server:
+The diagnostics allowlist a chart surface from that server:
 `generate_line_chart`, `generate_bar_chart`, and `generate_column_chart`.
 The Compose file also starts a lightweight local renderer stub and wires AntV's
 `VIS_REQUEST_SERVER` to it, so backend chart-tool smoke tests do not depend on
-the public AntV render endpoint. UI-grade chart rendering belongs to the later
-operator console/artifact milestone. If `1122` is already in use, run:
+the public AntV render endpoint. It is not part of the default agent runtime. If
+`1122` is already in use, run:
 
 ```bash
 CHART_MCP_PORT=1123 docker compose -f compose.chart-mcp.yml up chart-mcp
@@ -68,10 +69,11 @@ and set `MODELSCOPE_MCP_URL=http://127.0.0.1:1123/mcp`.
 ## Agent-Owned Infrastructure
 
 M2 adds a server-owned conversation thread backed by MongoDB. This repo owns the
-agent-side stack — Mongo, the chart MCP server, and the chart renderer — as
-Compose projects. The Java MCP server and MySQL remain a separate backend stack
-in `../ecommerce-mcp-server` with their own lifecycle; this repo does not start,
-seed, or reset them.
+agent-side stack — Mongo and the local sandbox executor — as Compose projects.
+The optional legacy chart MCP server and renderer live in `compose.chart-mcp.yml`
+for explicit smoke/debug runs. The Java MCP server and MySQL remain a separate
+backend stack in `../ecommerce-mcp-server` with their own lifecycle; this repo
+does not start, seed, or reset them.
 
 Start the full agent-owned stack with one command:
 
@@ -79,10 +81,16 @@ Start the full agent-owned stack with one command:
 docker compose -f docker-compose.yml -f compose.chart-mcp.yml -f compose.sandbox.yml up -d
 ```
 
-This brings up Mongo (`docker-compose.yml`, named volume `mongo-data`) plus the
-chart MCP server and renderer (`compose.chart-mcp.yml`) and the local sandbox
-executor service (`compose.sandbox.yml`). To start only what a given task needs,
-target individual services instead.
+This legacy command brings up Mongo (`docker-compose.yml`, named volume
+`mongo-data`), the optional chart MCP server and renderer (`compose.chart-mcp.yml`),
+and the local sandbox executor service (`compose.sandbox.yml`). For normal local
+development, prefer:
+
+```bash
+docker compose -f docker-compose.yml -f compose.sandbox.yml up -d
+```
+
+To start only what a given task needs, target individual services instead.
 
 Start Mongo when exercising sessions or the approval workflow:
 

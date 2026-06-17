@@ -11,19 +11,18 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert isinstance(prompt, str) and len(prompt) > 100
     assert "read-only" in prompt.lower()
     assert "ecommerce_analysis" in prompt
-    assert "generate_line_chart" in prompt
-    assert "generate_bar_chart" in prompt
-    assert "generate_column_chart" in prompt
-    assert "generate_pie_chart" in prompt
-    assert "generate_scatter_chart" in prompt
-    assert "generate_spreadsheet" in prompt
+    assert "create_chart_spec" in prompt
+    assert "bar or column" in prompt
+    assert "line or area" in prompt
+    assert "pie" in prompt
+    assert "scatter" in prompt
     assert "Never embed raw order or product payloads inside Python source" in prompt
     assert "prefer stage_sales_analysis_inputs" in prompt.lower()
     assert "Do not call order_query" in prompt
-    assert "you must call exactly one chart tool" in prompt
-    assert "time, value, and optional group" in prompt
-    assert "Never use generate_line_chart for category-only comparisons" in prompt
-    assert "categories on the category axis" in prompt
+    assert "you must call create_chart_spec exactly once" in prompt
+    assert "Do not pass raw ECharts options" in prompt
+    assert "Never use line charts for category-only comparisons" in prompt
+    assert "categories on the category" in prompt and "total sales on the value axis" in prompt
     assert "do not call order_query or product_query again" in prompt
     assert "Do not include process narration" in prompt
     assert "chart" in prompt and "unavailable" in prompt

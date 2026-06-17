@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+
 
 @dataclass(frozen=True)
 class ToolMeta:
@@ -110,6 +112,14 @@ TOOL_META: tuple[ToolMeta, ...] = (
     ),
     # --- ModelScope viz tools ---
     *(_viz(name) for name in VIZ_TOOL_NAMES),
+    # --- First-party chart spec tool ---
+    ToolMeta(
+        CREATE_CHART_SPEC_TOOL_NAME,
+        "custom",
+        frozenset({"viz.chart"}),
+        live_label_start="Generating chart",
+        live_label_end="Chart generated",
+    ),
     # --- Custom staging tool ---
     ToolMeta(
         "stage_sales_analysis_inputs",

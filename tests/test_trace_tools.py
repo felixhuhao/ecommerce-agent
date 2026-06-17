@@ -29,6 +29,7 @@ def test_data_bearing_allowlist() -> None:
     assert is_data_bearing("order_query")
     assert is_data_bearing(EXECUTE_TOOL)
     assert not is_data_bearing("write_file")
+    assert not is_data_bearing("create_chart_spec")
     assert not is_data_bearing("generate_line_chart")
     assert not is_data_bearing("request_approval")
 

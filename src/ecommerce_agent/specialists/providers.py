@@ -29,6 +29,10 @@ from ecommerce_agent.agents import (
     build_sales_analyst,
 )
 from ecommerce_agent.sessions.registry import RuntimeActor
+from ecommerce_agent.tools.charting import (
+    CREATE_CHART_SPEC_TOOL_NAME,
+    build_create_chart_spec_tool,
+)
 from ecommerce_agent.tools.metadata import select_names
 from ecommerce_agent.tools.staging import (
     STAGE_SALES_ANALYSIS_TOOL_NAME,
@@ -117,17 +121,20 @@ def _assemble_sales_analyst(
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
-    # The staging tool is specialist-owned (not MCP-discovered), so it is built only
-    # when ``analysis.staging`` entitled it via tool_tags -> selected_names.
+    # Custom tools are specialist-owned (not MCP-discovered), so they are built only
+    # when tool_tags -> selected_names entitles them.
     staging: list[BaseTool] = []
     if STAGE_SALES_ANALYSIS_TOOL_NAME in selected_names:
         staging = [
             build_sales_analysis_staging_tool(spring_read_tools=spring_tools, backend=backend)
         ]
+    chart_tools: list[BaseTool] = []
+    if CREATE_CHART_SPEC_TOOL_NAME in selected_names:
+        chart_tools = [build_create_chart_spec_tool()]
     return build_sales_analyst(
         model,
         spring_read_tools=spring_tools,
-        viz_tools=viz_tools,
+        viz_tools=[*viz_tools, *chart_tools],
         staging_tools=staging,
         backend=backend,
     )

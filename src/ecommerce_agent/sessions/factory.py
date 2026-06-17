@@ -9,7 +9,6 @@ from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     SPRING_SERVER_NAME,
     build_mcp_client,
-    load_modelscope_viz_tools,
 )
 from ecommerce_agent.models import get_classifier_model, get_primary_model
 from ecommerce_agent.routing.registry import build_specialist_registry
@@ -125,17 +124,9 @@ async def build_session_runtime(
         session_id=session_id,
     )
     spring_all_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
-    if settings.modelscope_mcp_url:
-        try:
-            viz_tools = await load_modelscope_viz_tools(mcp_client)
-        except Exception:
-            logger.warning(
-                "ModelScope MCP unavailable; continuing without viz tools",
-                exc_info=True,
-            )
-            viz_tools = []
-    else:
-        viz_tools = []
+    # Chart rendering is first-party now. ModelScope chart MCP may still be configured
+    # for diagnostics/legacy demos, but it is not part of the default runtime surface.
+    viz_tools = []
 
     sandbox = build_session_sandbox(settings, session_id=session_id)
     model = get_primary_model(settings)

@@ -5,6 +5,7 @@ from typing import Any
 
 from ecommerce_agent.approvals import extract_approval_id
 from ecommerce_agent.mcp_client import VIZ_TOOLS
+from ecommerce_agent.tools.charting import validate_echarts_artifact
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 from ecommerce_agent.trace.tools import is_data_bearing
 
@@ -103,6 +104,37 @@ def _image_artifact_from_output(value: Any, *, fallback_id: str | None = None) -
                 return artifact
 
     return None
+
+
+def _echarts_artifact_from_output(value: Any, *, fallback_id: str | None = None) -> dict | None:
+    content = getattr(value, "content", None)
+    if content is not None:
+        artifact = _echarts_artifact_from_output(content, fallback_id=fallback_id)
+        if artifact:
+            return artifact
+
+    if isinstance(value, list):
+        for item in value:
+            artifact = _echarts_artifact_from_output(item, fallback_id=fallback_id)
+            if artifact:
+                return artifact
+        return None
+
+    if isinstance(value, dict):
+        try:
+            artifact = validate_echarts_artifact(value, fallback_id=fallback_id)
+        except Exception:
+            return None
+        if artifact:
+            return artifact
+
+    return None
+
+
+def _viz_artifact_from_output(value: Any, *, fallback_id: str | None = None) -> dict | None:
+    return _echarts_artifact_from_output(
+        value, fallback_id=fallback_id
+    ) or _image_artifact_from_output(value, fallback_id=fallback_id)
 
 
 def _as_token_count(value: Any) -> int | None:
@@ -233,7 +265,7 @@ def _to_trace_event(
     if event_type == "on_tool_end":
         output = data.get("output")
         artifact = (
-            _image_artifact_from_output(output, fallback_id=str(run_id) if run_id else None)
+            _viz_artifact_from_output(output, fallback_id=str(run_id) if run_id else None)
             if raw.get("name") in VIZ_TOOLS
             else None
         )

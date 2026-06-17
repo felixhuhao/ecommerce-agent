@@ -12,6 +12,7 @@ from ecommerce_agent.sessions.factory import (
 )
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.specialists import providers as providers_module
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 
 
 class FakeAgent:
@@ -141,6 +142,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]
     assert captured["direct_analyst_tools"] == ["product_query", "product_search", "order_query"]
     assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
+    assert captured["direct_viz_tools"] == [CREATE_CHART_SPEC_TOOL_NAME]
     assert captured["direct_order_manager_tools"] == [
         "order_query",
         "request_approval",
