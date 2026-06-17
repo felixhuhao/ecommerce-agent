@@ -144,7 +144,7 @@ def test_build_order_manager_uses_approval_tools_directly(monkeypatch) -> None:
     )
 
     assert result == "ORDER_MANAGER"
-    assert captured["backend"] is backend
+    assert captured["backend"] is None
     assert [tool.name for tool in captured["tools"]] == [
         "product_query",
         "request_approval",
@@ -190,7 +190,7 @@ def test_build_purchasing_uses_procurement_tools_directly(monkeypatch) -> None:
     )
 
     assert result == "PURCHASING"
-    assert captured["backend"] is backend
+    assert captured["backend"] is None
     assert [tool.name for tool in captured["tools"]] == [
         "supplier_query",
         "request_approval",
@@ -233,7 +233,7 @@ def test_build_inventory_threads_tools_and_backend(monkeypatch) -> None:
     )
 
     assert result == "INVENTORY"
-    assert captured["backend"] is backend
+    assert captured["backend"] is None
     assert [tool.name for tool in captured["tools"]] == [
         "inventory_query",
         "inventory_low_stock",
@@ -253,7 +253,7 @@ def test_build_inventory_threads_tools_and_backend(monkeypatch) -> None:
     )
 
 
-def test_build_customer_insights_threads_tools_and_backend(monkeypatch) -> None:
+def test_build_customer_insights_threads_tools_without_backend(monkeypatch) -> None:
     captured = {}
 
     def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
@@ -277,7 +277,7 @@ def test_build_customer_insights_threads_tools_and_backend(monkeypatch) -> None:
     )
 
     assert result == "CUSTOMER_INSIGHTS"
-    assert captured["backend"] is backend
+    assert captured["backend"] is None
     assert [tool.name for tool in captured["tools"]] == [
         "user_query",
         "order_query",

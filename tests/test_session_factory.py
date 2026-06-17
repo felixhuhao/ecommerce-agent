@@ -147,15 +147,18 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
         "order_query",
         "request_approval",
     ]
-    assert captured["direct_order_manager_backend"] is captured["direct_analyst_backend"]
+    assert captured["direct_order_manager_backend"] is None
     # purchasing owns product identity + supplier/PO reads + request_approval.
     assert captured["direct_purchasing_tools"] == ["product_search", "request_approval"]
-    assert captured["direct_purchasing_backend"] is captured["direct_analyst_backend"]
+    assert captured["direct_purchasing_backend"] is None
     assert captured["direct_inventory_tools"] == ["product_search"]
-    assert captured["direct_inventory_backend"] is captured["direct_analyst_backend"]
-    # customer-insights: order_query matches; product_query and request_approval don't
-    assert captured["direct_customer_insights_tools"] == ["order_query"]
-    assert captured["direct_customer_insights_backend"] is captured["direct_analyst_backend"]
+    assert captured["direct_inventory_backend"] is None
+    # customer-insights: order_query + chart tool match; product_query and request_approval don't.
+    assert captured["direct_customer_insights_tools"] == [
+        "order_query",
+        CREATE_CHART_SPEC_TOOL_NAME,
+    ]
+    assert captured["direct_customer_insights_backend"] is None
     assert mcp_client.calls == ["spring"]
 
 

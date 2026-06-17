@@ -296,6 +296,12 @@ customer_insights: |
   - For top customers by spend, use get_statistics and read
     topCustomersBySpend. Do not pull each customer's order history to compute
     this aggregate manually. Do not answer until you have tool results.
+  - To chart customer results, call create_chart_spec exactly once after the
+    data is available. Use bar for horizontal customer rankings, column for
+    vertical category comparisons, line for time series, pie for share-of-total,
+    and scatter only when the operator explicitly asks for a relationship plot.
+    Do not use Python, matplotlib, filesystem tools, or sandbox/code execution to
+    create charts.
 
   Boundary:
   - Cross-cutting business analytics (revenue trends, sales by category,

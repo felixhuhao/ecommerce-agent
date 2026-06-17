@@ -11,7 +11,7 @@ from ecommerce_agent.specialists.providers import (
     get_provider,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
-from ecommerce_agent.tools.metadata import select_names
+from ecommerce_agent.tools.metadata import VIZ_TOOL_NAMES, select_names
 
 
 def test_providers_are_five_specialists_in_order() -> None:
@@ -144,7 +144,10 @@ def test_inventory_tags_select_product_identity_and_inventory_tools_only() -> No
 
 def test_customer_insights_tags_select_customer_tools_and_statistics() -> None:
     selected = select_names(get_provider("customer-insights").tool_tags)
-    assert selected == frozenset({"user_query", "order_query", "get_statistics"})
+    assert selected == frozenset(
+        {"user_query", "order_query", "get_statistics", CREATE_CHART_SPEC_TOOL_NAME}
+        | set(VIZ_TOOL_NAMES)
+    )
     assert "inventory_query" not in selected
     assert "request_approval" not in selected
 

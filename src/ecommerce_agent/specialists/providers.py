@@ -58,7 +58,7 @@ INVENTORY_TAGS: frozenset[str] = frozenset(
     {"products.search", "inventory.query", "inventory.low_stock"}
 )
 CUSTOMER_INSIGHTS_TAGS: frozenset[str] = frozenset(
-    {"customers.query", "orders.query", "analytics.aggregate"}
+    {"customers.query", "orders.query", "analytics.aggregate", "viz.chart"}
 )
 
 # Phase B: order-manager owns only order-status writes; PO create/receive moved to
@@ -148,7 +148,7 @@ def _assemble_order_manager(
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
-    return build_order_manager(model, order_manager_tools=spring_tools, backend=backend)
+    return build_order_manager(model, order_manager_tools=spring_tools, backend=None)
 
 
 def _assemble_purchasing(
@@ -159,7 +159,7 @@ def _assemble_purchasing(
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
-    return build_purchasing(model, purchasing_tools=spring_tools, backend=backend)
+    return build_purchasing(model, purchasing_tools=spring_tools, backend=None)
 
 
 def _assemble_inventory(
@@ -170,7 +170,7 @@ def _assemble_inventory(
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
-    return build_inventory(model, inventory_tools=spring_tools, backend=backend)
+    return build_inventory(model, inventory_tools=spring_tools, backend=None)
 
 
 def _assemble_customer_insights(
@@ -181,8 +181,13 @@ def _assemble_customer_insights(
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
+    chart_tools: list[BaseTool] = []
+    if CREATE_CHART_SPEC_TOOL_NAME in selected_names:
+        chart_tools = [build_create_chart_spec_tool()]
     return build_customer_insights(
-        model, customer_insights_tools=spring_tools, backend=backend
+        model,
+        customer_insights_tools=[*spring_tools, *chart_tools],
+        backend=None,
     )
 
 

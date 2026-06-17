@@ -96,7 +96,7 @@ def build_order_manager(
         subagents=[],
         middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
-        backend=backend,
+        backend=None,
     )
 
 
@@ -114,7 +114,7 @@ def build_purchasing(
         subagents=[],
         middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
-        backend=backend,
+        backend=None,
     )
 
 
@@ -132,7 +132,7 @@ def build_inventory(
         subagents=[],
         middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
-        backend=backend,
+        backend=None,
     )
 
 
@@ -150,7 +150,7 @@ def build_customer_insights(
         subagents=[],
         middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
         skills=[],
-        backend=backend,
+        backend=None,
     )
 
 

@@ -112,6 +112,8 @@ def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
     assert "topCustomersBySpend" in prompt
     assert "Do not pull each customer's order history" in prompt
     assert "Do not answer until you have tool results" in prompt
+    assert "create_chart_spec exactly once" in prompt
+    assert "Do not use Python, matplotlib, filesystem tools, or sandbox/code execution" in prompt
     assert "Do not include process narration" in prompt
     assert '"Let me"' in prompt
     assert "Never create" in prompt or "never create" in prompt.lower()
