@@ -4,12 +4,13 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from ecommerce_agent.config import Settings, get_settings
+from ecommerce_agent.config import Settings, get_settings, nl2sql_configured
 from ecommerce_agent.tools.metadata import VIZ_TOOL_NAMES, select_names
 
 SPRING_SERVER_NAME = "spring"
 MODELSCOPE_SERVER_NAME = "modelscope"
 PYTHON_SERVER_NAME = "python"
+NL2SQL_SERVER_NAME = "nl2sql"
 
 # Compatibility shims derived from the single source of truth in
 # tools/metadata.py. Prefer tools.metadata directly in new code; these frozensets
@@ -43,6 +44,9 @@ CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
 )
 VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
 MODELSCOPE_VIZ_TOOLS: frozenset[str] = frozenset(VIZ_TOOL_NAMES)
+NL2SQL_TOOLS: frozenset[str] = select_names(
+    frozenset({"warehouse.schema", "warehouse.query", "warehouse.explain", "warehouse.metric"})
+)
 
 
 def spring_headers(
@@ -56,6 +60,12 @@ def spring_headers(
         "X-User-Id": user_id or settings.spring_mcp_user_id,
         "X-Session-Id": session_id or settings.spring_mcp_session_id,
     }
+
+
+def nl2sql_headers(settings: Settings) -> dict[str, str]:
+    if not settings.nl2sql_mcp_service_token:
+        return {}
+    return {"X-Service-Token": settings.nl2sql_mcp_service_token}
 
 
 def build_mcp_connections(
@@ -90,6 +100,15 @@ def build_mcp_connections(
         connections[PYTHON_SERVER_NAME] = {
             "transport": "streamable_http",
             "url": settings.python_mcp_url,
+            "timeout": timeout,
+            "sse_read_timeout": sse_read_timeout,
+        }
+
+    if nl2sql_configured(settings):
+        connections[NL2SQL_SERVER_NAME] = {
+            "transport": "streamable_http",
+            "url": settings.nl2sql_mcp_url,
+            "headers": nl2sql_headers(settings),
             "timeout": timeout,
             "sse_read_timeout": sse_read_timeout,
         }
@@ -132,6 +151,10 @@ def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in MODELSCOPE_VIZ_TOOLS]
 
 
+def filter_nl2sql_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name in NL2SQL_TOOLS]
+
+
 async def load_spring_read_tools(client: MultiServerMCPClient) -> list[BaseTool]:
     tools = await client.get_tools(server_name=SPRING_SERVER_NAME)
     return filter_spring_read_tools(tools)
@@ -147,6 +170,11 @@ async def load_order_manager_tools(client: MultiServerMCPClient) -> list[BaseToo
 async def load_modelscope_viz_tools(client: MultiServerMCPClient) -> list[BaseTool]:
     tools = await client.get_tools(server_name=MODELSCOPE_SERVER_NAME)
     return filter_viz_tools(tools)
+
+
+async def load_nl2sql_tools(client: MultiServerMCPClient) -> list[BaseTool]:
+    tools = await client.get_tools(server_name=NL2SQL_SERVER_NAME)
+    return filter_nl2sql_tools(tools)
 
 
 def tool_names(tools: list[BaseTool]) -> set[str]:

@@ -4,6 +4,7 @@ from ecommerce_agent.agent import build_agent
 from ecommerce_agent.agents import (
     build_coordinator,
     build_customer_insights,
+    build_data_warehouse_analyst,
     build_inventory,
     build_monitor_cause_agent,
     build_order_manager,
@@ -292,6 +293,43 @@ def test_build_customer_insights_threads_tools_without_backend(monkeypatch) -> N
         "ToolCallLimitMiddleware",
         "_ToolExclusionMiddleware",
     } <= middleware_types
+    assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(
+        captured["middleware"]
+    )
+
+
+def test_build_data_warehouse_analyst_threads_tools_without_backend(monkeypatch) -> None:
+    captured = {}
+
+    def fake_build_agent(model, tools, *, system_prompt, backend, middleware=(), **kwargs):
+        captured.update(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            middleware=list(middleware),
+            kwargs=kwargs,
+        )
+        return "WAREHOUSE"
+
+    monkeypatch.setattr(agents_module, "build_agent", fake_build_agent)
+
+    result = build_data_warehouse_analyst(
+        "MODEL",  # type: ignore[arg-type]
+        warehouse_tools=[_Tool("query_readonly")],  # type: ignore[list-item]
+        chart_tools=[_Tool("create_chart_spec")],  # type: ignore[list-item]
+        backend=object(),
+    )
+
+    assert result == "WAREHOUSE"
+    assert captured["backend"] is None
+    assert [tool.name for tool in captured["tools"]] == [
+        "query_readonly",
+        "create_chart_spec",
+    ]
+    assert "warehouse" in captured["system_prompt"].lower()
+    assert captured["kwargs"]["subagents"] == []
+    assert captured["kwargs"]["skills"] == []
     assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(
         captured["middleware"]
     )

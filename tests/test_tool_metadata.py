@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.metadata import (
+    NL2SQL_TOOL_NAMES,
     TOOL_META,
     VIZ_TOOL_NAMES,
     ToolMeta,
@@ -40,13 +41,18 @@ _VIZ = frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
 _WRITE = frozenset(
     {"order_update", "purchase_order_create", "purchase_order_receive"}
 )
-_DATA_BEARING = _READ_ONLY | {"stage_sales_analysis_inputs", "execute"}
+_DATA_BEARING = _READ_ONLY | NL2SQL_TOOL_NAMES | {"stage_sales_analysis_inputs", "execute"}
 
 
 def test_tool_meta_covers_every_classified_tool() -> None:
     names = {m.name for m in TOOL_META}
     expected = (
-        _READ_ONLY | _ORDER_MANAGER | _VIZ | _WRITE | {"stage_sales_analysis_inputs", "execute"}
+        _READ_ONLY
+        | _ORDER_MANAGER
+        | _VIZ
+        | _WRITE
+        | NL2SQL_TOOL_NAMES
+        | {"stage_sales_analysis_inputs", "execute"}
     )
     assert "request_approval" in names
     assert names == expected
@@ -77,6 +83,22 @@ def test_select_names_reproduces_order_manager_set() -> None:
 
 def test_select_names_reproduces_viz_set() -> None:
     assert select_names(frozenset({"viz.chart"})) == _VIZ
+
+
+def test_select_names_reproduces_nl2sql_set() -> None:
+    assert (
+        select_names(
+            frozenset(
+                {
+                    "warehouse.schema",
+                    "warehouse.query",
+                    "warehouse.explain",
+                    "warehouse.metric",
+                }
+            )
+        )
+        == NL2SQL_TOOL_NAMES
+    )
 
 
 def test_order_manager_selection_does_not_leak_unrelated_reads() -> None:
@@ -137,6 +159,15 @@ def test_live_label_fields_match_today_strings() -> None:
     assert approval is not None
     assert approval.live_label_start == "Requesting approval"
     assert approval.live_label_end == "Approval requested"
+
+    query = get_tool_meta("query_readonly")
+    assert query is not None
+    assert query.source == "nl2sql"
+    assert query.live_label_start == "Querying warehouse"
+
+    schema = get_tool_meta("list_tables")
+    assert schema is not None
+    assert schema.live_label_start == "Reading warehouse metadata"
 
 
 def test_tool_meta_is_frozen() -> None:

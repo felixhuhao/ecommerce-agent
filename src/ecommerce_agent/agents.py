@@ -154,6 +154,25 @@ def build_customer_insights(
     )
 
 
+def build_data_warehouse_analyst(
+    model: BaseChatModel,
+    *,
+    warehouse_tools: Sequence[BaseTool],
+    chart_tools: Sequence[BaseTool],
+    backend: Any,
+) -> Any:
+    """Build the optional read-only NL2SQL warehouse specialist."""
+    return build_agent(
+        model,
+        [*warehouse_tools, *chart_tools],
+        system_prompt=get_prompt("data_warehouse_analyst"),
+        subagents=[],
+        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
+        skills=[],
+        backend=None,
+    )
+
+
 def build_monitor_cause_agent(
     model: BaseChatModel,
     *,

@@ -118,6 +118,18 @@ def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
     assert "Never create" in prompt or "never create" in prompt.lower()
 
 
+def test_get_data_warehouse_prompt_is_nonempty_and_read_only() -> None:
+    prompt = get_prompt("data_warehouse_analyst")
+
+    assert isinstance(prompt, str) and len(prompt) > 100
+    assert "read-only" in prompt.lower()
+    assert "query_readonly" in prompt
+    assert "create_chart_spec" in prompt
+    assert "warehouse" in prompt.lower()
+    assert "current stock" in prompt.lower()
+    assert "Do not silently merge" in prompt
+
+
 def test_router_classifier_prompt_has_specialists_slot() -> None:
     prompt = get_prompt("router_classifier")
 
@@ -127,8 +139,10 @@ def test_router_classifier_prompt_has_specialists_slot() -> None:
     assert "order-manager" in prompt
     assert "inventory" in prompt
     assert "customer-insights" in prompt
+    assert "data-warehouse-analyst" in prompt
     assert "stockout" in prompt
     assert "customer order history" in prompt.lower()
+    assert "If \"data-warehouse-analyst\" is listed" in prompt
 
 
 def test_get_prompt_unknown_key_raises() -> None:

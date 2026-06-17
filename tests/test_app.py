@@ -14,7 +14,7 @@ from ecommerce_agent.auth.models import Actor, Role, User
 from ecommerce_agent.auth.passwords import hash_password
 from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import MODELSCOPE_VIZ_TOOLS
+from ecommerce_agent.mcp_client import MODELSCOPE_VIZ_TOOLS, NL2SQL_TOOLS
 from ecommerce_agent.monitoring.store import InMemoryAlertStore
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
@@ -75,6 +75,15 @@ class HealthySpringAndModelscopeFakeMcpClient:
             return spring_mcp_tools()
         if server_name == "modelscope":
             return [FakeTool(name) for name in sorted(MODELSCOPE_VIZ_TOOLS)]
+        raise AssertionError(f"unexpected server: {server_name}")
+
+
+class HealthySpringAndNl2sqlFakeMcpClient:
+    async def get_tools(self, server_name: str) -> list[FakeTool]:
+        if server_name == "spring":
+            return spring_mcp_tools()
+        if server_name == "nl2sql":
+            return [FakeTool(name) for name in sorted(NL2SQL_TOOLS)]
         raise AssertionError(f"unexpected server: {server_name}")
 
 
@@ -161,6 +170,35 @@ def test_health_reports_external_mcp_configuration() -> None:
     assert body["agent_ready"] is True
 
 
+def test_health_reports_nl2sql_only_when_enabled() -> None:
+    app = create_app(
+        settings=make_settings(
+            nl2sql_enabled=True,
+            nl2sql_mcp_url="http://nl2sql.example/mcp",
+        )
+    )
+    use_in_memory_stores(app)
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured_mcp_servers"] == ["spring", "nl2sql"]
+
+
+def test_health_omits_nl2sql_for_blank_url() -> None:
+    app = create_app(settings=make_settings(nl2sql_enabled=True, nl2sql_mcp_url="   "))
+    use_in_memory_stores(app)
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured_mcp_servers"] == ["spring"]
+
+
 def test_mcp_health_reports_spring_tool_visibility() -> None:
     app = create_app(settings=make_settings(), mcp_client=HealthyFakeMcpClient())
     use_in_memory_auth_stores(app)
@@ -233,6 +271,31 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
     assert modelscope["optional_legacy_viz_tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
     assert modelscope["optional_legacy_viz_tools"] == sorted(MODELSCOPE_VIZ_TOOLS)
     assert modelscope["missing_optional_legacy_viz_tools"] == []
+
+
+def test_mcp_health_reports_nl2sql_tool_visibility() -> None:
+    app = create_app(
+        settings=make_settings(
+            nl2sql_enabled=True,
+            nl2sql_mcp_url="http://nl2sql.example/mcp",
+        ),
+        mcp_client=HealthySpringAndNl2sqlFakeMcpClient(),
+    )
+    use_in_memory_auth_stores(app)
+
+    with TestClient(app) as client:
+        response = client.get("/health/mcp")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    nl2sql = body["servers"]["nl2sql"]
+    assert nl2sql["status"] == "ok"
+    assert nl2sql["runtime_enabled"] is True
+    assert nl2sql["data_warehouse_allowed_tool_count"] == len(NL2SQL_TOOLS)
+    assert nl2sql["data_warehouse_allowed_tools"] == sorted(NL2SQL_TOOLS)
+    assert nl2sql["expected_tools"] == sorted(NL2SQL_TOOLS)
+    assert nl2sql["missing_expected_tools"] == []
 
 
 def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:

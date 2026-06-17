@@ -33,6 +33,9 @@ class Settings(BaseSettings):
 
     modelscope_mcp_url: str = ""
     python_mcp_url: str = ""
+    nl2sql_enabled: bool = False
+    nl2sql_mcp_url: str = ""
+    nl2sql_mcp_service_token: str = ""
 
     mcp_request_timeout_seconds: float = Field(default=30.0, gt=0)
     mcp_sse_read_timeout_seconds: float = Field(default=300.0, gt=0)
@@ -83,3 +86,11 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def nl2sql_configured(settings: Settings | None) -> bool:
+    return bool(
+        settings is not None
+        and settings.nl2sql_enabled
+        and settings.nl2sql_mcp_url.strip()
+    )

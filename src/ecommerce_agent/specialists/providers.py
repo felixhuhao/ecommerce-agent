@@ -23,11 +23,13 @@ from langchain_core.tools import BaseTool
 
 from ecommerce_agent.agents import (
     build_customer_insights,
+    build_data_warehouse_analyst,
     build_inventory,
     build_order_manager,
     build_purchasing,
     build_sales_analyst,
 )
+from ecommerce_agent.config import Settings, nl2sql_configured
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.tools.charting import (
     CREATE_CHART_SPEC_TOOL_NAME,
@@ -60,6 +62,9 @@ INVENTORY_TAGS: frozenset[str] = frozenset(
 CUSTOMER_INSIGHTS_TAGS: frozenset[str] = frozenset(
     {"customers.query", "orders.query", "analytics.aggregate", "viz.chart"}
 )
+DATA_WAREHOUSE_TAGS: frozenset[str] = frozenset(
+    {"warehouse.schema", "warehouse.query", "warehouse.explain", "warehouse.metric", "viz.chart"}
+)
 
 # Phase B: order-manager owns only order-status writes; PO create/receive moved to
 # purchasing. purchasing owns procurement writes only (no order_status).
@@ -89,6 +94,7 @@ class SpecialistProvider:
         model: BaseChatModel,
         spring_tools: Sequence[BaseTool],
         viz_tools: Sequence[BaseTool],
+        warehouse_tools: Sequence[BaseTool] = (),
         backend: Any,
     ) -> Any:
         """Select tools by ``tool_tags`` from the loaded pools, then assemble the agent.
@@ -104,6 +110,7 @@ class SpecialistProvider:
             model=model,
             spring_tools=_select_by_name(spring_tools, names),
             viz_tools=_select_by_name(viz_tools, names),
+            warehouse_tools=_select_by_name(warehouse_tools, names),
             selected_names=names,
             backend=backend,
         )
@@ -118,6 +125,7 @@ def _assemble_sales_analyst(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    warehouse_tools: Sequence[BaseTool],
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
@@ -145,6 +153,7 @@ def _assemble_order_manager(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    warehouse_tools: Sequence[BaseTool],
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
@@ -156,6 +165,7 @@ def _assemble_purchasing(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    warehouse_tools: Sequence[BaseTool],
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
@@ -167,6 +177,7 @@ def _assemble_inventory(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    warehouse_tools: Sequence[BaseTool],
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
@@ -178,6 +189,7 @@ def _assemble_customer_insights(
     model: BaseChatModel,
     spring_tools: Sequence[BaseTool],
     viz_tools: Sequence[BaseTool],
+    warehouse_tools: Sequence[BaseTool],
     selected_names: frozenset[str],
     backend: Any,
 ) -> Any:
@@ -187,6 +199,26 @@ def _assemble_customer_insights(
     return build_customer_insights(
         model,
         customer_insights_tools=[*spring_tools, *chart_tools],
+        backend=None,
+    )
+
+
+def _assemble_data_warehouse_analyst(
+    *,
+    model: BaseChatModel,
+    spring_tools: Sequence[BaseTool],
+    viz_tools: Sequence[BaseTool],
+    warehouse_tools: Sequence[BaseTool],
+    selected_names: frozenset[str],
+    backend: Any,
+) -> Any:
+    chart_tools: list[BaseTool] = []
+    if CREATE_CHART_SPEC_TOOL_NAME in selected_names:
+        chart_tools = [build_create_chart_spec_tool()]
+    return build_data_warehouse_analyst(
+        model,
+        warehouse_tools=warehouse_tools,
+        chart_tools=chart_tools,
         backend=None,
     )
 
@@ -252,7 +284,30 @@ PROVIDERS: tuple[SpecialistProvider, ...] = (
     ),
 )
 
-_BY_NAME: dict[str, SpecialistProvider] = {p.name: p for p in PROVIDERS}
+OPTIONAL_PROVIDERS: tuple[SpecialistProvider, ...] = (
+    SpecialistProvider(
+        name="data-warehouse-analyst",
+        description=(
+            "read-only warehouse analytics: ad-hoc SQL-backed historical analysis, "
+            "cohorts, retention, region/channel breakdowns, long-range trends, "
+            "and metric exploration. Not for current operational state or writes."
+        ),
+        capability="read",
+        prompt_key="data_warehouse_analyst",
+        tool_tags=DATA_WAREHOUSE_TAGS,
+        assemble=_assemble_data_warehouse_analyst,
+    ),
+)
+
+ALL_PROVIDERS: tuple[SpecialistProvider, ...] = (*PROVIDERS, *OPTIONAL_PROVIDERS)
+
+
+def routeable_providers(settings: Settings | None = None) -> tuple[SpecialistProvider, ...]:
+    if not nl2sql_configured(settings):
+        return PROVIDERS
+    return ALL_PROVIDERS
+
+_BY_NAME: dict[str, SpecialistProvider] = {p.name: p for p in ALL_PROVIDERS}
 
 
 def get_provider(name: str) -> SpecialistProvider:

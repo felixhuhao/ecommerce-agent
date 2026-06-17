@@ -18,13 +18,15 @@ from ecommerce_agent.api.spa import mount_spa
 from ecommerce_agent.audit.mongo import MongoAuditStore
 from ecommerce_agent.auth.login_sessions import MongoLoginSessionStore
 from ecommerce_agent.auth.users_store import MongoUserStore
-from ecommerce_agent.config import Settings, get_settings
+from ecommerce_agent.config import Settings, get_settings, nl2sql_configured
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
     CUSTOMER_INSIGHTS_SPRING_TOOLS,
     INVENTORY_SPRING_TOOLS,
     MODELSCOPE_SERVER_NAME,
     MODELSCOPE_VIZ_TOOLS,
+    NL2SQL_SERVER_NAME,
+    NL2SQL_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     PURCHASING_SPRING_TOOLS,
     PYTHON_SERVER_NAME,
@@ -34,6 +36,7 @@ from ecommerce_agent.mcp_client import (
     build_mcp_client,
     filter_customer_insights_tools,
     filter_inventory_tools,
+    filter_nl2sql_tools,
     filter_order_manager_tools,
     filter_purchasing_tools,
     filter_spring_read_tools,
@@ -277,6 +280,8 @@ def configured_mcp_servers(settings: Settings) -> list[str]:
         servers.append(MODELSCOPE_SERVER_NAME)
     if settings.python_mcp_url:
         servers.append(PYTHON_SERVER_NAME)
+    if nl2sql_configured(settings):
+        servers.append(NL2SQL_SERVER_NAME)
     return servers
 
 
@@ -343,6 +348,17 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
                 "optional_legacy_viz_tool_count": len(viz_tools),
                 "optional_legacy_viz_tools": sorted(tool_names(viz_tools)),
                 "missing_optional_legacy_viz_tools": sorted(MODELSCOPE_VIZ_TOOLS - names),
+            }
+        )
+    elif server_name == NL2SQL_SERVER_NAME:
+        nl2sql_tools = filter_nl2sql_tools(tools)
+        result.update(
+            {
+                "runtime_enabled": True,
+                "data_warehouse_allowed_tool_count": len(nl2sql_tools),
+                "data_warehouse_allowed_tools": sorted(tool_names(nl2sql_tools)),
+                "expected_tools": sorted(NL2SQL_TOOLS),
+                "missing_expected_tools": sorted(NL2SQL_TOOLS - names),
             }
         )
 

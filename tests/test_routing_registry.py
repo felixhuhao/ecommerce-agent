@@ -1,5 +1,6 @@
 import pytest
 
+from ecommerce_agent.config import Settings
 from ecommerce_agent.routing.registry import (
     Specialist,
     SpecialistRegistry,
@@ -55,6 +56,14 @@ def test_registry_derives_from_specialist_providers() -> None:
 
     reg = build_specialist_registry()
     assert reg.names() == [provider.name for provider in PROVIDERS]
+
+
+def test_registry_adds_data_warehouse_only_when_nl2sql_enabled() -> None:
+    disabled = Settings(_env_file=None, nl2sql_enabled=False, nl2sql_mcp_url="http://x")
+    enabled = Settings(_env_file=None, nl2sql_enabled=True, nl2sql_mcp_url="http://x")
+
+    assert "data-warehouse-analyst" not in build_specialist_registry(disabled).names()
+    assert "data-warehouse-analyst" in build_specialist_registry(enabled).names()
 
 
 def test_registry_requires_exactly_one_default() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from ecommerce_agent.grounding.model import Authority, Grounding, GroundingSource
+from ecommerce_agent.tools.metadata import NL2SQL_QUERY_TOOL
 from ecommerce_agent.trace.schema import TraceRecord
 from ecommerce_agent.trace.tools import (
     GET_STATISTICS_TOOL,
@@ -16,6 +17,7 @@ AUTHORITATIVE_READ_TOOLS = frozenset(
         GET_STATISTICS_TOOL,
         "inventory_query",
         "inventory_low_stock",
+        NL2SQL_QUERY_TOOL,
     }
 )
 

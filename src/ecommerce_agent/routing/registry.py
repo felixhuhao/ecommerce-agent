@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ecommerce_agent.config import Settings
+    from ecommerce_agent.specialists.providers import SpecialistProvider
 
 
 @dataclass(frozen=True)
@@ -36,15 +41,21 @@ class SpecialistRegistry:
         return "\n".join(f"- {s.name}: {s.description}" for s in self.specialists)
 
 
-def build_specialist_registry() -> SpecialistRegistry:
+def build_specialist_registry(
+    settings: Settings | None = None,
+    providers: list[SpecialistProvider] | tuple[SpecialistProvider, ...] | None = None,
+) -> SpecialistRegistry:
     """Build the registry from the authoritative provider list in specialists.providers.
 
-    ``PROVIDERS`` is imported lazily so this module stays importable without pulling
-    in the agent builders / DeepAgents runtime wiring — the descriptor registry is
-    meant to stay lightweight for routing and eval code.
+    Providers are imported lazily so this module stays importable without pulling in
+    the agent builders / DeepAgents runtime wiring — the descriptor registry is meant
+    to stay lightweight for routing and eval code.
     """
-    from ecommerce_agent.specialists.providers import PROVIDERS
+    if providers is None:
+        from ecommerce_agent.specialists.providers import routeable_providers
+
+        providers = routeable_providers(settings)
 
     return SpecialistRegistry(
-        [Specialist(p.name, p.description, default=p.default) for p in PROVIDERS]
+        [Specialist(p.name, p.description, default=p.default) for p in providers]
     )

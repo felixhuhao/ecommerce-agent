@@ -26,7 +26,7 @@ from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 @dataclass(frozen=True)
 class ToolMeta:
     name: str
-    source: Literal["spring", "modelscope", "custom", "backend"]
+    source: Literal["spring", "modelscope", "custom", "backend", "nl2sql"]
     tags: frozenset[str]
     data_bearing: bool = False
     live_label_start: str | None = None
@@ -77,6 +77,22 @@ VIZ_TOOL_NAMES: tuple[str, ...] = (
     "generate_violin_chart",
     "generate_waterfall_chart",
     "generate_word_cloud_chart",
+)
+
+# These names are exact NL2SQL MCP tool names discovered from the external project.
+# Tool classification is currently global by tool name, so a future server exposing
+# the same generic names would need namespacing or a source-aware metadata lookup.
+NL2SQL_SCHEMA_TOOLS: frozenset[str] = frozenset({"list_tables", "get_table_schema"})
+NL2SQL_QUERY_TOOL = "query_readonly"
+NL2SQL_EXPLAIN_TOOL = "explain_query"
+NL2SQL_METRIC_TOOL = "metric_catalog_search"
+NL2SQL_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        *NL2SQL_SCHEMA_TOOLS,
+        NL2SQL_QUERY_TOOL,
+        NL2SQL_EXPLAIN_TOOL,
+        NL2SQL_METRIC_TOOL,
+    }
 )
 
 
@@ -135,6 +151,42 @@ TOOL_META: tuple[ToolMeta, ...] = (
         frozenset({"backend.execute"}),
         data_bearing=True,
         live_label_start="Running analysis",
+    ),
+    # --- Optional NL2SQL analytical warehouse MCP tools ---
+    ToolMeta(
+        "list_tables",
+        "nl2sql",
+        frozenset({"warehouse.schema"}),
+        data_bearing=True,
+        live_label_start="Reading warehouse metadata",
+    ),
+    ToolMeta(
+        "get_table_schema",
+        "nl2sql",
+        frozenset({"warehouse.schema"}),
+        data_bearing=True,
+        live_label_start="Reading warehouse metadata",
+    ),
+    ToolMeta(
+        NL2SQL_QUERY_TOOL,
+        "nl2sql",
+        frozenset({"warehouse.query"}),
+        data_bearing=True,
+        live_label_start="Querying warehouse",
+    ),
+    ToolMeta(
+        NL2SQL_EXPLAIN_TOOL,
+        "nl2sql",
+        frozenset({"warehouse.explain"}),
+        data_bearing=True,
+        live_label_start="Explaining warehouse query",
+    ),
+    ToolMeta(
+        NL2SQL_METRIC_TOOL,
+        "nl2sql",
+        frozenset({"warehouse.metric"}),
+        data_bearing=True,
+        live_label_start="Reading warehouse metadata",
     ),
 )
 

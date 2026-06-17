@@ -4,6 +4,8 @@ from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
     MODELSCOPE_VIZ_TOOLS,
+    NL2SQL_SERVER_NAME,
+    NL2SQL_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
@@ -11,6 +13,7 @@ from ecommerce_agent.mcp_client import (
     WRITE_OR_APPROVAL_SPRING_TOOLS,
     WRITE_SPRING_TOOLS,
     build_mcp_connections,
+    filter_nl2sql_tools,
     filter_order_manager_tools,
     filter_spring_read_tools,
     filter_viz_tools,
@@ -55,6 +58,33 @@ def test_future_mcp_servers_are_configured_when_urls_are_present() -> None:
     assert set(connections) == {"spring", "modelscope", "python"}
     assert connections["modelscope"]["transport"] == "streamable_http"
     assert connections["python"]["url"] == "http://python.example/mcp"
+
+
+def test_nl2sql_connection_is_configured_only_when_enabled() -> None:
+    disabled = make_settings(
+        nl2sql_enabled=False,
+        nl2sql_mcp_url="http://nl2sql.example/mcp",
+        nl2sql_mcp_service_token="tok",
+    )
+    assert NL2SQL_SERVER_NAME not in build_mcp_connections(disabled)
+
+    enabled = make_settings(
+        nl2sql_enabled=True,
+        nl2sql_mcp_url="http://nl2sql.example/mcp",
+        nl2sql_mcp_service_token="tok",
+    )
+
+    connections = build_mcp_connections(enabled)
+
+    assert connections[NL2SQL_SERVER_NAME]["transport"] == "streamable_http"
+    assert connections[NL2SQL_SERVER_NAME]["url"] == "http://nl2sql.example/mcp"
+    assert connections[NL2SQL_SERVER_NAME]["headers"] == {"X-Service-Token": "tok"}
+
+
+def test_nl2sql_connection_uses_shared_configured_predicate() -> None:
+    settings = make_settings(nl2sql_enabled=True, nl2sql_mcp_url="   ")
+
+    assert NL2SQL_SERVER_NAME not in build_mcp_connections(settings)
 
 
 def test_spring_headers_are_never_tool_parameters() -> None:
@@ -151,3 +181,18 @@ def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
     assert CREATE_CHART_SPEC_TOOL_NAME in VIZ_TOOLS
     assert CREATE_CHART_SPEC_TOOL_NAME not in MODELSCOPE_VIZ_TOOLS
     assert "some_other_modelscope_tool" not in VIZ_TOOLS
+
+
+def test_filter_nl2sql_tools_keeps_only_allowlisted_warehouse_tools() -> None:
+    tools = [
+        SimpleNamespace(name="list_tables"),
+        SimpleNamespace(name="get_table_schema"),
+        SimpleNamespace(name="query_readonly"),
+        SimpleNamespace(name="explain_query"),
+        SimpleNamespace(name="metric_catalog_search"),
+        SimpleNamespace(name="execute_sql_unsafe"),
+    ]
+
+    filtered = filter_nl2sql_tools(tools)  # type: ignore[arg-type]
+
+    assert tool_names(filtered) == NL2SQL_TOOLS  # type: ignore[arg-type]

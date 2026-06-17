@@ -4,14 +4,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from ecommerce_agent.config import Settings
 from ecommerce_agent.specialists.providers import (
+    ALL_PROVIDERS,
+    OPTIONAL_PROVIDERS,
     PROVIDERS,
     SpecialistProvider,
     get_default_provider,
     get_provider,
+    routeable_providers,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
-from ecommerce_agent.tools.metadata import VIZ_TOOL_NAMES, select_names
+from ecommerce_agent.tools.metadata import NL2SQL_TOOL_NAMES, VIZ_TOOL_NAMES, select_names
 
 
 def test_providers_are_five_specialists_in_order() -> None:
@@ -25,7 +29,7 @@ def test_providers_are_five_specialists_in_order() -> None:
 
 
 def test_provider_names_are_unique() -> None:
-    names = [p.name for p in PROVIDERS]
+    names = [p.name for p in ALL_PROVIDERS]
     assert len(names) == len(set(names))
 
 
@@ -60,7 +64,7 @@ def test_purchasing_is_propose_capability() -> None:
 
 
 def test_read_provider_is_always_enabled() -> None:
-    for name in ("sales-analyst", "inventory", "customer-insights"):
+    for name in ("sales-analyst", "inventory", "customer-insights", "data-warehouse-analyst"):
         p = get_provider(name)
         assert p.is_enabled(SimpleNamespace(can_propose=False)) is True
         assert p.is_enabled(SimpleNamespace(can_propose=True)) is True
@@ -131,6 +135,28 @@ def test_customer_insights_is_read_capability() -> None:
     assert p.approval_operations == frozenset()
 
 
+def test_data_warehouse_provider_is_optional_and_read_only() -> None:
+    assert [p.name for p in OPTIONAL_PROVIDERS] == ["data-warehouse-analyst"]
+    p = get_provider("data-warehouse-analyst")
+    assert p.capability == "read"
+    assert p.prompt_key == "data_warehouse_analyst"
+    assert p.default is False
+    assert p.approval_operations == frozenset()
+
+
+def test_routeable_providers_adds_warehouse_only_when_configured() -> None:
+    disabled = Settings(_env_file=None, nl2sql_enabled=False, nl2sql_mcp_url="http://x")
+    no_url = Settings(_env_file=None, nl2sql_enabled=True, nl2sql_mcp_url="")
+    enabled = Settings(_env_file=None, nl2sql_enabled=True, nl2sql_mcp_url="http://x")
+
+    assert [p.name for p in routeable_providers(disabled)] == [p.name for p in PROVIDERS]
+    assert [p.name for p in routeable_providers(no_url)] == [p.name for p in PROVIDERS]
+    assert [p.name for p in routeable_providers(enabled)] == [
+        *[p.name for p in PROVIDERS],
+        "data-warehouse-analyst",
+    ]
+
+
 def test_inventory_tags_select_product_identity_and_inventory_tools_only() -> None:
     selected = select_names(get_provider("inventory").tool_tags)
     assert selected == frozenset(
@@ -150,6 +176,15 @@ def test_customer_insights_tags_select_customer_tools_and_statistics() -> None:
     )
     assert "inventory_query" not in selected
     assert "request_approval" not in selected
+
+
+def test_data_warehouse_tags_select_only_warehouse_and_chart_tools() -> None:
+    selected = select_names(get_provider("data-warehouse-analyst").tool_tags)
+    assert selected == NL2SQL_TOOL_NAMES | frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
+    assert "get_statistics" not in selected
+    assert "order_query" not in selected
+    assert "request_approval" not in selected
+    assert "execute" not in selected
 
 
 def test_get_provider_raises_for_unknown_name() -> None:
@@ -197,6 +232,7 @@ def test_build_selects_tools_from_provider_tool_tags() -> None:
     # are excluded because tool_tags names only reads.
     assert [t.name for t in captured["spring_tools"]] == ["product_query"]
     assert captured["viz_tools"] == []
+    assert captured["warehouse_tools"] == []
 
 
 def test_sales_analyst_builds_first_party_chart_tool(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,10 +253,44 @@ def test_sales_analyst_builds_first_party_chart_tool(monkeypatch: pytest.MonkeyP
             SimpleNamespace(name="product_query"),
         ],
         viz_tools=[],
+        warehouse_tools=[SimpleNamespace(name="query_readonly")],
         backend="b",
     )
 
     assert [tool.name for tool in captured["viz_tools"]] == [CREATE_CHART_SPEC_TOOL_NAME]
+    assert captured["spring_read_tools"]
+
+
+def test_data_warehouse_builds_chart_tool_and_no_spring_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    def record_warehouse(model, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return "AGENT"
+
+    import ecommerce_agent.specialists.providers as providers
+
+    monkeypatch.setattr(providers, "build_data_warehouse_analyst", record_warehouse)
+    get_provider("data-warehouse-analyst").build(
+        model="m",
+        spring_tools=[SimpleNamespace(name="get_statistics")],
+        viz_tools=[],
+        warehouse_tools=[
+            SimpleNamespace(name="list_tables"),
+            SimpleNamespace(name="query_readonly"),
+            SimpleNamespace(name="execute_sql_unsafe"),
+        ],
+        backend="b",
+    )
+
+    assert [tool.name for tool in captured["warehouse_tools"]] == [
+        "list_tables",
+        "query_readonly",
+    ]
+    assert [tool.name for tool in captured["chart_tools"]] == [CREATE_CHART_SPEC_TOOL_NAME]
+    assert captured["backend"] is None
 
 
 def test_removing_analysis_staging_tag_omits_staging_tool(

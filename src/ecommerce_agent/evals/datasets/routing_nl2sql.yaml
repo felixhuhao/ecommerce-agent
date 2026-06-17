@@ -1,0 +1,32 @@
+- id: cohort-retention
+  prompt: show repeat purchase rate by customer cohort over the last 12 months
+  expected: data-warehouse-analyst
+  tags: [warehouse, historical]
+- id: region-channel-revenue
+  prompt: break down last 90 days revenue by region and channel
+  expected: data-warehouse-analyst
+  tags: [warehouse, ad-hoc]
+- id: warehouse-yoy
+  prompt: use warehouse data to compare monthly revenue YoY
+  expected: data-warehouse-analyst
+  tags: [warehouse, historical]
+- id: current-stock-stays-operational
+  prompt: is SKU-LOW-003 below safety stock?
+  expected: inventory
+  tags: [operational, adversarial]
+- id: current-stock-warehouse-wording-stays-operational
+  prompt: current stock from the data warehouse for SKU-LOW-003
+  expected: inventory
+  tags: [operational, adversarial, source-boundary]
+- id: create-po-stays-purchasing
+  prompt: create a PO for productId 9 from supplier 7
+  expected: purchasing
+  tags: [operational, source-boundary]
+- id: sales-category-stays-sales-analyst
+  prompt: compare sales by category
+  expected: sales-analyst
+  tags: [operational, source-boundary]
+- id: top-customers-stays-customer-insights
+  prompt: top customers by spend
+  expected: customer-insights
+  tags: [operational, adversarial]

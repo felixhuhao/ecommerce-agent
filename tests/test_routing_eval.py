@@ -1,5 +1,6 @@
 import pytest
 
+from ecommerce_agent.config import Settings
 from ecommerce_agent.evals.routing import (
     EvalReport,
     LatestMessageRouter,
@@ -12,6 +13,8 @@ from ecommerce_agent.evals.routing import (
 from ecommerce_agent.routing.keyword import KeywordRouter
 from ecommerce_agent.routing.registry import build_specialist_registry
 from ecommerce_agent.routing.router import RouteDecision
+
+_NL2SQL_ROUTING_PATH = "src/ecommerce_agent/evals/datasets/routing_nl2sql.yaml"
 
 
 def _case(cid: str, expected: str, tags: tuple[str, ...] = ()) -> RoutingCase:
@@ -100,6 +103,29 @@ def test_loader_rejects_empty_history_content(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         load_routing_cases(str(bad))
+
+
+def test_nl2sql_routing_dataset_requires_enabled_registry() -> None:
+    with pytest.raises(ValueError, match="unknown specialist"):
+        load_routing_cases(_NL2SQL_ROUTING_PATH)
+
+    registry = build_specialist_registry(
+        Settings(_env_file=None, nl2sql_enabled=True, nl2sql_mcp_url="http://x")
+    )
+    cases = load_routing_cases(_NL2SQL_ROUTING_PATH, registry=registry)
+
+    assert {case.expected for case in cases} == {
+        "data-warehouse-analyst",
+        "inventory",
+        "customer-insights",
+        "purchasing",
+        "sales-analyst",
+    }
+    assert any("source-boundary" in case.tags for case in cases)
+    assert any(
+        case.prompt == "current stock from the data warehouse for SKU-LOW-003"
+        for case in cases
+    )
 
 
 @pytest.mark.asyncio

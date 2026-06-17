@@ -68,6 +68,36 @@ def test_authoritative_when_inventory_fact_fired() -> None:
     assert [source.tool_name for source in grounding.sources] == ["inventory_low_stock"]
 
 
+def test_authoritative_when_nl2sql_query_fired() -> None:
+    from ecommerce_agent.grounding.build import build_grounding
+
+    rec = _rec(
+        "Warehouse cohort retention was 42%.",
+        _start("query_readonly"),
+        _end("query_readonly"),
+    )
+
+    grounding = build_grounding(rec)
+
+    assert grounding.authority == Authority.AUTHORITATIVE
+    assert [source.tool_name for source in grounding.sources] == ["query_readonly"]
+
+
+def test_nl2sql_metadata_source_alone_is_not_authoritative() -> None:
+    from ecommerce_agent.grounding.build import build_grounding
+
+    rec = _rec(
+        "There are 12 candidate warehouse tables.",
+        _start("list_tables"),
+        _end("list_tables"),
+    )
+
+    grounding = build_grounding(rec)
+
+    assert grounding.authority == Authority.UNVERIFIED
+    assert [source.tool_name for source in grounding.sources] == ["list_tables"]
+
+
 def test_derived_when_execute_evidence_and_no_statistics() -> None:
     from ecommerce_agent.grounding.build import build_grounding
 

@@ -5,8 +5,9 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
-from ecommerce_agent.config import Settings
+from ecommerce_agent.config import Settings, nl2sql_configured
 from ecommerce_agent.mcp_client import (
+    NL2SQL_SERVER_NAME,
     SPRING_SERVER_NAME,
     build_mcp_client,
 )
@@ -17,7 +18,7 @@ from ecommerce_agent.sandbox import DockerSandbox
 from ecommerce_agent.sandbox.config import limits_from_settings
 from ecommerce_agent.sandbox.remote import RemoteSandboxClient
 from ecommerce_agent.sessions.registry import RuntimeActor, SessionRuntime
-from ecommerce_agent.specialists.providers import PROVIDERS
+from ecommerce_agent.specialists.providers import routeable_providers
 from ecommerce_agent.threads.history import ROUTER_HISTORY_MAX_EXCHANGES, take_last_exchanges
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,9 @@ async def build_session_runtime(
         session_id=session_id,
     )
     spring_all_tools = await mcp_client.get_tools(server_name=SPRING_SERVER_NAME)
+    warehouse_tools = []
+    if nl2sql_configured(settings):
+        warehouse_tools = await mcp_client.get_tools(server_name=NL2SQL_SERVER_NAME)
     # Chart rendering is first-party now. ModelScope chart MCP may still be configured
     # for diagnostics/legacy demos, but it is not part of the default runtime surface.
     viz_tools = []
@@ -136,17 +140,19 @@ async def build_session_runtime(
     # every provider, so a viewer write-intent routes to the omitted specialist and
     # yields the policy-denial answer rather than rerouting to the default.
     agents: dict[str, Any] = {}
-    for provider in PROVIDERS:
+    providers = routeable_providers(settings)
+    for provider in providers:
         if not provider.is_enabled(actor):
             continue
         agents[provider.name] = provider.build(
             model=model,
             spring_tools=spring_all_tools,
             viz_tools=viz_tools,
+            warehouse_tools=warehouse_tools,
             backend=sandbox,
         )
 
-    registry = build_specialist_registry()
+    registry = build_specialist_registry(providers=providers)
     routed_agent = RoutedSessionAgent(
         router=ClassifierRouter(get_classifier_model(settings), registry),
         agents=agents,
