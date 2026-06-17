@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
@@ -243,6 +244,33 @@ async def test_capture_extracts_echarts_artifact_before_image_recursion() -> Non
     assert yielded[0].artifact_id == "chart-1"
     assert yielded[0].artifact == artifact
     assert record.events[0].artifact == artifact
+
+
+async def test_capture_extracts_echarts_artifact_from_wrapped_json_tool_message() -> None:
+    artifact = {
+        "id": "chart-1",
+        "kind": "echarts",
+        "title": "Sales by Category",
+        "chart_type": "column",
+        "x_axis": {"label": "Category", "type": "category"},
+        "y_axis": {"label": "Sales", "type": "value", "unit": "USD"},
+        "series": [{"name": "Sales", "data": [{"x": "Electronics", "y": 75997.0}]}],
+    }
+
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_end",
+            "name": "create_chart_spec",
+            "run_id": "chart-run",
+            "data": {"output": SimpleNamespace(content=json.dumps(artifact))},
+        }
+
+    record = TraceRecord()
+
+    yielded = [event async for event in capture(raw_events(), record)]
+
+    assert yielded[0].artifact_id == "chart-1"
+    assert yielded[0].artifact == artifact
 
 
 async def test_capture_extracts_chart_artifact_from_wrapped_tool_message() -> None:

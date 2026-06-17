@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -112,6 +113,13 @@ def _echarts_artifact_from_output(value: Any, *, fallback_id: str | None = None)
         artifact = _echarts_artifact_from_output(content, fallback_id=fallback_id)
         if artifact:
             return artifact
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return _echarts_artifact_from_output(parsed, fallback_id=fallback_id)
 
     if isinstance(value, list):
         for item in value:
