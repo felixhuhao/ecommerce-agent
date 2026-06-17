@@ -335,9 +335,14 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
         viz_tools = filter_viz_tools(tools)
         result.update(
             {
-                "agent_allowed_tool_count": len(viz_tools),
-                "agent_allowed_tools": sorted(tool_names(viz_tools)),
-                "missing_expected_viz_tools": sorted(MODELSCOPE_VIZ_TOOLS - names),
+                "runtime_enabled": False,
+                "note": (
+                    "ModelScope chart MCP is available for optional legacy diagnostics; "
+                    "default sessions use create_chart_spec."
+                ),
+                "optional_legacy_viz_tool_count": len(viz_tools),
+                "optional_legacy_viz_tools": sorted(tool_names(viz_tools)),
+                "missing_optional_legacy_viz_tools": sorted(MODELSCOPE_VIZ_TOOLS - names),
             }
         )
 

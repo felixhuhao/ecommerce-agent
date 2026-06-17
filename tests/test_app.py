@@ -228,9 +228,11 @@ def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
     modelscope = body["servers"]["modelscope"]
     assert modelscope["status"] == "ok"
     assert modelscope["tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
-    assert modelscope["agent_allowed_tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
-    assert modelscope["agent_allowed_tools"] == sorted(MODELSCOPE_VIZ_TOOLS)
-    assert modelscope["missing_expected_viz_tools"] == []
+    assert modelscope["runtime_enabled"] is False
+    assert "create_chart_spec" in modelscope["note"]
+    assert modelscope["optional_legacy_viz_tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
+    assert modelscope["optional_legacy_viz_tools"] == sorted(MODELSCOPE_VIZ_TOOLS)
+    assert modelscope["missing_optional_legacy_viz_tools"] == []
 
 
 def test_mcp_health_reports_degraded_without_starting_dependencies() -> None:
