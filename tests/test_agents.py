@@ -27,6 +27,16 @@ def _excluded_tools(middleware: list[object]) -> set[str]:
     raise AssertionError("missing _ToolExclusionMiddleware")
 
 
+def _tool_run_limits(middleware: list[object]) -> dict[str | None, int | None]:
+    limits: dict[str | None, int | None] = {}
+    for item in middleware:
+        if type(item).__name__ != "ToolCallLimitMiddleware":
+            continue
+        key = item.tool_name if item.tool_name is not None else "__all__"
+        limits[key] = item.run_limit
+    return limits
+
+
 def test_build_agent_threads_backend_and_slots(monkeypatch) -> None:
     captured = {}
 
@@ -293,6 +303,10 @@ def test_build_customer_insights_threads_tools_without_backend(monkeypatch) -> N
         "ToolCallLimitMiddleware",
         "_ToolExclusionMiddleware",
     } <= middleware_types
+    limits = _tool_run_limits(captured["middleware"])
+    assert limits["user_query"] == 2
+    assert limits["order_query"] == 2
+    assert limits["create_chart_spec"] == 1
     assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(
         captured["middleware"]
     )
@@ -330,6 +344,10 @@ def test_build_data_warehouse_analyst_threads_tools_without_backend(monkeypatch)
     assert "warehouse" in captured["system_prompt"].lower()
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
+    limits = _tool_run_limits(captured["middleware"])
+    assert limits["get_table_schema"] == 3
+    assert limits["query_readonly"] == 2
+    assert limits["create_chart_spec"] == 1
     assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(
         captured["middleware"]
     )

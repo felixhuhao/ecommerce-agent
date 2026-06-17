@@ -31,6 +31,9 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "python3 <<'PY'" in prompt
     assert "specific forecast subject" in prompt
     assert "hero forecast" not in prompt
+    assert "Customer Insights specialist" in prompt
+    assert "customer groups" in prompt
+    assert "Do not use sandbox analysis" in prompt
 
 
 def test_get_order_manager_prompt_is_nonempty_and_order_status_only() -> None:
@@ -110,10 +113,13 @@ def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
     assert "order_query" in prompt
     assert "get_statistics" in prompt
     assert "customer spend rankings" in prompt
+    assert "customer segments or groups by spend" in prompt
     assert "highest-value" in prompt and "customer questions" in prompt
     assert "topCustomersBySpend" in prompt
     assert "pull each customer's order history" in prompt
-    assert "tool results" in prompt
+    assert "do not call" in prompt.lower() and "order_query" in prompt
+    assert "at most two user_query" in prompt
+    assert "tool" in prompt and "results" in prompt
     assert "create_chart_spec exactly once" in prompt
     assert "Do not include process narration" in prompt
     assert '"Let me"' in prompt
@@ -127,6 +133,10 @@ def test_get_data_warehouse_prompt_is_nonempty_and_read_only() -> None:
     assert "read-only" in prompt.lower()
     assert "query_readonly" in prompt
     assert "create_chart_spec" in prompt
+    assert "Prefer one" in prompt and "query_readonly" in prompt
+    assert "query_readonly at most twice" in prompt
+    assert "get_table_schema at most three" in prompt
+    assert "exactly once" in prompt
     assert "warehouse" in prompt.lower()
     assert "current stock" in prompt.lower()
     assert "Do not silently merge" in prompt
@@ -144,6 +154,8 @@ def test_router_classifier_prompt_has_specialists_slot() -> None:
     assert "data-warehouse-analyst" in prompt
     assert "stockout" in prompt
     assert "customer order history" in prompt.lower()
+    assert "customer groups by spend" in prompt
+    assert "unless the user explicitly asks" in prompt
     assert "If \"data-warehouse-analyst\" is listed" in prompt
 
 

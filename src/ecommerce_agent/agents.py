@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 
 from ecommerce_agent.agent import build_agent
 from ecommerce_agent.prompts.loader import get_prompt
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 
 _ANALYST_DESCRIPTION = (
     "Read-only sales analyst: queries business data, runs sandboxed analysis when "
@@ -35,6 +36,16 @@ _CUSTOMER_INSIGHTS_DESCRIPTION = (
 
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
+_CUSTOMER_INSIGHTS_TOOL_LIMITS = {
+    "user_query": 2,
+    "order_query": 2,
+    CREATE_CHART_SPEC_TOOL_NAME: 1,
+}
+_WAREHOUSE_TOOL_LIMITS = {
+    "get_table_schema": 3,
+    "query_readonly": 2,
+    CREATE_CHART_SPEC_TOOL_NAME: 1,
+}
 _PLANNING_EXCLUDED_TOOLS = frozenset({"task", "write_todos"})
 _NON_ANALYST_EXCLUDED_TOOLS = frozenset(
     {
@@ -51,11 +62,23 @@ _NON_ANALYST_EXCLUDED_TOOLS = frozenset(
 _MONITOR_CAUSE_EXCLUDED_TOOLS = _NON_ANALYST_EXCLUDED_TOOLS
 
 
-def _reliability_middleware(excluded_tools: frozenset[str] = frozenset()) -> list[Any]:
+def _reliability_middleware(
+    excluded_tools: frozenset[str] = frozenset(),
+    *,
+    tool_run_limits: dict[str, int] | None = None,
+) -> list[Any]:
     middleware: list[Any] = [
         ModelCallLimitMiddleware(run_limit=_MAX_MODEL_CALLS_PER_RUN, exit_behavior="end"),
         ToolCallLimitMiddleware(run_limit=_MAX_TOOL_CALLS_PER_RUN, exit_behavior="end"),
     ]
+    for tool_name, run_limit in (tool_run_limits or {}).items():
+        middleware.append(
+            ToolCallLimitMiddleware(
+                tool_name=tool_name,
+                run_limit=run_limit,
+                exit_behavior="continue",
+            )
+        )
     if excluded_tools:
         middleware.append(_ToolExclusionMiddleware(excluded=excluded_tools))
     return middleware
@@ -148,7 +171,10 @@ def build_customer_insights(
         list(customer_insights_tools),
         system_prompt=get_prompt("customer_insights"),
         subagents=[],
-        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
+        middleware=_reliability_middleware(
+            _NON_ANALYST_EXCLUDED_TOOLS,
+            tool_run_limits=_CUSTOMER_INSIGHTS_TOOL_LIMITS,
+        ),
         skills=[],
         backend=None,
     )
@@ -167,7 +193,10 @@ def build_data_warehouse_analyst(
         [*warehouse_tools, *chart_tools],
         system_prompt=get_prompt("data_warehouse_analyst"),
         subagents=[],
-        middleware=_reliability_middleware(_NON_ANALYST_EXCLUDED_TOOLS),
+        middleware=_reliability_middleware(
+            _NON_ANALYST_EXCLUDED_TOOLS,
+            tool_run_limits=_WAREHOUSE_TOOL_LIMITS,
+        ),
         skills=[],
         backend=None,
     )

@@ -102,6 +102,10 @@
   prompt: break down customers into segments and analyze their lifetime value
   expected: customer-insights
   tags: [boundary, get-statistics-shared]
+- id: customer-groups-spend
+  prompt: which customer segments or groups are spending the most?
+  expected: customer-insights
+  tags: [boundary, get-statistics-shared]
 - id: customer-order-history
   prompt: what's customer 88's order history?
   expected: customer-insights

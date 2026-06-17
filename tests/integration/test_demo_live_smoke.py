@@ -54,9 +54,12 @@ MAX_SAME_TOOL_CALLS = {
     "inventory_query": 2,
     "stage_sales_analysis_inputs": 2,
     "query_readonly": 2,
+    "get_table_schema": 3,
+    CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 ALWAYS_FORBIDDEN = frozenset({"task", "write_todos"})
 SANDBOX_TOOLS = frozenset({"execute", "stage_sales_analysis_inputs"})
+SANDBOX_CONTROL_TOOLS = SANDBOX_TOOLS | frozenset({"write_file"})
 LEGACY_CHART_TOOLS = VIZ_TOOLS - {CREATE_CHART_SPEC_TOOL_NAME}
 
 _DIAG_PATH = Path(".pytest_cache") / "demo_live_smoke_diagnostics.jsonl"
@@ -95,6 +98,17 @@ CASES = [
         specialists=("customer-insights",),
         required_all_of=("get_statistics",),
         forbidden=WRITE_SPRING_TOOLS,
+        authorities=("authoritative",),
+    ),
+    Case(
+        id="customer_groups_spend",
+        prompt=(
+            "Which customer segments or groups are spending the most? "
+            "Include a chart if useful."
+        ),
+        specialists=("customer-insights",),
+        required_all_of=("get_statistics",),
+        forbidden=WRITE_SPRING_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
     ),
     Case(
