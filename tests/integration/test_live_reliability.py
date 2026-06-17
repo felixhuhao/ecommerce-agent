@@ -9,6 +9,7 @@ from ecommerce_agent.config import Settings
 from ecommerce_agent.evals import live_reliability
 from ecommerce_agent.evals.live_reliability import assess_attempt, run_reliability
 from ecommerce_agent.mcp_client import VIZ_TOOLS
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.jsonl import append_eval_baseline
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
@@ -60,8 +61,11 @@ def test_assess_attempt_can_require_visualization_tool() -> None:
 
 
 def test_assess_attempt_accepts_staging_tool_instead_of_raw_order_query() -> None:
-    viz_tool = next(iter(VIZ_TOOLS))
-    record = _record_with_tools(STAGE_SALES_ANALYSIS_TOOL_NAME, "execute", viz_tool)
+    record = _record_with_tools(
+        STAGE_SALES_ANALYSIS_TOOL_NAME,
+        "execute",
+        CREATE_CHART_SPEC_TOOL_NAME,
+    )
 
     result = assess_attempt(record, "event: tool\nevent: done\n", require_viz=True)
 

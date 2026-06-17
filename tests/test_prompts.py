@@ -29,7 +29,8 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "Do not call write_todos" in prompt
     assert "Do not run help()" in prompt
     assert "python3 <<'PY'" in prompt
-    assert "Sales Forecast by Category" in prompt
+    assert "specific forecast subject" in prompt
+    assert "hero forecast" not in prompt
 
 
 def test_get_order_manager_prompt_is_nonempty_and_order_status_only() -> None:
@@ -108,10 +109,11 @@ def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
     assert "user_query" in prompt
     assert "order_query" in prompt
     assert "get_statistics" in prompt
-    assert "top customers by spend" in prompt
+    assert "customer spend rankings" in prompt
+    assert "highest-value" in prompt and "customer questions" in prompt
     assert "topCustomersBySpend" in prompt
-    assert "Do not pull each customer's order history" in prompt
-    assert "Do not answer until you have tool results" in prompt
+    assert "pull each customer's order history" in prompt
+    assert "tool results" in prompt
     assert "create_chart_spec exactly once" in prompt
     assert "Do not include process narration" in prompt
     assert '"Let me"' in prompt

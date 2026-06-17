@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from ecommerce_agent.config import Settings
 from ecommerce_agent.evals.metadata import run_metadata
 from ecommerce_agent.mcp_client import VIZ_TOOLS, WRITE_OR_APPROVAL_SPRING_TOOLS
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.jsonl import dump_trace
 from ecommerce_agent.trace.schema import TraceRecord
@@ -24,8 +25,7 @@ _LAST_EVENT_COUNT = 8
 
 HERO_PROMPT = (
     "Which categories are trending up or down over the last 6 months, forecast next "
-    "month's sales, and chart the result. If product_query does not return a product "
-    "ID from an order item, bucket it as unknown and continue. Keep the summary short."
+    "month's sales, and chart the result. Keep the summary short."
 )
 
 
@@ -104,6 +104,8 @@ def assess_attempt(
         failures.append("neither sandbox execute nor visualization tool was called")
     if require_viz and not called_viz_tools:
         failures.append("visualization tool not called")
+    if require_viz and CREATE_CHART_SPEC_TOOL_NAME not in tools:
+        failures.append("create_chart_spec not called")
     if "event: error" in stream_body or "event: done" not in stream_body:
         failures.append("stream did not complete cleanly")
 

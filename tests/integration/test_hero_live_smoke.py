@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import VIZ_TOOLS
+from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from tests.integration.helpers import (
     skip_unless_docker_available,
     skip_unless_spring_mcp_is_running,
@@ -16,8 +16,7 @@ from tests.integration.helpers import (
 
 HERO = (
     "Which categories are trending up or down over the last 6 months, forecast next "
-    "month's sales, and chart the result. If product_query does not return a product "
-    "ID from an order item, bucket it as unknown and continue. Keep the summary short."
+    "month's sales, and chart the result. Keep the summary short."
 )
 
 _LIVE_SMOKE_TIMEOUT_SECONDS = 180
@@ -84,4 +83,5 @@ async def test_hero_flow_single_run() -> None:
     assert any(message["type"] == "agent_answer" for message in thread["messages"])
     assert app.state.last_trace is not None
     tools = set(app.state.last_trace.tool_names())
-    assert "execute" in tools or bool(tools & VIZ_TOOLS)
+    assert "execute" in tools
+    assert CREATE_CHART_SPEC_TOOL_NAME in tools
