@@ -120,6 +120,12 @@ def use_in_memory_stores(app) -> None:  # noqa: ANN001
 
 
 def use_in_memory_auth_stores(app) -> None:  # noqa: ANN001
+    if app.state.thread_store is None:
+        app.state.thread_store = InMemoryThreadStore()
+    if app.state.session_store is None:
+        app.state.session_store = InMemorySessionStore()
+    if app.state.trace_store is None:
+        app.state.trace_store = InMemoryTraceStore()
     app.state.user_store = InMemoryUserStore()
     app.state.user_store._by_id[TEST_USER.user_id] = TEST_USER
     app.state.user_store._by_username[TEST_USER.username] = TEST_USER.user_id
