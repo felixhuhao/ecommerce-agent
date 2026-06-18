@@ -5,6 +5,7 @@ from ecommerce_agent.tools.analytics import (
     SALES_BY_CATEGORY_TOOL_NAME,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from ecommerce_agent.tools.metadata import (
     NL2SQL_TOOL_NAMES,
     TOOL_META,
@@ -43,7 +44,11 @@ _ORDER_MANAGER = frozenset(
 )
 _VIZ = frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
 _SHAPED_ANALYTICS = frozenset(
-    {CUSTOMER_SPEND_SUMMARY_TOOL_NAME, SALES_BY_CATEGORY_TOOL_NAME}
+    {
+        CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+        SALES_BY_CATEGORY_TOOL_NAME,
+        SALES_FORECAST_TOOL_NAME,
+    }
 )
 _WRITE = frozenset(
     {"order_update", "purchase_order_create", "purchase_order_receive"}
@@ -104,6 +109,9 @@ def test_select_names_reproduces_shaped_analytics_sets() -> None:
     )
     assert select_names(frozenset({"analytics.category"})) == frozenset(
         {SALES_BY_CATEGORY_TOOL_NAME}
+    )
+    assert select_names(frozenset({"analysis.forecast"})) == frozenset(
+        {SALES_FORECAST_TOOL_NAME}
     )
 
 
@@ -186,6 +194,11 @@ def test_live_label_fields_match_today_strings() -> None:
     assert categories is not None
     assert categories.source == "custom"
     assert categories.live_label_start == "Reading category sales"
+
+    forecast = get_tool_meta(SALES_FORECAST_TOOL_NAME)
+    assert forecast is not None
+    assert forecast.source == "custom"
+    assert forecast.live_label_start == "Running forecast analysis"
 
     approval = get_tool_meta("request_approval")
     assert approval is not None

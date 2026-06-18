@@ -3,6 +3,7 @@ from ecommerce_agent.tools.analytics import (
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
     SALES_BY_CATEGORY_TOOL_NAME,
 )
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 
@@ -165,6 +166,21 @@ def test_derived_when_execute_evidence_and_no_statistics() -> None:
     )
 
     assert build_grounding(rec).authority == Authority.DERIVED
+
+
+def test_derived_when_sales_forecast_tool_fired() -> None:
+    from ecommerce_agent.grounding.build import build_grounding
+
+    rec = _rec(
+        "Forecast is $1,250.",
+        _start(SALES_FORECAST_TOOL_NAME),
+        _end(SALES_FORECAST_TOOL_NAME),
+    )
+
+    grounding = build_grounding(rec)
+
+    assert grounding.authority == Authority.DERIVED
+    assert [source.tool_name for source in grounding.sources] == [SALES_FORECAST_TOOL_NAME]
 
 
 def test_execute_without_output_is_not_derived() -> None:

@@ -40,7 +40,7 @@ INVENTORY_SPRING_TOOLS: frozenset[str] = select_names(
     frozenset({"products.search", "inventory.query", "inventory.low_stock"})
 )
 CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
-    frozenset({"customers.query", "orders.query", "analytics.aggregate"})
+    frozenset({"analytics.aggregate"})
 )
 VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
 MODELSCOPE_VIZ_TOOLS: frozenset[str] = frozenset(VIZ_TOOL_NAMES)

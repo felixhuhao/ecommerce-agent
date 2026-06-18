@@ -20,6 +20,7 @@ from ecommerce_agent.tools.analytics import (
     SALES_BY_CATEGORY_TOOL_NAME,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from ecommerce_agent.tools.metadata import NL2SQL_TOOL_NAMES, VIZ_TOOL_NAMES, select_names
 
 
@@ -174,12 +175,10 @@ def test_inventory_tags_select_product_identity_and_inventory_tools_only() -> No
     assert "request_approval" not in selected
 
 
-def test_customer_insights_tags_select_customer_tools_and_statistics() -> None:
+def test_customer_insights_tags_select_shaped_aggregate_and_chart_tools() -> None:
     selected = select_names(get_provider("customer-insights").tool_tags)
     assert selected == frozenset(
         {
-            "user_query",
-            "order_query",
             "get_statistics",
             CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
             CREATE_CHART_SPEC_TOOL_NAME,
@@ -187,6 +186,8 @@ def test_customer_insights_tags_select_customer_tools_and_statistics() -> None:
         | set(VIZ_TOOL_NAMES)
     )
     assert "inventory_query" not in selected
+    assert "order_query" not in selected
+    assert "user_query" not in selected
     assert "request_approval" not in selected
 
 
@@ -277,6 +278,7 @@ def test_sales_analyst_builds_first_party_chart_tool(monkeypatch: pytest.MonkeyP
         "order_query",
         "product_query",
         SALES_BY_CATEGORY_TOOL_NAME,
+        SALES_FORECAST_TOOL_NAME,
     ]
 
 
@@ -304,9 +306,6 @@ def test_customer_insights_builds_customer_spend_summary_tool(
     )
 
     assert [tool.name for tool in captured["customer_insights_tools"]] == [
-        "get_statistics",
-        "user_query",
-        "order_query",
         CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
         CREATE_CHART_SPEC_TOOL_NAME,
     ]

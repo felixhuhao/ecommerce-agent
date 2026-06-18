@@ -12,6 +12,7 @@ from ecommerce_agent.tools.analytics import (
     SALES_BY_CATEGORY_TOOL_NAME,
     build_sales_by_category_tool,
 )
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME, SalesForecastInput
 from ecommerce_agent.tools.staging import (
     ORDERS_RAW_PATH,
     PRODUCTS_RAW_PATH,
@@ -200,6 +201,25 @@ async def _stage_sales_analysis_inputs(
     }
 
 
+async def _sales_forecast(**kwargs: object) -> dict[str, Any]:
+    return {
+        "kind": "analytics_result",
+        "metric": SALES_FORECAST_TOOL_NAME,
+        "source": "sandbox",
+        "status": "ok",
+        "filters": dict(kwargs),
+        "rows": [
+            {
+                "time": "2026-06",
+                "value": 1200.0,
+                "group": "All categories forecast",
+                "is_forecast": True,
+            }
+        ],
+        "summary": {"row_count": 1},
+    }
+
+
 def _get_statistics(**kwargs: object) -> dict[str, object]:
     return {
         "total_sales": 15320.75,
@@ -263,6 +283,12 @@ def build_stub_sales_analyst_tools() -> list[BaseTool]:
             name=STAGE_SALES_ANALYSIS_TOOL_NAME,
             description=STAGE_SALES_ANALYSIS_DESCRIPTION,
             args_schema=StageSalesAnalysisInput,
+        ),
+        StructuredTool.from_function(
+            coroutine=_sales_forecast,
+            name=SALES_FORECAST_TOOL_NAME,
+            description="Return chart-ready monthly sales history and forecast rows.",
+            args_schema=SalesForecastInput,
         ),
     ]
     for name, rows in _READ_FIXTURES.items():

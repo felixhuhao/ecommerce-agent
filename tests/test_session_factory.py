@@ -12,7 +12,12 @@ from ecommerce_agent.sessions.factory import (
 )
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.specialists import providers as providers_module
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
+)
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 
 
 class FakeAgent:
@@ -64,6 +69,7 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
                 FakeTool("product_query"),
                 FakeTool("product_search"),
                 FakeTool("order_query"),
+                FakeTool("get_statistics"),
                 FakeTool("request_approval"),
             ]
 
@@ -138,9 +144,21 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["session_id"] == "sess-1"
     assert captured["user_id"] == "42"
     assert captured["sandbox_session_id"] == "sess-1"
-    assert captured["stage_tool_inputs"] == ["product_query", "product_search", "order_query"]
+    assert captured["stage_tool_inputs"] == [
+        "product_query",
+        "product_search",
+        "order_query",
+        "get_statistics",
+    ]
     assert captured["stage_tool_backend"] is captured["direct_analyst_backend"]
-    assert captured["direct_analyst_tools"] == ["product_query", "product_search", "order_query"]
+    assert captured["direct_analyst_tools"] == [
+        "product_query",
+        "product_search",
+        "order_query",
+        "get_statistics",
+        SALES_BY_CATEGORY_TOOL_NAME,
+        SALES_FORECAST_TOOL_NAME,
+    ]
     assert captured["direct_staging_tools"] == ["stage_sales_analysis_inputs"]
     assert captured["direct_viz_tools"] == [CREATE_CHART_SPEC_TOOL_NAME]
     assert captured["direct_order_manager_tools"] == [
@@ -153,9 +171,8 @@ async def test_build_session_runtime_wires_session_scoped_pieces(
     assert captured["direct_purchasing_backend"] is None
     assert captured["direct_inventory_tools"] == ["product_search"]
     assert captured["direct_inventory_backend"] is None
-    # customer-insights: order_query + chart tool match; product_query and request_approval don't.
     assert captured["direct_customer_insights_tools"] == [
-        "order_query",
+        CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
         CREATE_CHART_SPEC_TOOL_NAME,
     ]
     assert captured["direct_customer_insights_backend"] is None

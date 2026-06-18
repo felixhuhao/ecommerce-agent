@@ -33,6 +33,7 @@ from ecommerce_agent.tools.analytics import (
     SALES_BY_CATEGORY_TOOL_NAME,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from tests.integration.helpers import (
     skip_unless_docker_available,
     skip_unless_mongo_is_running,
@@ -57,6 +58,7 @@ MAX_SAME_TOOL_CALLS = {
     "product_search": 2,
     "inventory_query": 2,
     "stage_sales_analysis_inputs": 2,
+    SALES_FORECAST_TOOL_NAME: 1,
     "query_readonly": 3,
     "get_table_schema": 3,
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME: 1,
@@ -64,7 +66,7 @@ MAX_SAME_TOOL_CALLS = {
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 ALWAYS_FORBIDDEN = frozenset({"task", "write_todos"})
-SANDBOX_TOOLS = frozenset({"execute", "stage_sales_analysis_inputs"})
+SANDBOX_TOOLS = frozenset({"execute", "stage_sales_analysis_inputs", SALES_FORECAST_TOOL_NAME})
 SANDBOX_CONTROL_TOOLS = SANDBOX_TOOLS | frozenset({"write_file"})
 LEGACY_CHART_TOOLS = VIZ_TOOLS - {CREATE_CHART_SPEC_TOOL_NAME}
 
@@ -133,8 +135,7 @@ CASES = [
         prompt="forecast SKU-LOW-003 sales next month and chart it",
         specialists=("sales-analyst",),
         required_all_of=(
-            "stage_sales_analysis_inputs",
-            "execute",
+            SALES_FORECAST_TOOL_NAME,
             CREATE_CHART_SPEC_TOOL_NAME,
         ),
         expects_artifact=True,

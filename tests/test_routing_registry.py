@@ -46,8 +46,8 @@ def test_describe_is_byte_identical_to_the_classifier_prompt_snapshot() -> None:
         "replenish, and supplier-focused proposals.\n"
         "- inventory: read-only stock health: current stock levels, low-stock items, "
         "reorder-point checks, and stockout-risk flags.\n"
-        "- customer-insights: read-only customer analytics: customer behavior, segments, "
-        "lifetime value, and customer order history."
+        "- customer-insights: read-only customer spend analytics: top customers, spend "
+        "rankings, highest-value customers, and customer groups by spend."
     )
 
 

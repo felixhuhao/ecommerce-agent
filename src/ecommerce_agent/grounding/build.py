@@ -7,6 +7,7 @@ from ecommerce_agent.tools.analytics import (
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
     SALES_BY_CATEGORY_TOOL_NAME,
 )
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from ecommerce_agent.tools.metadata import NL2SQL_QUERY_TOOL
 from ecommerce_agent.trace.schema import TraceRecord
 from ecommerce_agent.trace.tools import (
@@ -25,6 +26,7 @@ AUTHORITATIVE_READ_TOOLS = frozenset(
         NL2SQL_QUERY_TOOL,
     }
 )
+DERIVED_READ_TOOLS = frozenset({SALES_FORECAST_TOOL_NAME})
 
 _NUMERIC_CLAIM = re.compile(
     r"\$\s?\d|\d\s?%|\b\d[\d,]*\.\d+\b|\b\d{1,3}(?:,\d{3})+\b|\b\d{2,}\b"
@@ -78,6 +80,8 @@ def build_grounding(record: TraceRecord) -> Grounding:
         numeric = has_numeric_claim(record.answer)
         if AUTHORITATIVE_READ_TOOLS.intersection(completed):
             authority = Authority.AUTHORITATIVE
+        elif DERIVED_READ_TOOLS.intersection(completed):
+            authority = Authority.DERIVED
         elif sandbox_evidence_fired(record):
             authority = Authority.DERIVED
         elif numeric:

@@ -231,12 +231,8 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
         "inventory_query",
         "product_search",
     ]
-    assert spring["customer_insights_allowed_tool_count"] == 3
-    assert spring["customer_insights_allowed_tools"] == [
-        "get_statistics",
-        "order_query",
-        "user_query",
-    ]
+    assert spring["customer_insights_allowed_tool_count"] == 1
+    assert spring["customer_insights_allowed_tools"] == ["get_statistics"]
     assert spring["blocked_write_tools"] == [
         "order_update",
         "purchase_order_create",

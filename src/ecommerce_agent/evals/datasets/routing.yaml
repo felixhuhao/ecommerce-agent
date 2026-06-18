@@ -91,7 +91,7 @@
   tags: [straightforward]
 - id: repeat-vs-onetime
   prompt: how many repeat vs one-time buyers did we have last quarter?
-  expected: customer-insights
+  expected: sales-analyst
   tags: [straightforward]
 # Phase C: get_statistics boundary cases (per-pair subject disambiguation)
 - id: inventory-turnover-trend
@@ -100,7 +100,7 @@
   tags: [boundary, get-statistics-shared]
 - id: customer-segment-ltv
   prompt: break down customers into segments and analyze their lifetime value
-  expected: customer-insights
+  expected: sales-analyst
   tags: [boundary, get-statistics-shared]
 - id: customer-groups-spend
   prompt: which customer segments or groups are spending the most?
@@ -108,5 +108,5 @@
   tags: [boundary, get-statistics-shared]
 - id: customer-order-history
   prompt: what's customer 88's order history?
-  expected: customer-insights
+  expected: sales-analyst
   tags: [boundary]

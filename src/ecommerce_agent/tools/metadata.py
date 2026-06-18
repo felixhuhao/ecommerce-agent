@@ -25,6 +25,7 @@ from ecommerce_agent.tools.analytics import (
     SALES_BY_CATEGORY_TOOL_NAME,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,13 @@ TOOL_META: tuple[ToolMeta, ...] = (
         frozenset({"analytics.category"}),
         data_bearing=True,
         live_label_start="Reading category sales",
+    ),
+    ToolMeta(
+        SALES_FORECAST_TOOL_NAME,
+        "custom",
+        frozenset({"analysis.forecast"}),
+        data_bearing=True,
+        live_label_start="Running forecast analysis",
     ),
     # --- Custom staging tool ---
     ToolMeta(

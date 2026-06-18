@@ -14,6 +14,7 @@ from ecommerce_agent.agent import build_agent
 from ecommerce_agent.prompts.loader import get_prompt
 from ecommerce_agent.tools.analytics import CUSTOMER_SPEND_SUMMARY_TOOL_NAME
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.tools import GET_STATISTICS_TOOL
 
@@ -33,23 +34,21 @@ _INVENTORY_DESCRIPTION = (
 )
 
 _CUSTOMER_INSIGHTS_DESCRIPTION = (
-    "Read-only customer insights: analyzes customer behavior, segments, "
-    "lifetime value, and customer order history."
+    "Read-only customer insights: analyzes customer spend rankings, "
+    "highest-value customers, and customer groups by spend."
 )
 
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
 _SALES_TOOL_LIMITS = {
     STAGE_SALES_ANALYSIS_TOOL_NAME: 1,
+    SALES_FORECAST_TOOL_NAME: 1,
     GET_STATISTICS_TOOL: 2,
     "execute": 3,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 _CUSTOMER_INSIGHTS_TOOL_LIMITS = {
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME: 1,
-    GET_STATISTICS_TOOL: 2,
-    "user_query": 2,
-    "order_query": 2,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 _WAREHOUSE_TOOL_LIMITS = {

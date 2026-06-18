@@ -42,6 +42,10 @@ from ecommerce_agent.tools.charting import (
     CREATE_CHART_SPEC_TOOL_NAME,
     build_create_chart_spec_tool,
 )
+from ecommerce_agent.tools.forecasting import (
+    SALES_FORECAST_TOOL_NAME,
+    build_sales_forecast_tool,
+)
 from ecommerce_agent.tools.metadata import select_names
 from ecommerce_agent.tools.staging import (
     STAGE_SALES_ANALYSIS_TOOL_NAME,
@@ -54,7 +58,13 @@ logger = logging.getLogger(__name__)
 # Tool tags selected by each specialist. ``build`` resolves these via select_names,
 # so changing a set here is the only edit needed to change a specialist's tool surface.
 SALES_ANALYST_TAGS: frozenset[str] = frozenset(
-    {"spring.read", "viz.chart", "analysis.staging", "analytics.category"}
+    {
+        "spring.read",
+        "viz.chart",
+        "analysis.staging",
+        "analysis.forecast",
+        "analytics.category",
+    }
 )
 ORDER_MANAGER_TAGS: frozenset[str] = frozenset({"orders.query", "approval.request"})
 PURCHASING_TAGS: frozenset[str] = frozenset(
@@ -70,7 +80,7 @@ INVENTORY_TAGS: frozenset[str] = frozenset(
     {"products.search", "inventory.query", "inventory.low_stock"}
 )
 CUSTOMER_INSIGHTS_TAGS: frozenset[str] = frozenset(
-    {"customers.query", "orders.query", "analytics.aggregate", "customers.aggregate", "viz.chart"}
+    {"analytics.aggregate", "customers.aggregate", "viz.chart"}
 )
 DATA_WAREHOUSE_TAGS: frozenset[str] = frozenset(
     {"warehouse.schema", "warehouse.query", "warehouse.explain", "warehouse.metric", "viz.chart"}
@@ -137,6 +147,11 @@ def _optional_tool_by_name(tools: Sequence[BaseTool], name: str) -> BaseTool | N
     return None
 
 
+def _has_tools(tools: Sequence[BaseTool], names: frozenset[str]) -> bool:
+    loaded = {tool.name for tool in tools}
+    return names.issubset(loaded)
+
+
 def _assemble_sales_analyst(
     *,
     model: BaseChatModel,
@@ -153,6 +168,18 @@ def _assemble_sales_analyst(
         staging = [
             build_sales_analysis_staging_tool(spring_read_tools=spring_tools, backend=backend)
         ]
+    forecast_tools: list[BaseTool] = []
+    if SALES_FORECAST_TOOL_NAME in selected_names and _has_tools(
+        spring_tools, frozenset({"order_query", "product_query"})
+    ):
+        forecast_tools = [
+            build_sales_forecast_tool(spring_read_tools=spring_tools, backend=backend)
+        ]
+    elif SALES_FORECAST_TOOL_NAME in selected_names:
+        logger.debug(
+            "skipping %s wrapper because order_query/product_query are not loaded",
+            SALES_FORECAST_TOOL_NAME,
+        )
     chart_tools: list[BaseTool] = []
     if CREATE_CHART_SPEC_TOOL_NAME in selected_names:
         chart_tools = [build_create_chart_spec_tool()]
@@ -167,7 +194,7 @@ def _assemble_sales_analyst(
         )
     return build_sales_analyst(
         model,
-        spring_read_tools=[*spring_tools, *aggregate_tools],
+        spring_read_tools=[*spring_tools, *aggregate_tools, *forecast_tools],
         viz_tools=[*viz_tools, *chart_tools],
         staging_tools=staging,
         backend=backend,
@@ -235,7 +262,7 @@ def _assemble_customer_insights(
         )
     return build_customer_insights(
         model,
-        customer_insights_tools=[*spring_tools, *aggregate_tools, *chart_tools],
+        customer_insights_tools=[*aggregate_tools, *chart_tools],
         backend=None,
     )
 
@@ -311,8 +338,8 @@ PROVIDERS: tuple[SpecialistProvider, ...] = (
     SpecialistProvider(
         name="customer-insights",
         description=(
-            "read-only customer analytics: customer behavior, segments, "
-            "lifetime value, and customer order history."
+            "read-only customer spend analytics: top customers, spend rankings, "
+            "highest-value customers, and customer groups by spend."
         ),
         capability="read",
         prompt_key="customer_insights",

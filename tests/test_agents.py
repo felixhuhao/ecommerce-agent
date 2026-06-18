@@ -13,6 +13,7 @@ from ecommerce_agent.agents import (
     order_manager_subagent,
     sales_analyst_subagent,
 )
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 
 
 class _Tool:
@@ -156,6 +157,7 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
     assert "execute" not in _excluded_tools(captured["middleware"])
     limits = _tool_run_limits(captured["middleware"])
     assert limits["stage_sales_analysis_inputs"] == 1
+    assert limits[SALES_FORECAST_TOOL_NAME] == 1
     assert limits["get_statistics"] == 2
     assert limits["execute"] == 3
     assert limits["create_chart_spec"] == 1
@@ -318,18 +320,15 @@ def test_build_customer_insights_threads_tools_without_backend(monkeypatch) -> N
     backend = object()
     result = build_customer_insights(
         "MODEL",  # type: ignore[arg-type]
-        customer_insights_tools=[_Tool("user_query"), _Tool("order_query")],  # type: ignore[list-item]
+        customer_insights_tools=[_Tool("customer_spend_summary")],  # type: ignore[list-item]
         backend=backend,
     )
 
     assert result == "CUSTOMER_INSIGHTS"
     assert captured["backend"] is None
-    assert [tool.name for tool in captured["tools"]] == [
-        "user_query",
-        "order_query",
-    ]
+    assert [tool.name for tool in captured["tools"]] == ["customer_spend_summary"]
     assert "read-only" in captured["system_prompt"].lower()
-    assert "user_query" in captured["system_prompt"]
+    assert "customer_spend_summary" in captured["system_prompt"]
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
     middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
@@ -340,9 +339,6 @@ def test_build_customer_insights_threads_tools_without_backend(monkeypatch) -> N
     } <= middleware_types
     limits = _tool_run_limits(captured["middleware"])
     assert limits["customer_spend_summary"] == 1
-    assert limits["get_statistics"] == 2
-    assert limits["user_query"] == 2
-    assert limits["order_query"] == 2
     assert limits["create_chart_spec"] == 1
     assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(
         captured["middleware"]

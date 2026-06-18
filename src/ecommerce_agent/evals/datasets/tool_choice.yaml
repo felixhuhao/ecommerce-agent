@@ -20,7 +20,7 @@
   tags: [aggregate]
 - id: tc-forecast-sales
   prompt: "forecast next month's sales"
-  expected_tool: stage_sales_analysis_inputs
+  expected_tool: sales_forecast
   forbidden_tools: [get_statistics]
   tags: [forecast]
 - id: tc-category-trends
