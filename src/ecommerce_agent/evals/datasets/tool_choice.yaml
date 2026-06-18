@@ -1,6 +1,6 @@
 - id: tc-sales-by-category
   prompt: "what were total sales by category last month?"
-  expected_tool: get_statistics
+  expected_tool: sales_by_category
   forbidden_tools: [stage_sales_analysis_inputs]
   tags: [aggregate]
 - id: tc-top-sellers

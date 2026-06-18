@@ -297,6 +297,21 @@ def _to_trace_event(
             ),
         )
 
+    if event_type == "on_tool_error":
+        error = data.get("error") or data.get("exception") or data
+        return TraceEvent(
+            event_type="tool_call",
+            name=raw.get("name"),
+            phase="end",
+            status="error",
+            trace_id=record.trace_id,
+            run_id=run_id,
+            parent_span_id=_parent_span(raw),
+            result_summary=_summarize(error),
+            error_message=_summarize(error),
+            tool_call_id=run_id,
+        )
+
     if event_type == "on_route_decision":
         info = data if isinstance(data, dict) else {}
         specialist = info.get("specialist")

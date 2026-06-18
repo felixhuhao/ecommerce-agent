@@ -1,4 +1,8 @@
 from ecommerce_agent.grounding.model import Authority, Grounding, GroundingSource
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
+)
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 
 
@@ -42,6 +46,18 @@ def _end(name: str, result: str | None = "rows", evidence: str | None = "rows") 
     )
 
 
+def _error_end(name: str, result: str | None = "error") -> TraceEvent:
+    return TraceEvent(
+        event_type="tool_call",
+        name=name,
+        phase="end",
+        status="error",
+        tool_call_id=name,
+        result_summary=result,
+        error_message=result,
+    )
+
+
 def test_authoritative_when_get_statistics_fired() -> None:
     from ecommerce_agent.grounding.build import build_grounding
 
@@ -51,6 +67,45 @@ def test_authoritative_when_get_statistics_fired() -> None:
 
     assert grounding.authority == Authority.AUTHORITATIVE
     assert [source.tool_name for source in grounding.sources] == ["get_statistics"]
+
+
+def test_authoritative_requires_successful_tool_end() -> None:
+    from ecommerce_agent.grounding.build import build_grounding
+
+    start_only = _rec(
+        "Top customer spend was $42,180.",
+        _start(CUSTOMER_SPEND_SUMMARY_TOOL_NAME),
+    )
+    errored = _rec(
+        "Top customer spend was $42,180.",
+        _start(CUSTOMER_SPEND_SUMMARY_TOOL_NAME),
+        _error_end(CUSTOMER_SPEND_SUMMARY_TOOL_NAME),
+    )
+
+    assert build_grounding(start_only).authority == Authority.UNVERIFIED
+    grounding = build_grounding(errored)
+    assert grounding.authority == Authority.UNVERIFIED
+    assert grounding.sources == []
+
+
+def test_authoritative_when_shaped_analytics_tool_fired() -> None:
+    from ecommerce_agent.grounding.build import build_grounding
+
+    rec = _rec(
+        "Top customer spend was $42,180.",
+        _start(CUSTOMER_SPEND_SUMMARY_TOOL_NAME),
+        _end(CUSTOMER_SPEND_SUMMARY_TOOL_NAME),
+        _start(SALES_BY_CATEGORY_TOOL_NAME),
+        _end(SALES_BY_CATEGORY_TOOL_NAME),
+    )
+
+    grounding = build_grounding(rec)
+
+    assert grounding.authority == Authority.AUTHORITATIVE
+    assert [source.tool_name for source in grounding.sources] == [
+        CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+        SALES_BY_CATEGORY_TOOL_NAME,
+    ]
 
 
 def test_authoritative_when_inventory_fact_fired() -> None:
@@ -179,7 +234,10 @@ def test_fail_closed_to_unverified_on_error(monkeypatch) -> None:
     from ecommerce_agent.grounding.build import build_grounding
 
     rec = _rec("Total was 1,000.")
-    monkeypatch.setattr("ecommerce_agent.grounding.build.fired_tools", lambda record: 1 / 0)
+    monkeypatch.setattr(
+        "ecommerce_agent.grounding.build._successful_tool_ends",
+        lambda record: 1 / 0,
+    )
 
     grounding = build_grounding(rec)
 

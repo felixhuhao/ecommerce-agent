@@ -8,6 +8,10 @@ import yaml
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
+from ecommerce_agent.tools.analytics import (
+    SALES_BY_CATEGORY_TOOL_NAME,
+    build_sales_by_category_tool,
+)
 from ecommerce_agent.tools.staging import (
     ORDERS_RAW_PATH,
     PRODUCTS_RAW_PATH,
@@ -24,6 +28,7 @@ _DATASET_PATH = Path(__file__).parent / "datasets" / "tool_choice.yaml"
 # so missing sandbox execution does not dominate the trace.
 DEFAULT_RECURSION_LIMIT = 15
 GET_STATISTICS_TOOL = "get_statistics"
+AUTHORITATIVE_AGGREGATE_TOOLS = frozenset({GET_STATISTICS_TOOL, SALES_BY_CATEGORY_TOOL_NAME})
 FAMILY_TAGS = {"aggregate", "forecast", "lookup"}
 
 
@@ -154,7 +159,11 @@ def aggregate(results: list[ToolChoiceCaseResult]) -> ToolChoiceReport:
 
     aggregate_results = [result for result in results if "aggregate" in result.tags]
     aggregate_authority_miss_rate = (
-        sum(1 for result in aggregate_results if GET_STATISTICS_TOOL not in result.fired_tools)
+        sum(
+            1
+            for result in aggregate_results
+            if AUTHORITATIVE_AGGREGATE_TOOLS.isdisjoint(result.fired_tools)
+        )
         / len(aggregate_results)
         if aggregate_results
         else 0.0
@@ -239,7 +248,7 @@ _READ_DESCRIPTIONS: dict[str, str] = {
 
 def build_stub_sales_analyst_tools() -> list[BaseTool]:
     tools: list[BaseTool] = [
-        StructuredTool.from_function(
+        stats_tool := StructuredTool.from_function(
             func=_get_statistics,
             name=GET_STATISTICS_TOOL,
             description=(
@@ -248,6 +257,7 @@ def build_stub_sales_analyst_tools() -> list[BaseTool]:
             ),
             args_schema=_GetStatisticsArgs,
         ),
+        build_sales_by_category_tool(get_statistics=stats_tool),
         StructuredTool.from_function(
             coroutine=_stage_sales_analysis_inputs,
             name=STAGE_SALES_ANALYSIS_TOOL_NAME,

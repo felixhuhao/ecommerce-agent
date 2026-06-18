@@ -28,6 +28,10 @@ from ecommerce_agent.auth.dependencies import current_actor
 from ecommerce_agent.auth.models import Actor, Role
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import NL2SQL_TOOLS, VIZ_TOOLS, WRITE_SPRING_TOOLS
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
+)
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from tests.integration.helpers import (
     skip_unless_docker_available,
@@ -55,6 +59,8 @@ MAX_SAME_TOOL_CALLS = {
     "stage_sales_analysis_inputs": 2,
     "query_readonly": 2,
     "get_table_schema": 3,
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME: 1,
+    SALES_BY_CATEGORY_TOOL_NAME: 1,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 ALWAYS_FORBIDDEN = frozenset({"task", "write_todos"})
@@ -96,8 +102,8 @@ CASES = [
         id="customer_top_spend",
         prompt="who are our top customers by spend?",
         specialists=("customer-insights",),
-        required_all_of=("get_statistics",),
-        forbidden=WRITE_SPRING_TOOLS,
+        required_all_of=(CUSTOMER_SPEND_SUMMARY_TOOL_NAME,),
+        forbidden=WRITE_SPRING_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
     ),
     Case(
@@ -107,7 +113,7 @@ CASES = [
             "Include a chart if useful."
         ),
         specialists=("customer-insights",),
-        required_all_of=("get_statistics",),
+        required_all_of=(CUSTOMER_SPEND_SUMMARY_TOOL_NAME,),
         forbidden=WRITE_SPRING_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
     ),
@@ -115,8 +121,8 @@ CASES = [
         id="sales_category_chart",
         prompt="compare sales by category and chart it",
         specialists=("sales-analyst",),
-        required_all_of=("get_statistics", CREATE_CHART_SPEC_TOOL_NAME),
-        forbidden=WRITE_SPRING_TOOLS | LEGACY_CHART_TOOLS,
+        required_all_of=(SALES_BY_CATEGORY_TOOL_NAME, CREATE_CHART_SPEC_TOOL_NAME),
+        forbidden=WRITE_SPRING_TOOLS | LEGACY_CHART_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
         expects_artifact=True,
         expected_artifact_kind="echarts",
         expected_chart_types=frozenset({"bar", "column", "pie"}),

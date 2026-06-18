@@ -14,6 +14,7 @@ keeps ``tool_tags`` the single source of truth for what a specialist receives.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -31,6 +32,12 @@ from ecommerce_agent.agents import (
 )
 from ecommerce_agent.config import Settings, nl2sql_configured
 from ecommerce_agent.sessions.registry import RuntimeActor
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
+    build_customer_spend_summary_tool,
+    build_sales_by_category_tool,
+)
 from ecommerce_agent.tools.charting import (
     CREATE_CHART_SPEC_TOOL_NAME,
     build_create_chart_spec_tool,
@@ -42,10 +49,13 @@ from ecommerce_agent.tools.staging import (
 )
 
 SpecialistAssembler = Callable[..., Any]
+logger = logging.getLogger(__name__)
 
 # Tool tags selected by each specialist. ``build`` resolves these via select_names,
 # so changing a set here is the only edit needed to change a specialist's tool surface.
-SALES_ANALYST_TAGS: frozenset[str] = frozenset({"spring.read", "viz.chart", "analysis.staging"})
+SALES_ANALYST_TAGS: frozenset[str] = frozenset(
+    {"spring.read", "viz.chart", "analysis.staging", "analytics.category"}
+)
 ORDER_MANAGER_TAGS: frozenset[str] = frozenset({"orders.query", "approval.request"})
 PURCHASING_TAGS: frozenset[str] = frozenset(
     {
@@ -60,7 +70,7 @@ INVENTORY_TAGS: frozenset[str] = frozenset(
     {"products.search", "inventory.query", "inventory.low_stock"}
 )
 CUSTOMER_INSIGHTS_TAGS: frozenset[str] = frozenset(
-    {"customers.query", "orders.query", "analytics.aggregate", "viz.chart"}
+    {"customers.query", "orders.query", "analytics.aggregate", "customers.aggregate", "viz.chart"}
 )
 DATA_WAREHOUSE_TAGS: frozenset[str] = frozenset(
     {"warehouse.schema", "warehouse.query", "warehouse.explain", "warehouse.metric", "viz.chart"}
@@ -120,6 +130,13 @@ def _select_by_name(tools: Sequence[BaseTool], names: frozenset[str]) -> list[Ba
     return [tool for tool in tools if tool.name in names]
 
 
+def _optional_tool_by_name(tools: Sequence[BaseTool], name: str) -> BaseTool | None:
+    for tool in tools:
+        if tool.name == name:
+            return tool
+    return None
+
+
 def _assemble_sales_analyst(
     *,
     model: BaseChatModel,
@@ -139,9 +156,18 @@ def _assemble_sales_analyst(
     chart_tools: list[BaseTool] = []
     if CREATE_CHART_SPEC_TOOL_NAME in selected_names:
         chart_tools = [build_create_chart_spec_tool()]
+    aggregate_tools: list[BaseTool] = []
+    stats_tool = _optional_tool_by_name(spring_tools, "get_statistics")
+    if SALES_BY_CATEGORY_TOOL_NAME in selected_names and stats_tool is not None:
+        aggregate_tools = [build_sales_by_category_tool(get_statistics=stats_tool)]
+    elif SALES_BY_CATEGORY_TOOL_NAME in selected_names:
+        logger.debug(
+            "skipping %s wrapper because get_statistics is not loaded",
+            SALES_BY_CATEGORY_TOOL_NAME,
+        )
     return build_sales_analyst(
         model,
-        spring_read_tools=spring_tools,
+        spring_read_tools=[*spring_tools, *aggregate_tools],
         viz_tools=[*viz_tools, *chart_tools],
         staging_tools=staging,
         backend=backend,
@@ -196,9 +222,20 @@ def _assemble_customer_insights(
     chart_tools: list[BaseTool] = []
     if CREATE_CHART_SPEC_TOOL_NAME in selected_names:
         chart_tools = [build_create_chart_spec_tool()]
+    aggregate_tools: list[BaseTool] = []
+    stats_tool = _optional_tool_by_name(spring_tools, "get_statistics")
+    if CUSTOMER_SPEND_SUMMARY_TOOL_NAME in selected_names and stats_tool is not None:
+        aggregate_tools = [
+            build_customer_spend_summary_tool(get_statistics=stats_tool)
+        ]
+    elif CUSTOMER_SPEND_SUMMARY_TOOL_NAME in selected_names:
+        logger.debug(
+            "skipping %s wrapper because get_statistics is not loaded",
+            CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+        )
     return build_customer_insights(
         model,
-        customer_insights_tools=[*spring_tools, *chart_tools],
+        customer_insights_tools=[*spring_tools, *aggregate_tools, *chart_tools],
         backend=None,
     )
 

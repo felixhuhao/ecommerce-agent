@@ -20,6 +20,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
+)
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 
 
@@ -135,6 +139,21 @@ TOOL_META: tuple[ToolMeta, ...] = (
         frozenset({"viz.chart"}),
         live_label_start="Generating chart",
         live_label_end="Chart generated",
+    ),
+    # --- First-party shaped analytics wrappers over Spring aggregate statistics ---
+    ToolMeta(
+        CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+        "custom",
+        frozenset({"customers.aggregate"}),
+        data_bearing=True,
+        live_label_start="Reading customer spend summary",
+    ),
+    ToolMeta(
+        SALES_BY_CATEGORY_TOOL_NAME,
+        "custom",
+        frozenset({"analytics.category"}),
+        data_bearing=True,
+        live_label_start="Reading category sales",
     ),
     # --- Custom staging tool ---
     ToolMeta(

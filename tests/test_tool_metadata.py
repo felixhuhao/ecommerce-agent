@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
+)
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.metadata import (
     NL2SQL_TOOL_NAMES,
@@ -38,10 +42,18 @@ _ORDER_MANAGER = frozenset(
     }
 )
 _VIZ = frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
+_SHAPED_ANALYTICS = frozenset(
+    {CUSTOMER_SPEND_SUMMARY_TOOL_NAME, SALES_BY_CATEGORY_TOOL_NAME}
+)
 _WRITE = frozenset(
     {"order_update", "purchase_order_create", "purchase_order_receive"}
 )
-_DATA_BEARING = _READ_ONLY | NL2SQL_TOOL_NAMES | {"stage_sales_analysis_inputs", "execute"}
+_DATA_BEARING = (
+    _READ_ONLY
+    | NL2SQL_TOOL_NAMES
+    | _SHAPED_ANALYTICS
+    | {"stage_sales_analysis_inputs", "execute"}
+)
 
 
 def test_tool_meta_covers_every_classified_tool() -> None:
@@ -50,6 +62,7 @@ def test_tool_meta_covers_every_classified_tool() -> None:
         _READ_ONLY
         | _ORDER_MANAGER
         | _VIZ
+        | _SHAPED_ANALYTICS
         | _WRITE
         | NL2SQL_TOOL_NAMES
         | {"stage_sales_analysis_inputs", "execute"}
@@ -83,6 +96,15 @@ def test_select_names_reproduces_order_manager_set() -> None:
 
 def test_select_names_reproduces_viz_set() -> None:
     assert select_names(frozenset({"viz.chart"})) == _VIZ
+
+
+def test_select_names_reproduces_shaped_analytics_sets() -> None:
+    assert select_names(frozenset({"customers.aggregate"})) == frozenset(
+        {CUSTOMER_SPEND_SUMMARY_TOOL_NAME}
+    )
+    assert select_names(frozenset({"analytics.category"})) == frozenset(
+        {SALES_BY_CATEGORY_TOOL_NAME}
+    )
 
 
 def test_select_names_reproduces_nl2sql_set() -> None:
@@ -154,6 +176,16 @@ def test_live_label_fields_match_today_strings() -> None:
     assert echarts is not None
     assert echarts.live_label_start == "Generating chart"
     assert echarts.live_label_end == "Chart generated"
+
+    customers = get_tool_meta(CUSTOMER_SPEND_SUMMARY_TOOL_NAME)
+    assert customers is not None
+    assert customers.source == "custom"
+    assert customers.live_label_start == "Reading customer spend summary"
+
+    categories = get_tool_meta(SALES_BY_CATEGORY_TOOL_NAME)
+    assert categories is not None
+    assert categories.source == "custom"
+    assert categories.live_label_start == "Reading category sales"
 
     approval = get_tool_meta("request_approval")
     assert approval is not None

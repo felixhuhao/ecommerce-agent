@@ -120,6 +120,31 @@ async def test_capture_records_model_call_timing_and_tokens() -> None:
     assert record.events == yielded
 
 
+async def test_capture_records_tool_error_as_failed_tool_end() -> None:
+    async def raw_events() -> AsyncIterator[dict]:
+        yield {
+            "event": "on_tool_start",
+            "name": "customer_spend_summary",
+            "run_id": "tool-run",
+            "data": {"input": {"limit": 10}},
+        }
+        yield {
+            "event": "on_tool_error",
+            "name": "customer_spend_summary",
+            "run_id": "tool-run",
+            "data": {"error": ValueError("missing topCustomersBySpend")},
+        }
+
+    record = TraceRecord()
+
+    yielded = [event async for event in capture(raw_events(), record)]
+
+    assert [event.phase for event in yielded] == ["start", "end"]
+    assert yielded[1].status == "error"
+    assert "topCustomersBySpend" in (yielded[1].error_message or "")
+    assert record.events == yielded
+
+
 async def test_capture_extracts_model_tokens_from_response_metadata() -> None:
     async def raw_events() -> AsyncIterator[dict]:
         yield {

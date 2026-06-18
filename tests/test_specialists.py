@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,10 @@ from ecommerce_agent.specialists.providers import (
     get_default_provider,
     get_provider,
     routeable_providers,
+)
+from ecommerce_agent.tools.analytics import (
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+    SALES_BY_CATEGORY_TOOL_NAME,
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.metadata import NL2SQL_TOOL_NAMES, VIZ_TOOL_NAMES, select_names
@@ -82,6 +87,7 @@ def test_propose_provider_is_gated_on_can_propose() -> None:
 def test_sales_analyst_tags_select_reads_viz_staging_without_writes_or_approval() -> None:
     selected = select_names(get_provider("sales-analyst").tool_tags)
     assert "get_statistics" in selected
+    assert SALES_BY_CATEGORY_TOOL_NAME in selected
     assert CREATE_CHART_SPEC_TOOL_NAME in selected
     assert "generate_line_chart" in selected
     assert "stage_sales_analysis_inputs" in selected
@@ -171,7 +177,13 @@ def test_inventory_tags_select_product_identity_and_inventory_tools_only() -> No
 def test_customer_insights_tags_select_customer_tools_and_statistics() -> None:
     selected = select_names(get_provider("customer-insights").tool_tags)
     assert selected == frozenset(
-        {"user_query", "order_query", "get_statistics", CREATE_CHART_SPEC_TOOL_NAME}
+        {
+            "user_query",
+            "order_query",
+            "get_statistics",
+            CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+            CREATE_CHART_SPEC_TOOL_NAME,
+        }
         | set(VIZ_TOOL_NAMES)
     )
     assert "inventory_query" not in selected
@@ -182,6 +194,8 @@ def test_data_warehouse_tags_select_only_warehouse_and_chart_tools() -> None:
     selected = select_names(get_provider("data-warehouse-analyst").tool_tags)
     assert selected == NL2SQL_TOOL_NAMES | frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
     assert "get_statistics" not in selected
+    assert SALES_BY_CATEGORY_TOOL_NAME not in selected
+    assert CUSTOMER_SPEND_SUMMARY_TOOL_NAME not in selected
     assert "order_query" not in selected
     assert "request_approval" not in selected
     assert "execute" not in selected
@@ -258,7 +272,72 @@ def test_sales_analyst_builds_first_party_chart_tool(monkeypatch: pytest.MonkeyP
     )
 
     assert [tool.name for tool in captured["viz_tools"]] == [CREATE_CHART_SPEC_TOOL_NAME]
-    assert captured["spring_read_tools"]
+    assert [tool.name for tool in captured["spring_read_tools"]] == [
+        "get_statistics",
+        "order_query",
+        "product_query",
+        SALES_BY_CATEGORY_TOOL_NAME,
+    ]
+
+
+def test_customer_insights_builds_customer_spend_summary_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    def record_customer_insights(model, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return "AGENT"
+
+    import ecommerce_agent.specialists.providers as providers
+
+    monkeypatch.setattr(providers, "build_customer_insights", record_customer_insights)
+    get_provider("customer-insights").build(
+        model="m",
+        spring_tools=[
+            SimpleNamespace(name="get_statistics"),
+            SimpleNamespace(name="user_query"),
+            SimpleNamespace(name="order_query"),
+        ],
+        viz_tools=[],
+        backend="b",
+    )
+
+    assert [tool.name for tool in captured["customer_insights_tools"]] == [
+        "get_statistics",
+        "user_query",
+        "order_query",
+        CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
+        CREATE_CHART_SPEC_TOOL_NAME,
+    ]
+
+
+def test_shaped_wrapper_logs_when_backing_statistics_tool_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    captured: dict = {}
+
+    def record_analyst(model, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return "AGENT"
+
+    import ecommerce_agent.specialists.providers as providers
+
+    monkeypatch.setattr(providers, "build_sales_analyst", record_analyst)
+    caplog.set_level(logging.DEBUG, logger="ecommerce_agent.specialists.providers")
+
+    get_provider("sales-analyst").build(
+        model="m",
+        spring_tools=[SimpleNamespace(name="order_query"), SimpleNamespace(name="product_query")],
+        viz_tools=[],
+        backend="b",
+    )
+
+    assert SALES_BY_CATEGORY_TOOL_NAME not in [
+        tool.name for tool in captured["spring_read_tools"]
+    ]
+    assert "skipping sales_by_category wrapper" in caplog.text
 
 
 def test_data_warehouse_builds_chart_tool_and_no_spring_tools(

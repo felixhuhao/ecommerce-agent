@@ -85,8 +85,8 @@ Checks:
   - inventory: `product_search`, `inventory_query`, `inventory_low_stock`
   - purchasing: `product_search`, `supplier_query`, `supplier_top`,
     `purchase_order_query`, `request_approval`
-  - customer-insights: `user_query`, `order_query`, `get_statistics` (no write
-    tools, no `request_approval`)
+  - customer-insights: `user_query`, `order_query`, `get_statistics`,
+    `customer_spend_summary` (no write tools, no `request_approval`)
   - data-warehouse-analyst, only when NL2SQL is configured: `list_tables`,
     `get_table_schema`, `query_readonly`, `explain_query`,
     `metric_catalog_search`, `create_chart_spec`
@@ -202,8 +202,8 @@ Column semantics — do NOT treat the table as a loose "any tool satisfies the c
 | ID | Prompt | Expected Specialist | Expected Tools (allowed) | Forbidden Tools | Expected Output |
 | --- | --- | --- | --- | --- | --- |
 | `inventory_low_stock_sku` | `is SKU-LOW-003 below safety stock?` | `inventory` | `product_search`, `inventory_low_stock`, `inventory_query` | write tools, chart tools | authoritative answer with stock/safety numbers |
-| `customer_top_spend` | `who are our top customers by spend?` | `customer-insights` | `get_statistics`, `user_query`, `order_query` | write tools, `task`, `write_todos` | authoritative answer; brute-force per-customer loop is bounded by §5, not forbidden outright |
-| `sales_category_chart` | `compare sales by category and chart it` | `sales-analyst` | `get_statistics`, `create_chart_spec`, `stage_sales_analysis_inputs`, `execute` | legacy chart MCP tools, write tools | authoritative answer with ECharts artifact |
+| `customer_top_spend` | `who are our top customers by spend?` | `customer-insights` | `customer_spend_summary`, `user_query`, `order_query` | write tools, sandbox tools, NL2SQL tools, `task`, `write_todos` | authoritative answer; brute-force per-customer loop is bounded by §5, not forbidden outright |
+| `sales_category_chart` | `compare sales by category and chart it` | `sales-analyst` | `sales_by_category`, `create_chart_spec` | legacy chart MCP tools, write tools, sandbox tools, NL2SQL tools | authoritative answer with ECharts artifact |
 | `forecast_chart` | `forecast SKU-LOW-003 sales next month and chart it` | `sales-analyst` | `stage_sales_analysis_inputs`, `execute`, `create_chart_spec`, `get_statistics` | legacy chart MCP tools, write tools | derived or authoritative answer with ECharts artifact |
 | `purchase_order_proposal` | `create a purchase order for 200 units of productId 9 from supplier 7` | `purchasing` | `product_search`, `supplier_query`, `supplier_top`, `purchase_order_query`, `request_approval` | direct write tools (`purchase_order_create`, `purchase_order_receive`, `order_update`) | pending proposal card |
 | `order_status_change` | `cancel pending order 1008` | `order-manager` | `order_query`, `request_approval` | direct write tools (`order_update`), chart tools, `get_statistics` | pending proposal card for the status change |
@@ -218,8 +218,9 @@ Required Tools (`all_of`, must each appear at least once):
   are the only tools that return stock/safety facts. `product_search` is allowed but does
   NOT satisfy the case on its own; it only resolves product identity, so a case that calls
   only `product_search` must fail.
-- `customer_top_spend`: `get_statistics` (the aggregate path — no per-customer loop substitute).
-- `sales_category_chart`: `get_statistics` AND `create_chart_spec` AND an ECharts
+- `customer_top_spend`: `customer_spend_summary` (the shaped aggregate path —
+  no per-customer loop substitute).
+- `sales_category_chart`: `sales_by_category` AND `create_chart_spec` AND an ECharts
   artifact with a category-friendly chart type (bar/column/pie per §7).
 - `forecast_chart`: `stage_sales_analysis_inputs` AND `execute` AND `create_chart_spec`
   AND an ECharts artifact with a time-friendly chart type (line/area per §7).
@@ -282,7 +283,8 @@ forbidden_always:
 
 The smoke should catch badge regressions directly:
 
-- `get_statistics` aggregate answers: `authoritative`
+- `get_statistics`, `customer_spend_summary`, and `sales_by_category` aggregate
+  answers: `authoritative`
 - `inventory_query` / `inventory_low_stock` factual inventory answers: `authoritative`
 - `query_readonly` warehouse answers: `authoritative`
 - sandbox `execute` with evidence and no aggregate: `derived`
@@ -372,7 +374,7 @@ Each live case should have a hard timeout, default `150s`. The sandbox case
 (`forecast_chart`, whose required tools include `execute`) can spend 30-60s on
 container warm-up alone, so do not lower this below 120s for cases that touch
 `execute`. `sales_category_chart` does not require `execute` (its required tools are
-`get_statistics` plus `create_chart_spec`), so it is not a sandbox-warm-up case. The
+`sales_by_category` plus `create_chart_spec`), so it is not a sandbox-warm-up case. The
 existing hero smoke uses 180s as a reference point.
 
 On failure, write a compact diagnostic JSONL under `.pytest_cache/` with:
@@ -386,7 +388,7 @@ On failure, write a compact diagnostic JSONL under `.pytest_cache/` with:
 - sandbox activity breakdown — counts of `execute` and `stage_sales_analysis_inputs`,
   plus total sandbox wall time. This makes the "model overdid sandbox activity on a
   case that doesn't require it" failure mode (e.g. `sales_category_chart`, where
-  sandbox tools are allowed but not required) immediately obvious versus just being
+  sandbox tools are forbidden) immediately obvious versus just being
   buried in the ordered tool list.
 - warehouse activity breakdown — counts of `query_readonly`, `list_tables`,
   `get_table_schema`, `metric_catalog_search`, and `explain_query`

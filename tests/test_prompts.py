@@ -12,6 +12,7 @@ def test_get_sales_analyst_prompt_is_nonempty_and_read_only() -> None:
     assert "read-only" in prompt.lower()
     assert "ecommerce_analysis" in prompt
     assert "create_chart_spec" in prompt
+    assert "sales_by_category" in prompt
     assert "bar or column" in prompt
     assert "line or area" in prompt
     assert "pie" in prompt
@@ -112,11 +113,12 @@ def test_get_customer_insights_prompt_is_nonempty_and_read_only() -> None:
     assert "user_query" in prompt
     assert "order_query" in prompt
     assert "get_statistics" in prompt
+    assert "customer_spend_summary" in prompt
     assert "customer spend rankings" in prompt
-    assert "customer segments or groups by spend" in prompt
+    assert "customer groups by spend" in prompt
     assert "highest-value" in prompt and "customer questions" in prompt
-    assert "topCustomersBySpend" in prompt
-    assert "pull each customer's order history" in prompt
+    assert "topCustomersBySpend" not in prompt
+    assert "order history to compute top-level spend aggregates" in prompt
     assert "do not call" in prompt.lower() and "order_query" in prompt
     assert "at most two user_query" in prompt
     assert "tool" in prompt and "results" in prompt
