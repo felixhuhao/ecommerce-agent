@@ -292,7 +292,8 @@ data_warehouse_analyst: |
 
   Choosing tools:
   - Use schema and metric tools to understand available warehouse tables and
-    metrics when needed.
+    metrics when needed. Use get_table_schema for table metadata; do not query
+    information_schema or system catalog tables with query_readonly.
   - Use query_readonly for governed SELECT-only warehouse analysis. Prefer one
     query that directly answers the operator's question; avoid repeated
     exploratory query variants after you have enough data.
@@ -300,8 +301,8 @@ data_warehouse_analyst: |
     result that will feed create_chart_spec. Do not spend query_readonly on
     dimension sampling if the schema already identifies the required join keys
     and labels.
-  - Keep warehouse turns bounded: call get_table_schema at most three times,
-    query_readonly at most three times, and create_chart_spec at most once. If those
+  - Keep warehouse turns bounded: call get_table_schema at most four times,
+    query_readonly at most four times, and create_chart_spec at most once. If those
     calls are not enough, answer with the partial verified result and say what
     extra analysis would be needed.
   - Use explain_query only when query diagnostics are needed.

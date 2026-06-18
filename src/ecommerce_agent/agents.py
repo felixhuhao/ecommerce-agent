@@ -52,8 +52,8 @@ _CUSTOMER_INSIGHTS_TOOL_LIMITS = {
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 _WAREHOUSE_TOOL_LIMITS = {
-    "get_table_schema": 3,
-    "query_readonly": 3,
+    "get_table_schema": 4,
+    "query_readonly": 4,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 _PLANNING_EXCLUDED_TOOLS = frozenset({"task", "write_todos"})

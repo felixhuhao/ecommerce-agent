@@ -134,8 +134,9 @@ def test_get_data_warehouse_prompt_is_nonempty_and_read_only() -> None:
     assert "query_readonly" in prompt
     assert "create_chart_spec" in prompt
     assert "Prefer one" in prompt and "query_readonly" in prompt
-    assert "query_readonly at most three times" in prompt
-    assert "get_table_schema at most three" in prompt
+    assert "query_readonly at most four times" in prompt
+    assert "get_table_schema at most four" in prompt
+    assert "do not query" in prompt.lower() and "information_schema" in prompt
     assert "exactly once" in prompt
     assert "warehouse" in prompt.lower()
     assert "current stock" in prompt.lower()

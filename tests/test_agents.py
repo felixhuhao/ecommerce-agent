@@ -378,8 +378,8 @@ def test_build_data_warehouse_analyst_threads_tools_without_backend(monkeypatch)
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
     limits = _tool_run_limits(captured["middleware"])
-    assert limits["get_table_schema"] == 3
-    assert limits["query_readonly"] == 3
+    assert limits["get_table_schema"] == 4
+    assert limits["query_readonly"] == 4
     assert limits["create_chart_spec"] == 1
     assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(
         captured["middleware"]
