@@ -12,7 +12,10 @@ from langchain_core.tools import BaseTool
 
 from ecommerce_agent.agent import build_agent
 from ecommerce_agent.prompts.loader import get_prompt
+from ecommerce_agent.tools.analytics import CUSTOMER_SPEND_SUMMARY_TOOL_NAME
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
+from ecommerce_agent.trace.tools import GET_STATISTICS_TOOL
 
 _ANALYST_DESCRIPTION = (
     "Read-only sales analyst: queries business data, runs sandboxed analysis when "
@@ -36,7 +39,15 @@ _CUSTOMER_INSIGHTS_DESCRIPTION = (
 
 _MAX_MODEL_CALLS_PER_RUN = 25
 _MAX_TOOL_CALLS_PER_RUN = 40
+_SALES_TOOL_LIMITS = {
+    STAGE_SALES_ANALYSIS_TOOL_NAME: 1,
+    GET_STATISTICS_TOOL: 2,
+    "execute": 3,
+    CREATE_CHART_SPEC_TOOL_NAME: 1,
+}
 _CUSTOMER_INSIGHTS_TOOL_LIMITS = {
+    CUSTOMER_SPEND_SUMMARY_TOOL_NAME: 1,
+    GET_STATISTICS_TOOL: 2,
     "user_query": 2,
     "order_query": 2,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
@@ -99,7 +110,10 @@ def build_sales_analyst(
         tools,
         system_prompt=get_prompt("sales_analyst"),
         subagents=[],
-        middleware=_reliability_middleware(_PLANNING_EXCLUDED_TOOLS),
+        middleware=_reliability_middleware(
+            _PLANNING_EXCLUDED_TOOLS,
+            tool_run_limits=_SALES_TOOL_LIMITS,
+        ),
         skills=[],
         backend=backend,
     )

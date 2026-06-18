@@ -38,7 +38,7 @@ def _read_json_payload(path: Path) -> Any:
     return data
 
 
-def _product_category_map(products_path: str | None) -> dict[int, str]:
+def _product_lookup(products_path: str | None) -> dict[int, dict[str, str]]:
     if not products_path:
         return {}
 
@@ -50,23 +50,26 @@ def _product_category_map(products_path: str | None) -> dict[int, str]:
     else:
         raise ValueError("products file must contain a product object or list")
 
-    categories: dict[int, str] = {}
+    products_by_id: dict[int, dict[str, str]] = {}
     for product in products:
         if not isinstance(product, dict):
             continue
         product_id = product.get("productId", product.get("product_id"))
-        category = product.get("category")
-        if product_id is None or category is None:
+        if product_id is None:
             continue
         numeric_product_id = _numeric_id(product_id)
         if numeric_product_id is None:
             continue
-        categories[numeric_product_id] = str(category)
-    return categories
+        products_by_id[numeric_product_id] = {
+            "category": str(product.get("category") or "unknown"),
+            "sku": str(product.get("sku") or ""),
+            "product_name": str(product.get("name") or product.get("productName") or ""),
+        }
+    return products_by_id
 
 
 def _flatten_raw_orders(records: list[dict[str, Any]], products_path: str | None) -> pd.DataFrame:
-    category_by_product = _product_category_map(products_path)
+    products_by_id = _product_lookup(products_path)
     rows: list[dict[str, Any]] = []
     for order in records:
         created_at = order.get("createdAt", order.get("created_at"))
@@ -80,11 +83,15 @@ def _flatten_raw_orders(records: list[dict[str, Any]], products_path: str | None
                 unit_price = item.get("unitPrice", item.get("unit_price"))
                 if quantity is not None and unit_price is not None:
                     amount = float(quantity) * float(unit_price)
+            product = products_by_id.get(numeric_product_id, {})
             rows.append(
                 {
                     "created_at": created_at,
                     "status": status,
-                    "category": category_by_product.get(numeric_product_id, "unknown"),
+                    "category": product.get("category", "unknown"),
+                    "product_id": numeric_product_id,
+                    "sku": product.get("sku", ""),
+                    "product_name": product.get("product_name", ""),
                     "amount": amount,
                 }
             )
@@ -151,6 +158,51 @@ def monthly_sales_by_category(orders_df: pd.DataFrame) -> pd.DataFrame:
     )
     grouped["sales"] = grouped["sales"].astype(float)
     return grouped.sort_values(["category", "month"]).reset_index(drop=True)
+
+
+def monthly_sales_by_product(
+    orders_df: pd.DataFrame,
+    *,
+    product_id: int | None = None,
+    sku: str | None = None,
+    label: str | None = None,
+) -> pd.DataFrame:
+    """Return monthly realized sales for one product, compatible with simple_forecast.
+
+    ``orders_df`` should come from load_orders_df(raw_orders, raw_products), which
+    preserves product_id/sku fields from raw Spring payloads.
+    """
+    if product_id is None and not sku:
+        raise ValueError("product_id or sku is required")
+
+    missing = [column for column in REQUIRED_COLUMNS if column not in orders_df.columns]
+    if missing:
+        raise ValueError(f"missing required columns: {missing}")
+
+    df = orders_df.copy()
+    if product_id is not None:
+        if "product_id" not in df.columns:
+            raise ValueError("orders_df has no product_id column")
+        df = df[df["product_id"] == int(product_id)]
+    else:
+        if "sku" not in df.columns:
+            raise ValueError("orders_df has no sku column")
+        df = df[df["sku"].astype(str) == str(sku)]
+
+    df = df[df["status"].isin(REALIZED_STATUSES)]
+    if df.empty:
+        return pd.DataFrame(columns=["month", "category", "sales"])
+
+    df["month"] = df["created_at"].dt.to_period("M").dt.to_timestamp()
+    product_label = label or sku or f"product {product_id}"
+    grouped = (
+        df.groupby("month", as_index=False)["amount"]
+        .sum()
+        .rename(columns={"amount": "sales"})
+    )
+    grouped["category"] = str(product_label)
+    grouped["sales"] = grouped["sales"].astype(float)
+    return grouped[["month", "category", "sales"]].sort_values("month").reset_index(drop=True)
 
 
 def simple_forecast(monthly_df: pd.DataFrame, periods: int = 1) -> pd.DataFrame:

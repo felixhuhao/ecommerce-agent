@@ -39,6 +39,7 @@ def _tool_run_limits(middleware: list[object]) -> dict[str | None, int | None]:
 
 def test_build_agent_threads_backend_and_slots(monkeypatch) -> None:
     captured = {}
+    profiles = []
 
     def fake_create_deep_agent(
         *,
@@ -62,6 +63,12 @@ def test_build_agent_threads_backend_and_slots(monkeypatch) -> None:
         return "AGENT"
 
     monkeypatch.setattr(agent_module, "create_deep_agent", fake_create_deep_agent)
+    monkeypatch.setattr(agent_module, "_DEEPAGENTS_PROFILE_REGISTERED", False)
+    monkeypatch.setattr(
+        agent_module,
+        "register_harness_profile",
+        lambda provider, profile: profiles.append((provider, profile)),
+    )
 
     sentinel_backend = object()
     result = build_agent(
@@ -80,6 +87,29 @@ def test_build_agent_threads_backend_and_slots(monkeypatch) -> None:
     assert captured["backend"] is sentinel_backend
     assert captured["subagents"] == []
     assert captured["skills"] == []
+    assert len(profiles) == 1
+    assert profiles[0][0] == "openai"
+    assert profiles[0][1].general_purpose_subagent.enabled is False
+
+
+def test_build_agent_registers_profile_once(monkeypatch) -> None:
+    calls = []
+
+    def fake_create_deep_agent(**kwargs):
+        return kwargs
+
+    monkeypatch.setattr(agent_module, "create_deep_agent", fake_create_deep_agent)
+    monkeypatch.setattr(agent_module, "_DEEPAGENTS_PROFILE_REGISTERED", False)
+    monkeypatch.setattr(
+        agent_module,
+        "register_harness_profile",
+        lambda provider, profile: calls.append((provider, profile)),
+    )
+
+    for _ in range(2):
+        build_agent("MODEL", [], system_prompt="PROMPT")  # type: ignore[arg-type]
+
+    assert len(calls) == 1
 
 
 def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> None:
@@ -124,6 +154,11 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
     } <= middleware_types
     assert {"task", "write_todos"} <= _excluded_tools(captured["middleware"])
     assert "execute" not in _excluded_tools(captured["middleware"])
+    limits = _tool_run_limits(captured["middleware"])
+    assert limits["stage_sales_analysis_inputs"] == 1
+    assert limits["get_statistics"] == 2
+    assert limits["execute"] == 3
+    assert limits["create_chart_spec"] == 1
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
 
@@ -304,6 +339,8 @@ def test_build_customer_insights_threads_tools_without_backend(monkeypatch) -> N
         "_ToolExclusionMiddleware",
     } <= middleware_types
     limits = _tool_run_limits(captured["middleware"])
+    assert limits["customer_spend_summary"] == 1
+    assert limits["get_statistics"] == 2
     assert limits["user_query"] == 2
     assert limits["order_query"] == 2
     assert limits["create_chart_spec"] == 1

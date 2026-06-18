@@ -6,6 +6,7 @@ import pytest
 from ecommerce_analysis import (
     load_orders_df,
     monthly_sales_by_category,
+    monthly_sales_by_product,
     simple_forecast,
     validate_forecast_result,
 )
@@ -69,13 +70,15 @@ def test_load_orders_df_flattens_raw_spring_orders_with_product_categories(tmp_p
     )
     products_path = _write_orders(
         tmp_path,
-        [{"productId": 1, "category": "electronics"}],
+        [{"productId": 1, "sku": "SKU-001", "category": "electronics"}],
         name="products_raw.json",
     )
 
     df = load_orders_df(orders_path, products_path)
 
     assert list(df["category"]) == ["electronics", "unknown"]
+    assert list(df["product_id"]) == [1, 99]
+    assert list(df["sku"]) == ["SKU-001", ""]
     assert list(df["amount"]) == pytest.approx([100.5, 15.0])
     assert pd.api.types.is_datetime64_any_dtype(df["created_at"])
 
@@ -192,6 +195,83 @@ def test_monthly_sales_by_category_empty_when_no_realized() -> None:
     out = monthly_sales_by_category(df)
     assert out.empty
     assert set(out.columns) == {"month", "category", "sales"}
+
+
+def test_monthly_sales_by_product_filters_sku_and_matches_forecast_shape(tmp_path) -> None:
+    orders_path = _write_orders(
+        tmp_path,
+        [
+            {
+                "status": "paid",
+                "createdAt": "2026-01-15T10:00:00",
+                "items": [{"productId": 3, "subtotal": 79.0}],
+            },
+            {
+                "status": "completed",
+                "createdAt": "2026-02-15T10:00:00",
+                "items": [{"productId": 3, "subtotal": 158.0}],
+            },
+            {
+                "status": "paid",
+                "createdAt": "2026-02-16T10:00:00",
+                "items": [{"productId": 9, "subtotal": 999.0}],
+            },
+        ],
+        name="orders_raw.json",
+    )
+    products_path = _write_orders(
+        tmp_path,
+        [
+            {
+                "productId": 3,
+                "sku": "SKU-LOW-003",
+                "name": "Fast Charger",
+                "category": "electronics",
+            },
+            {"productId": 9, "sku": "SKU-119", "category": "electronics"},
+        ],
+        name="products_raw.json",
+    )
+    orders_df = load_orders_df(orders_path, products_path)
+
+    out = monthly_sales_by_product(
+        orders_df,
+        sku="SKU-LOW-003",
+        label="Fast Charger (SKU-LOW-003)",
+    )
+
+    assert list(out.columns) == ["month", "category", "sales"]
+    assert out["category"].unique().tolist() == ["Fast Charger (SKU-LOW-003)"]
+    assert out["month"].tolist() == [
+        pd.Timestamp("2026-01-01"),
+        pd.Timestamp("2026-02-01"),
+    ]
+    assert out["sales"].tolist() == pytest.approx([79.0, 158.0])
+
+
+def test_monthly_sales_by_product_empty_for_unknown_sku(tmp_path) -> None:
+    orders_path = _write_orders(
+        tmp_path,
+        [
+            {
+                "status": "paid",
+                "createdAt": "2026-01-15T10:00:00",
+                "items": [{"productId": 3, "subtotal": 79.0}],
+            }
+        ],
+        name="orders_raw.json",
+    )
+    products_path = _write_orders(
+        tmp_path,
+        [{"productId": 3, "sku": "SKU-LOW-003", "category": "electronics"}],
+        name="products_raw.json",
+    )
+    orders_df = load_orders_df(orders_path, products_path)
+
+    out = monthly_sales_by_product(orders_df, sku="SKU-NOPE-999")
+
+    assert out.empty
+    assert list(out.columns) == ["month", "category", "sales"]
 
 
 def test_simple_forecast_extends_linear_trend() -> None:
