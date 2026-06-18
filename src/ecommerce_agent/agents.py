@@ -44,6 +44,8 @@ _SALES_TOOL_LIMITS = {
     STAGE_SALES_ANALYSIS_TOOL_NAME: 1,
     SALES_FORECAST_TOOL_NAME: 1,
     GET_STATISTICS_TOOL: 2,
+    "product_query": 2,
+    "product_search": 2,
     "execute": 3,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
@@ -52,7 +54,7 @@ _CUSTOMER_INSIGHTS_TOOL_LIMITS = {
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }
 _WAREHOUSE_TOOL_LIMITS = {
-    "get_table_schema": 4,
+    "get_table_schema": 5,
     "query_readonly": 4,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
 }

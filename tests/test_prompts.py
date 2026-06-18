@@ -134,9 +134,16 @@ def test_get_data_warehouse_prompt_is_nonempty_and_read_only() -> None:
     assert "query_readonly" in prompt
     assert "create_chart_spec" in prompt
     assert "Prefer one" in prompt and "query_readonly" in prompt
+    assert "answer from that" in prompt
+    assert "follow-up validation" in prompt
     assert "query_readonly at most four times" in prompt
-    assert "get_table_schema at most four" in prompt
+    assert "get_table_schema at most five" in prompt
     assert "do not query" in prompt.lower() and "information_schema" in prompt
+    assert "DuckDB-compatible" in prompt
+    assert "strftime" in prompt and "format" in prompt
+    assert "min/max date probes" in prompt
+    assert "fact_orders.payment_amount" in prompt
+    assert "fact_order_items is not needed" in prompt
     assert "exactly once" in prompt
     assert "warehouse" in prompt.lower()
     assert "current stock" in prompt.lower()

@@ -159,6 +159,8 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
     assert limits["stage_sales_analysis_inputs"] == 1
     assert limits[SALES_FORECAST_TOOL_NAME] == 1
     assert limits["get_statistics"] == 2
+    assert limits["product_query"] == 2
+    assert limits["product_search"] == 2
     assert limits["execute"] == 3
     assert limits["create_chart_spec"] == 1
     assert captured["kwargs"]["subagents"] == []
@@ -378,7 +380,7 @@ def test_build_data_warehouse_analyst_threads_tools_without_backend(monkeypatch)
     assert captured["kwargs"]["subagents"] == []
     assert captured["kwargs"]["skills"] == []
     limits = _tool_run_limits(captured["middleware"])
-    assert limits["get_table_schema"] == 4
+    assert limits["get_table_schema"] == 5
     assert limits["query_readonly"] == 4
     assert limits["create_chart_spec"] == 1
     assert {"task", "write_todos", "execute", "write_file"} <= _excluded_tools(

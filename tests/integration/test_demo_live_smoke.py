@@ -60,7 +60,7 @@ MAX_SAME_TOOL_CALLS = {
     "stage_sales_analysis_inputs": 2,
     SALES_FORECAST_TOOL_NAME: 1,
     "query_readonly": 4,
-    "get_table_schema": 4,
+    "get_table_schema": 5,
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME: 1,
     SALES_BY_CATEGORY_TOOL_NAME: 1,
     CREATE_CHART_SPEC_TOOL_NAME: 1,
@@ -118,6 +118,18 @@ CASES = [
         required_all_of=(CUSTOMER_SPEND_SUMMARY_TOOL_NAME,),
         forbidden=WRITE_SPRING_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
+    ),
+    Case(
+        id="customer_order_history_boundary",
+        prompt="what's customer 7's order history?",
+        specialists=("sales-analyst",),
+        required_all_of=("order_query",),
+        forbidden=(
+            WRITE_SPRING_TOOLS
+            | VIZ_TOOLS
+            | NL2SQL_TOOLS
+            | {CUSTOMER_SPEND_SUMMARY_TOOL_NAME}
+        ),
     ),
     Case(
         id="sales_category_chart",
