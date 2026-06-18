@@ -48,6 +48,8 @@ def test_get_order_manager_prompt_is_nonempty_and_order_status_only() -> None:
     assert "at most once" in prompt
     assert "Do not call request_approval until" in prompt
     assert "confirm the current status with order_query" in prompt
+    assert "order_query filters by userId and/or status, not orderId" in prompt
+    assert "Do not ask for userId when status-filtered lookup can verify" in prompt
     # Phase B: PO/supplier/product guidance moved to the purchasing specialist.
     assert "purchase_order_create" not in prompt
     assert "purchase_order_receive" not in prompt
@@ -136,7 +138,7 @@ def test_get_data_warehouse_prompt_is_nonempty_and_read_only() -> None:
     assert "query_readonly" in prompt
     assert "create_chart_spec" in prompt
     assert "Prefer one" in prompt and "query_readonly" in prompt
-    assert "query_readonly at most twice" in prompt
+    assert "query_readonly at most three times" in prompt
     assert "get_table_schema at most three" in prompt
     assert "exactly once" in prompt
     assert "warehouse" in prompt.lower()

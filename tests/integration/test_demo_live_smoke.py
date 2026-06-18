@@ -57,7 +57,7 @@ MAX_SAME_TOOL_CALLS = {
     "product_search": 2,
     "inventory_query": 2,
     "stage_sales_analysis_inputs": 2,
-    "query_readonly": 2,
+    "query_readonly": 3,
     "get_table_schema": 3,
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME: 1,
     SALES_BY_CATEGORY_TOOL_NAME: 1,

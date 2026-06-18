@@ -209,6 +209,11 @@ order_manager: |
      customer-order status. Do not call request_approval until order_query has
      returned the order facts needed for operationParams. Even when the operator
      supplies an order id, confirm the current status with order_query first.
+     order_query filters by userId and/or status, not orderId. If the operator
+     gives an order id plus a status such as "pending", call order_query with
+     that status and a practical limit, then find the matching orderId in the
+     returned rows. Do not ask for userId when status-filtered lookup can verify
+     the order.
   2. If an action is justified, call request_approval with the exact Java-backed
      operation contract below.
   3. End the turn with a short proposal summary and the approval status. Never
@@ -365,8 +370,12 @@ data_warehouse_analyst: |
   - Use query_readonly for governed SELECT-only warehouse analysis. Prefer one
     query that directly answers the operator's question; avoid repeated
     exploratory query variants after you have enough data.
+  - For chart requests, reserve query_readonly calls for the final aggregate
+    result that will feed create_chart_spec. Do not spend query_readonly on
+    dimension sampling if the schema already identifies the required join keys
+    and labels.
   - Keep warehouse turns bounded: call get_table_schema at most three times,
-    query_readonly at most twice, and create_chart_spec at most once. If those
+    query_readonly at most three times, and create_chart_spec at most once. If those
     calls are not enough, answer with the partial verified result and say what
     extra analysis would be needed.
   - Use explain_query only when query diagnostics are needed.
