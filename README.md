@@ -223,25 +223,14 @@ docs/
 
 ## Related Repositories
 
-- `../ecommerce-mcp-server` - Spring Boot MCP server for operational ecommerce
-  tools and approval execution.
+- `../ecommerce-mcp-server`
+  ([felixhuhao/ecommerce-mcp-server](https://github.com/felixhuhao/ecommerce-mcp-server))
+  - Spring Boot MCP server for operational ecommerce tools and approval execution.
 - `../nl2sql_pro`
   ([felixhuhao/nl2sql-data-agent](https://github.com/felixhuhao/nl2sql-data-agent))
   - optional NL2SQL MCP service for warehouse-style analytics.
 
-## Running Locally
+## Development
 
-Development setup, configuration, service tokens, Docker commands, and test
-commands live in [docs/development.md](docs/development.md).
-
-Short version:
-
-```bash
-uv sync
-docker compose -f docker-compose.yml -f compose.sandbox.yml up -d
-uv run ecommerce-agent serve --reload
-```
-
-You also need the sibling Spring MCP server and MySQL stack running for real
-business tools. See [docs/development.md](docs/development.md) for the complete
-local workflow.
+Setup, configuration, service tokens, Docker commands, and test commands live in
+[docs/development.md](docs/development.md).
