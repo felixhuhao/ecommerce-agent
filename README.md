@@ -1,199 +1,247 @@
 # E-Commerce Agent
 
-Python/Agent side of the E-Commerce AI Assistant. The completed Spring Boot MCP
-server lives in `../ecommerce-mcp-server`; this repo owns the FastAPI service,
-agent orchestration, streaming API, and later sandbox/HITL/frontend layers.
+An AI operations console for ecommerce teams: it can answer business questions,
+route work to focused specialists, generate interactive charts, monitor the
+business for risks, and submit sensitive actions through human approval instead
+of letting an agent mutate production state directly.
 
-## External Dependencies
+This repo owns the Python agent service, specialist orchestration, FastAPI API,
+React operator console, trace/grounding pipeline, proactive monitors, and
+sandboxed analytical execution. The operational Spring Boot MCP server lives in
+the sibling repo `../ecommerce-mcp-server`.
 
-Week 1 assumes the Spring Boot MCP server is already running. This repo does not
-start, seed, or reset MySQL; that lifecycle belongs to `../ecommerce-mcp-server`
-and your local environment.
+## Why This Project Is Interesting
 
-Run the server from the sibling repo when needed:
+Most agent demos stop at "chat with tools." This project explores the harder
+product surface around a real business agent:
 
-```bash
-cd ../ecommerce-mcp-server
-APP_SERVICE_TOKEN=dev-service-token ./mvnw spring-boot:run
-```
+- **Specialist routing instead of one giant agent.** Requests are routed to
+  focused specialists such as sales analysis, inventory, purchasing,
+  customer insights, order management, and optional data-warehouse analytics.
+- **Tool surfaces are cataloged and role-shaped.** Specialists receive only the
+  tools they need, selected through static metadata and tags rather than prompt
+  guesswork.
+- **Writes are approval-gated.** The model can propose purchase orders or order
+  status changes, but approval and execution happen through a human-controlled
+  REST path with actor/session binding.
+- **Answers carry grounding.** Responses show whether they are authoritative,
+  derived, or unverified, with source evidence from tool traces.
+- **Charts are first-party artifacts.** The model emits a normalized chart spec;
+  the frontend renders it with ECharts instead of relying on low-quality remote
+  chart images.
+- **Analytical code runs in a sandbox.** Forecast and data-analysis workflows can
+  stage data files and execute Python in an isolated executor.
+- **The system monitors proactively.** Low stock, sales drops, and stale orders
+  appear as actionable alerts with evidence and acknowledgment flow.
+- **MCP is a real extension boundary.** Spring business tools, optional warehouse
+  NL2SQL tools, and legacy chart-tool experiments are integrated as external MCP
+  services instead of being hard-wired into the agent.
 
-Alternatively, set `APP_SERVICE_TOKEN` in that repo's ignored `.env.properties`.
-It must match this repo's `SPRING_MCP_SERVICE_TOKEN`, or `/mcp` will return
-`401` even though `/actuator/health` is green.
-
-Check the server:
-
-```bash
-curl http://localhost:8080/actuator/health
-```
-
-The agent project calls the MCP endpoint configured by `SPRING_MCP_URL`, default:
-`http://localhost:8080/mcp`.
-
-MCP requests must include trusted headers:
+## Architecture
 
 ```text
-X-Service-Token: dev-service-token
-X-User-Id: 1
-X-Session-Id: local-session
+Operator Console (React + ECharts)
+        |
+        v
+FastAPI service
+  - auth, sessions, streaming, approvals, alerts
+  - trace capture and answer grounding
+  - specialist registry and runtime construction
+        |
+        +--> Router
+        |      -> sales-analyst
+        |      -> inventory
+        |      -> purchasing
+        |      -> order-manager
+        |      -> customer-insights
+        |      -> data-warehouse-analyst (optional)
+        |
+        +--> MCP clients
+        |      -> Spring Boot ecommerce MCP server
+        |      -> NL2SQL warehouse MCP server (optional)
+        |
+        +--> Sandbox executor
+        |      -> staged files + Python analysis helpers
+        |
+        +--> MongoDB
+               -> sessions, thread messages, traces, audits, alerts
 ```
 
-Copy `.env.example` to `.env` and adjust values for your local MCP servers.
-Week 1 requires only the SpringBoot business MCP server. Charts now render through
-first-party ECharts artifacts. The optional legacy ModelScope/AntV chart MCP
-server can still be enabled for chart-tool smoke tests:
+The design deliberately separates **current operational state** from
+**warehouse analytics**. Operational questions such as inventory, current orders,
+suppliers, and approvals stay on Spring MCP tools. Historical/ad-hoc analytical
+warehouse questions can route to the optional NL2SQL specialist.
 
-```bash
-docker compose -f compose.chart-mcp.yml up chart-mcp
+## Key Workflows
+
+### Read-Only Operations
+
+Ask about current stock, order status, product sales, customer spend, or business
+health. The router chooses the owning specialist, the specialist calls a narrow
+tool or aggregate, and the answer is rendered with grounding sources.
+
+Example:
+
+```text
+What's the current stock level for SKU-LOW-003?
 ```
 
-Then set:
+### Interactive Analysis And Charts
 
-```env
-MODELSCOPE_MCP_URL=http://127.0.0.1:1122/mcp
+For chartable answers, specialists call `create_chart_spec`, which returns a
+validated chart artifact. The frontend renders it with ECharts, preserving axes,
+legends, tooltips, and responsive layout.
+
+Example:
+
+```text
+Show revenue by region and channel for the last 12 months as a chart.
 ```
 
-The diagnostics allowlist a chart surface from that server:
-`generate_line_chart`, `generate_bar_chart`, and `generate_column_chart`.
-The Compose file also starts a lightweight local renderer stub and wires AntV's
-`VIS_REQUEST_SERVER` to it, so backend chart-tool smoke tests do not depend on
-the public AntV render endpoint. It is not part of the default agent runtime. If
-`1122` is already in use, run:
+### Sandboxed Forecasts
 
-```bash
-CHART_MCP_PORT=1123 docker compose -f compose.chart-mcp.yml up chart-mcp
+Forecast-style questions can stage product/order data into a sandbox workspace,
+run Python analysis, and return both a grounded narrative and a chart artifact.
+
+Example:
+
+```text
+Forecast next month's sales for SKU-LOW-003 and show the trend.
 ```
 
-and set `MODELSCOPE_MCP_URL=http://127.0.0.1:1123/mcp`.
+### Human-In-The-Loop Writes
 
-## Agent-Owned Infrastructure
+Write-like requests become proposals, not direct mutations. The UI displays an
+approval card. A human operator approves or rejects, and execution happens via
+the backend approval API.
 
-M2 adds a server-owned conversation thread backed by MongoDB. This repo owns the
-agent-side stack — Mongo and the local sandbox executor — as Compose projects.
-The optional legacy chart MCP server and renderer live in `compose.chart-mcp.yml`
-for explicit smoke/debug runs. The Java MCP server and MySQL remain a separate
-backend stack in `../ecommerce-mcp-server` with their own lifecycle; this repo
-does not start, seed, or reset them.
+Example:
 
-Start the full agent-owned stack with one command:
-
-```bash
-docker compose -f docker-compose.yml -f compose.chart-mcp.yml -f compose.sandbox.yml up -d
+```text
+Create a purchase order for 200 units of productId 9 from supplier 7.
 ```
 
-This legacy command brings up Mongo (`docker-compose.yml`, named volume
-`mongo-data`), the optional chart MCP server and renderer (`compose.chart-mcp.yml`),
-and the local sandbox executor service (`compose.sandbox.yml`). For normal local
-development, prefer:
+### Proactive Monitoring
 
-```bash
-docker compose -f docker-compose.yml -f compose.sandbox.yml up -d
+The alert center can run monitor checks and surface:
+
+- low stock
+- week-over-week sales drops
+- stale pending orders
+- paid orders that have not shipped
+
+Each alert includes authority, sources, entities, and an acknowledgment action.
+
+## Design Highlights
+
+### Specialist Provider Catalog
+
+Specialists are declared as providers with:
+
+- name and routing description
+- prompt key
+- allowed tool tags
+- role/RBAC enablement
+- assembly function
+
+This keeps specialist capabilities explicit and testable. Adding a tool to the
+system is not enough; it must be tagged and assigned to the right specialist.
+
+### Grounding And Trace Capture
+
+Tool calls are captured into trace records. Grounding is built from those traces
+and attached to thread messages and alerts. The UI can show source snippets and
+confidence badges without asking the model to self-report where numbers came
+from.
+
+### First-Party Chart Artifacts
+
+Instead of asking a chart MCP server to return a rendered image, the agent emits
+a normalized chart spec:
+
+- chart type
+- axes
+- series
+- points
+- notes
+
+The frontend owns rendering quality through ECharts. This gives the demo a much
+better visual surface while keeping MCP available for external-system extension
+stories.
+
+### Approval Boundary
+
+Approval is intentionally not exposed as an agent tool. The model can request an
+approval, but cannot approve its own request. Java owns durable approval records
+and actor/session checks; FastAPI orchestrates the user-facing flow.
+
+### Sandbox Boundary
+
+Analytical code runs outside the main FastAPI process. The long-lived sandbox
+executor keeps startup latency low while still isolating workspaces by session
+and keeping analysis code away from application internals.
+
+### Smoke And Regression Evals
+
+The project includes focused tests for:
+
+- routing
+- tool choice
+- approval safety
+- grounding
+- monitor checks
+- chart artifacts
+- live demo smoke paths
+
+The goal is not only "does the code run" but "did the agent choose the intended
+specialist and tool path."
+
+## Repository Map
+
+```text
+src/ecommerce_agent/
+  api/          FastAPI routes for sessions, auth, alerts, audit, health
+  auth/         Login sessions, roles, and action permissions
+  audit/        Audit projections over thread and approval activity
+  specialists/ Specialist provider catalog and tool-surface assembly
+  routing/     Router registry and classifier router
+  tools/       First-party agent tools such as chart specs and analytics wrappers
+  trace/       Trace capture, projection, persistence
+  threads/     Mongo-backed conversation message storage
+  grounding/   Answer grounding and source extraction
+  monitoring/  Proactive alert checks and alert grounding
+  sandbox/     Docker/HTTP sandbox execution backends
+  sessions/    Runtime construction, turn execution, streaming events
+  evals/       Routing/tool/grounding/live smoke eval harnesses
+
+frontend/
+  React operator console, ECharts renderer, alert center, trace UI
+
+docs/
+  Design records and development notes
 ```
 
-To start only what a given task needs, target individual services instead.
+## Related Repositories
 
-Start Mongo when exercising sessions or the approval workflow:
+- `../ecommerce-mcp-server` - Spring Boot MCP server for operational ecommerce
+  tools and approval execution.
+- `../nl2sql_pro`
+  ([felixhuhao/nl2sql-data-agent](https://github.com/felixhuhao/nl2sql-data-agent))
+  - optional NL2SQL MCP service for warehouse-style analytics.
 
-```bash
-docker compose up -d mongo
-```
+## Running Locally
 
-The default `.env.example` values point the app at that service:
+Development setup, configuration, service tokens, Docker commands, and test
+commands live in [docs/development.md](docs/development.md).
 
-```env
-MONGO_URL=mongodb://ecommerce_agent:dev-mongo-password@localhost:27017/?authSource=admin
-MONGO_DB=ecommerce_agent
-APPROVAL_API_BASE_URL=http://localhost:8080
-```
-
-If `27017` is already in use, run:
-
-```bash
-MONGO_PORT=27018 docker compose up -d mongo
-```
-
-and set `MONGO_URL=mongodb://ecommerce_agent:dev-mongo-password@localhost:27018/?authSource=admin`.
-
-## Sandbox Executor
-
-Local development defaults to the long-lived sandbox executor service:
-
-```env
-SANDBOX_BACKEND=remote
-SANDBOX_EXECUTOR_URL=http://localhost:8006
-```
-
-Keep `SANDBOX_BACKEND=docker` as a fallback when you need the older
-per-session DockerSandbox path.
-
-## Sandbox Container Cleanup
-
-When `SANDBOX_BACKEND=docker`, analytical code runs in per-session sandbox
-containers named `ecommerce-sandbox-*` (labeled
-`com.ecommerce-agent.sandbox=true`). They are removed when their session is
-closed or evicted, but containers left over from debugging or crashes can
-linger. Remove all stale agent sandbox containers:
-
-```bash
-uv run python -m ecommerce_agent.sandbox.cleanup
-```
-
-This force-removes only containers carrying the `com.ecommerce-agent.sandbox=true`
-label or whose name starts with `ecommerce-sandbox-` (so legacy unlabeled
-containers are caught too). It never touches Mongo, the chart services, the
-sandbox executor, or any other container.
-
-## Local App
+Short version:
 
 ```bash
 uv sync
+docker compose -f docker-compose.yml -f compose.sandbox.yml up -d
 uv run ecommerce-agent serve --reload
 ```
 
-Health check:
-
-```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/health/mcp
-```
-
-`/health/mcp` probes configured external MCP servers and reports `degraded`
-when a dependency is unavailable. It does not start or repair external services.
-Because it performs live tool discovery, treat it as an operator check rather than
-a high-frequency poll target.
-
-## Tests
-
-```bash
-uv run pytest
-uv run ruff check .
-```
-
-The Spring MCP integration test is part of the default suite, but it skips with a
-clear message when `SPRING_MCP_URL` is not reachable or `/mcp` rejects the configured
-service token. Start the Spring Boot server from `../ecommerce-mcp-server` with a
-matching `APP_SERVICE_TOKEN` to exercise the real MCP boundary.
-
-Run the opt-in live LLM smoke when both the Spring MCP server and `LLM_API_KEY`
-are available:
-
-```bash
-RUN_LIVE_LLM=1 uv run pytest -m live
-```
-
-When `MODELSCOPE_MCP_URL` is set, the live reliability harness also requires the
-hero run to call one allowlisted chart tool.
-
-Run the opt-in M2 approval loop when Spring MCP/MySQL and MongoDB are both
-available:
-
-```bash
-docker compose up -d mongo
-RUN_M2_APPROVAL_INTEGRATION=1 uv run pytest tests/integration/test_m2_approval_loop.py -v
-```
-
-This creates real pending approvals through the Spring MCP `request_approval`
-tool, then drives FastAPI approve/reject/execute orchestration against Java REST
-and verifies Mongo thread reload/stream replay. The Java companion migration must
-have widened `approval_record.status` to `VARCHAR(20)` so the `invalidated` and
-`failed` terminal states fit.
+You also need the sibling Spring MCP server and MySQL stack running for real
+business tools. See [docs/development.md](docs/development.md) for the complete
+local workflow.
