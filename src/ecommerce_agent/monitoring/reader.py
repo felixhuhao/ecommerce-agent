@@ -118,12 +118,12 @@ class McpMonitorReader:
         )
 
     async def sales_drop_wow(self) -> tuple[list[dict[str, Any]], FindingEvidence]:
-        args = {"metric": "sales_drop_wow"}
+        args: dict[str, Any] = {}
         result = await self._invoke("get_statistics", args)
         return _records(result), FindingEvidence(
             source_id="detection:get_statistics",
             tool_name="get_statistics",
-            args_summary=_summarize(args),
+            args_summary="aggregate=salesDropWow",
             result_summary=_summarize(result),
             evidence=_evidence(result),
         )
@@ -198,7 +198,16 @@ def _records(value: Any) -> list[dict[str, Any]]:
             content_records = _content_records(content)
             if content_records:
                 return content_records
-        for key in ("items", "data", "results", "rows", "inventory", "products"):
+        for key in (
+            "items",
+            "data",
+            "results",
+            "rows",
+            "inventory",
+            "products",
+            "salesDropWow",
+            "sales_drop_wow",
+        ):
             nested = value.get(key)
             if isinstance(nested, list):
                 return [item for item in nested if isinstance(item, dict)]

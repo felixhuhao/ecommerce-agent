@@ -87,6 +87,43 @@ async def test_mcp_monitor_reader_extracts_json_rows_from_content_wrappers() -> 
     assert evidence.tool_name == "inventory_low_stock"
 
 
+async def test_mcp_monitor_reader_extracts_sales_drop_wow_from_statistics() -> None:
+    class Tool:
+        name = "get_statistics"
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def ainvoke(self, args):  # noqa: ANN001
+            self.calls.append(args)
+            return {
+                "salesByCategory": [{"category": "home", "totalSales": 129}],
+                "salesDropWow": [
+                    {
+                        "category": "home",
+                        "currentSales": 129,
+                        "previousSales": 2580,
+                        "dropPct": 0.95,
+                    }
+                ],
+            }
+
+    tool = Tool()
+    rows, evidence = await McpMonitorReader([tool]).sales_drop_wow()
+
+    assert tool.calls == [{}]
+    assert rows == [
+        {
+            "category": "home",
+            "currentSales": 129,
+            "previousSales": 2580,
+            "dropPct": 0.95,
+        }
+    ]
+    assert evidence.tool_name == "get_statistics"
+    assert evidence.args_summary == "aggregate=salesDropWow"
+
+
 async def test_stale_order_check_uses_status_specific_timestamps() -> None:
     now = datetime(2026, 6, 19, 12, tzinfo=UTC)
     reader = InMemoryMonitorReader(
