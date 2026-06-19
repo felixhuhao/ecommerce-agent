@@ -95,14 +95,8 @@ async def test_stale_order_check_uses_status_specific_timestamps() -> None:
                 "orderId": 1008,
                 "userId": 7,
                 "status": "pending",
-                "createdAt": "2026-06-16T12:00:00",
+                "createdAt": "2026-06-16T12:00:00+00:00",
                 "totalAmount": 99.5,
-            },
-            {
-                "orderId": 1009,
-                "userId": 8,
-                "status": "pending",
-                "createdAt": "2026-06-19T08:00:00",
             },
         ],
         stale_paid_rows=[
@@ -110,15 +104,8 @@ async def test_stale_order_check_uses_status_specific_timestamps() -> None:
                 "orderId": 1012,
                 "userId": 9,
                 "status": "paid",
-                "createdAt": "2026-06-16T12:00:00",
-                "paidAt": "2026-06-18T18:00:00",
-            },
-            {
-                "orderId": 1013,
-                "userId": 10,
-                "status": "paid",
-                "createdAt": "2026-06-10T12:00:00",
-                "paidAt": "2026-06-19T10:00:00",
+                "createdAt": "2026-06-16T12:00:00+00:00",
+                "paidAt": "2026-06-18T18:00:00+00:00",
             },
         ],
     )
@@ -134,10 +121,34 @@ async def test_stale_order_check_uses_status_specific_timestamps() -> None:
         "stale_order:paid:1012",
     ]
     assert findings[0].value == 72
-    assert findings[0].entities["createdAt"] == "2026-06-16T12:00:00"
+    assert findings[0].entities["createdAt"] == "2026-06-16T12:00:00+00:00"
+    assert findings[0].evidence[0].source_id == "detection:order_query:pending:1008"
     assert findings[1].value == 18
-    assert findings[1].entities["paidAt"] == "2026-06-18T18:00:00"
-    assert findings[1].entities["createdAt"] == "2026-06-16T12:00:00"
+    assert findings[1].entities["paidAt"] == "2026-06-18T18:00:00+00:00"
+    assert findings[1].entities["createdAt"] == "2026-06-16T12:00:00+00:00"
+    assert findings[1].evidence[0].source_id == "detection:order_query:paid:1012"
+
+
+async def test_stale_order_check_trusts_server_prefiltered_candidates() -> None:
+    reader = InMemoryMonitorReader(
+        stale_pending_rows=[
+            {
+                "orderId": 1009,
+                "status": "pending",
+                "createdAt": "2026-06-19T08:00:00+00:00",
+            }
+        ]
+    )
+
+    findings = await StaleOrderCheck(
+        pending_hours=48,
+        paid_hours=12,
+        now_fn=lambda: datetime(2026, 6, 19, 12, tzinfo=UTC),
+    ).run(reader)
+
+    assert [finding.dedupe_key for finding in findings] == ["stale_order:pending:1009"]
+    assert findings[0].value == 4
+    assert findings[0].threshold == 48
 
 
 async def test_stale_order_check_skips_paid_rows_without_paid_at() -> None:
@@ -182,6 +193,28 @@ async def test_mcp_monitor_reader_invokes_order_query_with_stale_filter() -> Non
     ]
     assert evidence.tool_name == "order_query"
     assert "status" in evidence.args_summary
+
+
+async def test_mcp_monitor_reader_invokes_paid_order_query_with_stale_filter() -> None:
+    class Tool:
+        name = "order_query"
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def ainvoke(self, args):  # noqa: ANN001
+            self.calls.append(args)
+            return [{"orderId": 1012, "status": args["status"]}]
+
+    tool = Tool()
+    reader = McpMonitorReader([tool])
+
+    rows, evidence = await reader.stale_paid_order_candidates(older_than_hours=24)
+
+    assert rows == [{"orderId": 1012, "status": "paid"}]
+    assert tool.calls == [{"status": "paid", "staleOlderThanHours": 24, "limit": 50}]
+    assert evidence.tool_name == "order_query"
+    assert "paid" in evidence.args_summary
 
 
 def test_order_query_detection_is_authoritative() -> None:

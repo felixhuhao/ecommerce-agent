@@ -64,8 +64,10 @@ Each row must provide enough fields to calculate and explain staleness:
 - `paidAt` / `paid_at` for paid orders;
 - `totalAmount` / `amount` if available.
 
-Spring timestamps are local date-times without offsets. The Python monitor should
-treat naive timestamps as UTC, matching the existing monitor timestamp posture.
+Spring timestamps are local date-times without offsets. The Spring stale filter
+is the authority for whether a row is stale; Python should treat naive
+timestamps as local wall time when computing display age so it does not compare
+Spring-local rows against a second UTC clock.
 
 Age source is status-aware:
 
@@ -75,7 +77,7 @@ Age source is status-aware:
 | `paid` | `paidAt` | paid staleness means paid-but-not-shipped time, not order age |
 
 If a row lacks the required anchor for its status, skip the row and include no
-finding. The check should log or count skipped rows so malformed
+finding. The check should log skipped rows so malformed
 paid-without-`paidAt` data is observable during tests and manual runs.
 
 ### 4.1 Oldest-Row Visibility
@@ -175,7 +177,7 @@ monitor_stale_paid_order_hours = 24
 
 Keep them separate from `monitor_cooldown_seconds`:
 
-- stale thresholds decide when a finding fires;
+- stale thresholds are sent to the Spring stale-order query;
 - cooldown decides when an acknowledged condition can alert again.
 
 ## 8. UX
@@ -201,16 +203,16 @@ ship paid order 1012
 
 Unit tests:
 
-- pending below threshold does not fire;
-- pending at/above threshold fires;
-- paid at/above threshold fires;
+- returned pending stale candidates produce findings;
+- returned paid stale candidates produce findings;
+- Python does not re-threshold server-filtered candidates with a second clock;
 - rows without timestamps are skipped;
 - pending age uses `createdAt`;
 - paid age uses `paidAt`, not `createdAt`;
 - dedupe key includes status and order ID;
 - evidence uses `order_query`;
 - alert grounding marks `order_query` detections authoritative;
-- check uses an injectable `now_fn` so age tests are deterministic.
+- check uses an injectable `now_fn` so display-age tests are deterministic.
 
 Reader tests:
 

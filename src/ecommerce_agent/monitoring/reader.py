@@ -136,6 +136,7 @@ class McpMonitorReader:
         args = {
             "status": "pending",
             "staleOlderThanHours": older_than_hours,
+            # Drain at most 50 oldest stale rows per monitor cycle.
             "limit": 50,
         }
         result = await self._invoke("order_query", args)
@@ -155,6 +156,7 @@ class McpMonitorReader:
         args = {
             "status": "paid",
             "staleOlderThanHours": older_than_hours,
+            # Drain at most 50 oldest stale rows per monitor cycle.
             "limit": 50,
         }
         result = await self._invoke("order_query", args)

@@ -160,8 +160,6 @@ class StaleOrderCheck:
                 continue
 
             age_hours = (_aware(self._now_fn()) - anchor).total_seconds() / 3600
-            if age_hours < threshold_hours:
-                continue
 
             order_id = _entity_key(row, ("orderId", "order_id", "id"))
             entities = _entities(row) | {
@@ -178,7 +176,7 @@ class StaleOrderCheck:
                     value=round(age_hours, 2),
                     threshold=threshold_hours,
                     entities=entities,
-                    evidence=[_scoped_evidence(evidence, f"{status}:{order_id}")],
+                    evidence=[_scoped_evidence(evidence, order_id)],
                 )
             )
         return findings
@@ -229,7 +227,7 @@ def _timestamp(row: dict[str, Any], keys: Sequence[str]) -> datetime | None:
     for key in keys:
         value = row.get(key)
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=UTC)
+            return value if value.tzinfo else value.replace(tzinfo=_local_timezone())
         if isinstance(value, str) and value.strip():
             parsed = _parse_timestamp(value)
             if parsed is not None:
@@ -243,11 +241,15 @@ def _parse_timestamp(value: str) -> datetime | None:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_local_timezone())
 
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _local_timezone():
+    return datetime.now().astimezone().tzinfo or UTC
 
 
 def _snake(value: str) -> str:
