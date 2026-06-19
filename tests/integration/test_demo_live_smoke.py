@@ -181,7 +181,7 @@ CASES = [
     ),
     Case(
         id="warehouse_cohort",
-        prompt="show repeat purchase rate by customer cohort over the last 12 months",
+        prompt="what is the repeat purchase rate by customer cohort over the last 12 months?",
         specialists=("data-warehouse-analyst",),
         required_all_of=("query_readonly",),
         forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | {"request_approval"},
