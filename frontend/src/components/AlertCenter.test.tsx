@@ -118,4 +118,48 @@ describe("AlertCenter", () => {
     expect(screen.queryByText("cause_error:GraphRecursionError")).not.toBeInTheDocument();
     expect(screen.getByText("Sources (1)")).toBeInTheDocument();
   });
+
+  it("formats operational alert metrics for operators", () => {
+    const staleOrderAlert: Alert = {
+      ...alert,
+      alert_id: "stale-1",
+      check_name: "stale_order",
+      title: "Stale pending order: 181",
+      metric: "stale_order_age_hours",
+      value: 4160.64,
+      threshold: 48,
+    };
+    const salesDropAlert: Alert = {
+      ...alert,
+      alert_id: "sales-1",
+      check_name: "sales_drop_wow",
+      title: "Sales drop: home",
+      metric: "sales_drop_wow",
+      value: 0.95,
+      threshold: 0.25,
+    };
+
+    render(
+      <AlertCenter
+        alerts={[staleOrderAlert, salesDropAlert]}
+        isLoading={false}
+        isError={false}
+        isRunning={false}
+        isAcknowledgingId={null}
+        actionError={null}
+        runNote={null}
+        onRun={vi.fn()}
+        onAcknowledge={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Stale order · warning")).toBeInTheDocument();
+    expect(screen.getByText("Age")).toBeInTheDocument();
+    expect(screen.getByText("173 d 9 h")).toBeInTheDocument();
+    expect(screen.getByText("Threshold 2 d")).toBeInTheDocument();
+    expect(screen.getByText("Sales drop WoW · warning")).toBeInTheDocument();
+    expect(screen.getByText("Week-over-week drop")).toBeInTheDocument();
+    expect(screen.getByText("95%")).toBeInTheDocument();
+    expect(screen.getByText("Threshold 25%")).toBeInTheDocument();
+  });
 });
