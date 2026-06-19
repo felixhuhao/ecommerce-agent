@@ -5,7 +5,9 @@ from ecommerce_agent.monitoring.models import AlertGrounding, AlertSource, Findi
 from ecommerce_agent.trace.schema import TraceRecord
 from ecommerce_agent.trace.tools import is_data_bearing
 
-CANONICAL_DETECTION_TOOLS = frozenset({"get_statistics", "inventory_low_stock"})
+CANONICAL_DETECTION_TOOLS = frozenset(
+    {"get_statistics", "inventory_low_stock", "order_query"}
+)
 
 
 def build_alert_grounding(
@@ -52,4 +54,3 @@ def _cause_sources(record: TraceRecord) -> list[AlertSource]:
             )
         )
     return sources
-

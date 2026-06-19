@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ecommerce_agent.config import Settings
 from ecommerce_agent.monitoring.models import AlertSeverity, Finding, FindingEvidence
 from ecommerce_agent.monitoring.reader import MonitorReader
+
+logger = logging.getLogger(__name__)
 
 
 class MonitorCheck(Protocol):
@@ -84,10 +88,110 @@ class SalesDropWowCheck:
         return findings
 
 
+class StaleOrderCheck:
+    name = "stale_order"
+
+    def __init__(
+        self,
+        *,
+        pending_hours: int,
+        paid_hours: int,
+        now_fn: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.pending_hours = pending_hours
+        self.paid_hours = paid_hours
+        self._now_fn = now_fn or (lambda: datetime.now(UTC))
+
+    async def run(self, reader: MonitorReader) -> list[Finding]:
+        findings: list[Finding] = []
+        pending_rows, pending_evidence = await reader.stale_pending_order_candidates(
+            older_than_hours=self.pending_hours
+        )
+        findings.extend(
+            self._findings_for_status(
+                pending_rows,
+                pending_evidence,
+                status="pending",
+                threshold_hours=self.pending_hours,
+                anchor_key="createdAt",
+                title_prefix="Stale pending order",
+            )
+        )
+
+        paid_rows, paid_evidence = await reader.stale_paid_order_candidates(
+            older_than_hours=self.paid_hours
+        )
+        findings.extend(
+            self._findings_for_status(
+                paid_rows,
+                paid_evidence,
+                status="paid",
+                threshold_hours=self.paid_hours,
+                anchor_key="paidAt",
+                title_prefix="Paid order not shipped",
+            )
+        )
+        return findings
+
+    def _findings_for_status(
+        self,
+        rows: list[dict[str, Any]],
+        evidence: FindingEvidence,
+        *,
+        status: str,
+        threshold_hours: int,
+        anchor_key: str,
+        title_prefix: str,
+    ) -> list[Finding]:
+        findings: list[Finding] = []
+        for row in rows:
+            row_status = str(row.get("status") or "").lower()
+            if row_status and row_status != status:
+                continue
+
+            anchor = _timestamp(row, (anchor_key, _snake(anchor_key)))
+            if anchor is None:
+                logger.warning(
+                    "skipping stale %s order without %s timestamp: %s",
+                    status,
+                    anchor_key,
+                    _entity_key(row, ("orderId", "order_id", "id")),
+                )
+                continue
+
+            age_hours = (_aware(self._now_fn()) - anchor).total_seconds() / 3600
+            if age_hours < threshold_hours:
+                continue
+
+            order_id = _entity_key(row, ("orderId", "order_id", "id"))
+            entities = _entities(row) | {
+                "ageHours": round(age_hours, 2),
+                "status": status,
+            }
+            findings.append(
+                Finding(
+                    check_name=self.name,
+                    dedupe_key=f"stale_order:{status}:{order_id}",
+                    title=f"{title_prefix}: {order_id}",
+                    severity=AlertSeverity.WARNING,
+                    metric="stale_order_age_hours",
+                    value=round(age_hours, 2),
+                    threshold=threshold_hours,
+                    entities=entities,
+                    evidence=[_scoped_evidence(evidence, f"{status}:{order_id}")],
+                )
+            )
+        return findings
+
+
 def build_default_checks(settings: Settings) -> list[MonitorCheck]:
     return [
         LowStockCheck(threshold=settings.monitor_low_stock_threshold),
         SalesDropWowCheck(drop_pct=settings.monitor_sales_drop_pct),
+        StaleOrderCheck(
+            pending_hours=settings.monitor_stale_pending_order_hours,
+            paid_hours=settings.monitor_stale_paid_order_hours,
+        ),
     ]
 
 
@@ -119,6 +223,40 @@ def _entity_key(row: dict[str, Any], keys: Sequence[str]) -> str:
         if value not in (None, ""):
             return str(value)
     return "unknown"
+
+
+def _timestamp(row: dict[str, Any], keys: Sequence[str]) -> datetime | None:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
+        if isinstance(value, str) and value.strip():
+            parsed = _parse_timestamp(value)
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _snake(value: str) -> str:
+    chars: list[str] = []
+    for char in value:
+        if char.isupper() and chars:
+            chars.append("_")
+        chars.append(char.lower())
+    return "".join(chars)
 
 
 def _low_stock_key(row: dict[str, Any]) -> str:
@@ -164,6 +302,19 @@ def _entities(row: dict[str, Any]) -> dict[str, Any]:
             "warehouse",
             "updatedAt",
             "updated_at",
+            "orderId",
+            "order_id",
+            "userId",
+            "user_id",
+            "status",
+            "createdAt",
+            "created_at",
+            "paidAt",
+            "paid_at",
+            "totalAmount",
+            "total_amount",
+            "amount",
+            "ageHours",
         }
     }
 

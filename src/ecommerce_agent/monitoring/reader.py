@@ -20,6 +20,20 @@ class MonitorReader(Protocol):
     async def sales_drop_wow(self) -> tuple[list[dict[str, Any]], FindingEvidence]:
         ...
 
+    async def stale_pending_order_candidates(
+        self,
+        *,
+        older_than_hours: int,
+    ) -> tuple[list[dict[str, Any]], FindingEvidence]:
+        ...
+
+    async def stale_paid_order_candidates(
+        self,
+        *,
+        older_than_hours: int,
+    ) -> tuple[list[dict[str, Any]], FindingEvidence]:
+        ...
+
 
 class InMemoryMonitorReader:
     def __init__(
@@ -27,9 +41,13 @@ class InMemoryMonitorReader:
         *,
         low_stock_rows: list[dict[str, Any]] | None = None,
         sales_drop_rows: list[dict[str, Any]] | None = None,
+        stale_pending_rows: list[dict[str, Any]] | None = None,
+        stale_paid_rows: list[dict[str, Any]] | None = None,
     ) -> None:
         self.low_stock_rows = low_stock_rows or []
         self.sales_drop_rows = sales_drop_rows or []
+        self.stale_pending_rows = stale_pending_rows or []
+        self.stale_paid_rows = stale_paid_rows or []
 
     async def inventory_low_stock(
         self,
@@ -51,6 +69,32 @@ class InMemoryMonitorReader:
             args_summary="metric=sales_drop_wow",
             result_summary=_summarize(self.sales_drop_rows),
             evidence=_evidence(self.sales_drop_rows),
+        )
+
+    async def stale_pending_order_candidates(
+        self,
+        *,
+        older_than_hours: int,
+    ) -> tuple[list[dict[str, Any]], FindingEvidence]:
+        return self.stale_pending_rows, FindingEvidence(
+            source_id="detection:order_query:pending",
+            tool_name="order_query",
+            args_summary=f"status=pending staleOlderThanHours={older_than_hours}",
+            result_summary=_summarize(self.stale_pending_rows),
+            evidence=_evidence(self.stale_pending_rows),
+        )
+
+    async def stale_paid_order_candidates(
+        self,
+        *,
+        older_than_hours: int,
+    ) -> tuple[list[dict[str, Any]], FindingEvidence]:
+        return self.stale_paid_rows, FindingEvidence(
+            source_id="detection:order_query:paid",
+            tool_name="order_query",
+            args_summary=f"status=paid staleOlderThanHours={older_than_hours}",
+            result_summary=_summarize(self.stale_paid_rows),
+            evidence=_evidence(self.stale_paid_rows),
         )
 
 
@@ -79,6 +123,44 @@ class McpMonitorReader:
         return _records(result), FindingEvidence(
             source_id="detection:get_statistics",
             tool_name="get_statistics",
+            args_summary=_summarize(args),
+            result_summary=_summarize(result),
+            evidence=_evidence(result),
+        )
+
+    async def stale_pending_order_candidates(
+        self,
+        *,
+        older_than_hours: int,
+    ) -> tuple[list[dict[str, Any]], FindingEvidence]:
+        args = {
+            "status": "pending",
+            "staleOlderThanHours": older_than_hours,
+            "limit": 50,
+        }
+        result = await self._invoke("order_query", args)
+        return _records(result), FindingEvidence(
+            source_id="detection:order_query:pending",
+            tool_name="order_query",
+            args_summary=_summarize(args),
+            result_summary=_summarize(result),
+            evidence=_evidence(result),
+        )
+
+    async def stale_paid_order_candidates(
+        self,
+        *,
+        older_than_hours: int,
+    ) -> tuple[list[dict[str, Any]], FindingEvidence]:
+        args = {
+            "status": "paid",
+            "staleOlderThanHours": older_than_hours,
+            "limit": 50,
+        }
+        result = await self._invoke("order_query", args)
+        return _records(result), FindingEvidence(
+            source_id="detection:order_query:paid",
+            tool_name="order_query",
             args_summary=_summarize(args),
             result_summary=_summarize(result),
             evidence=_evidence(result),

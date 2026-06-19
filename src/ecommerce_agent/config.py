@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     monitor_interval_seconds: int = Field(default=900, gt=0)
     monitor_low_stock_threshold: int = Field(default=50, ge=0)
     monitor_sales_drop_pct: float = Field(default=0.25, ge=0, le=1)
+    monitor_stale_pending_order_hours: int = Field(default=48, ge=0)
+    monitor_stale_paid_order_hours: int = Field(default=24, ge=0)
     monitor_cooldown_seconds: int = Field(default=86400, ge=0)
     monitor_cause_enabled: bool = False
     alert_retention_days: int = Field(default=90, gt=0)
