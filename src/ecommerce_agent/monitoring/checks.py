@@ -96,10 +96,12 @@ class StaleOrderCheck:
         *,
         pending_hours: int,
         paid_hours: int,
+        max_per_status: int,
         now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self.pending_hours = pending_hours
         self.paid_hours = paid_hours
+        self.max_per_status = max_per_status
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
 
     async def run(self, reader: MonitorReader) -> list[Finding]:
@@ -179,6 +181,8 @@ class StaleOrderCheck:
                     evidence=[_scoped_evidence(evidence, order_id)],
                 )
             )
+            if len(findings) >= self.max_per_status:
+                break
         return findings
 
 
@@ -189,6 +193,7 @@ def build_default_checks(settings: Settings) -> list[MonitorCheck]:
         StaleOrderCheck(
             pending_hours=settings.monitor_stale_pending_order_hours,
             paid_hours=settings.monitor_stale_paid_order_hours,
+            max_per_status=settings.monitor_stale_order_max_per_status,
         ),
     ]
 

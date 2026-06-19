@@ -169,6 +169,7 @@ async def test_stale_order_check_uses_status_specific_timestamps() -> None:
     findings = await StaleOrderCheck(
         pending_hours=48,
         paid_hours=12,
+        max_per_status=5,
         now_fn=lambda: now,
     ).run(reader)
 
@@ -199,6 +200,7 @@ async def test_stale_order_check_trusts_server_prefiltered_candidates() -> None:
     findings = await StaleOrderCheck(
         pending_hours=48,
         paid_hours=12,
+        max_per_status=5,
         now_fn=lambda: datetime(2026, 6, 19, 12, tzinfo=UTC),
     ).run(reader)
 
@@ -221,6 +223,7 @@ async def test_stale_order_check_treats_naive_timestamps_as_local_time() -> None
     findings = await StaleOrderCheck(
         pending_hours=48,
         paid_hours=12,
+        max_per_status=5,
         now_fn=lambda: datetime(2026, 6, 19, 12),
     ).run(reader)
 
@@ -242,10 +245,47 @@ async def test_stale_order_check_skips_paid_rows_without_paid_at() -> None:
     findings = await StaleOrderCheck(
         pending_hours=48,
         paid_hours=12,
+        max_per_status=5,
         now_fn=lambda: datetime(2026, 6, 19, 12, tzinfo=UTC),
     ).run(reader)
 
     assert findings == []
+
+
+async def test_stale_order_check_caps_each_status_bucket() -> None:
+    now = datetime(2026, 6, 19, 12, tzinfo=UTC)
+    reader = InMemoryMonitorReader(
+        stale_pending_rows=[
+            {
+                "orderId": order_id,
+                "status": "pending",
+                "createdAt": "2026-06-16T12:00:00+00:00",
+            }
+            for order_id in range(1000, 1004)
+        ],
+        stale_paid_rows=[
+            {
+                "orderId": order_id,
+                "status": "paid",
+                "paidAt": "2026-06-18T12:00:00+00:00",
+            }
+            for order_id in range(2000, 2004)
+        ],
+    )
+
+    findings = await StaleOrderCheck(
+        pending_hours=48,
+        paid_hours=12,
+        max_per_status=2,
+        now_fn=lambda: now,
+    ).run(reader)
+
+    assert [finding.dedupe_key for finding in findings] == [
+        "stale_order:pending:1000",
+        "stale_order:pending:1001",
+        "stale_order:paid:2000",
+        "stale_order:paid:2001",
+    ]
 
 
 async def test_mcp_monitor_reader_invokes_order_query_with_stale_filter() -> None:
@@ -320,6 +360,7 @@ def test_default_check_registry_uses_settings() -> None:
         monitor_sales_drop_pct=0.4,
         monitor_stale_pending_order_hours=72,
         monitor_stale_paid_order_hours=36,
+        monitor_stale_order_max_per_status=3,
     )
 
     checks = build_default_checks(settings)
@@ -333,3 +374,4 @@ def test_default_check_registry_uses_settings() -> None:
     assert checks[1].drop_pct == 0.4
     assert checks[2].pending_hours == 72
     assert checks[2].paid_hours == 36
+    assert checks[2].max_per_status == 3
