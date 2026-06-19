@@ -204,7 +204,7 @@ def _first_number(row: dict[str, Any], keys: Sequence[str]) -> float | int | Non
 
 
 def _drop_pct(row: dict[str, Any]) -> float | None:
-    explicit = _first_number(row, ("drop_pct", "dropPercent", "drop_rate", "dropRate"))
+    explicit = _first_number(row, ("drop_pct", "dropPct", "dropPercent", "drop_rate", "dropRate"))
     if explicit is not None:
         return explicit / 100 if explicit > 1 else float(explicit)
 

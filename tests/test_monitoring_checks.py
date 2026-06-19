@@ -124,6 +124,25 @@ async def test_mcp_monitor_reader_extracts_sales_drop_wow_from_statistics() -> N
     assert evidence.args_summary == "aggregate=salesDropWow"
 
 
+async def test_sales_drop_wow_check_accepts_server_shaped_drop_pct() -> None:
+    reader = InMemoryMonitorReader(
+        sales_drop_rows=[
+            {
+                "category": "home",
+                "currentSales": 129,
+                "previousSales": 2580,
+                "dropPct": 0.95,
+            }
+        ]
+    )
+
+    findings = await SalesDropWowCheck(drop_pct=0.25).run(reader)
+
+    assert len(findings) == 1
+    assert findings[0].dedupe_key == "sales_drop_wow:home"
+    assert findings[0].value == 0.95
+
+
 async def test_stale_order_check_uses_status_specific_timestamps() -> None:
     now = datetime(2026, 6, 19, 12, tzinfo=UTC)
     reader = InMemoryMonitorReader(
