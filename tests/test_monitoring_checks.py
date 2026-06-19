@@ -151,6 +151,27 @@ async def test_stale_order_check_trusts_server_prefiltered_candidates() -> None:
     assert findings[0].threshold == 48
 
 
+async def test_stale_order_check_treats_naive_timestamps_as_local_time() -> None:
+    reader = InMemoryMonitorReader(
+        stale_pending_rows=[
+            {
+                "orderId": 1010,
+                "status": "pending",
+                "createdAt": "2026-06-19T08:00:00",
+            }
+        ]
+    )
+
+    findings = await StaleOrderCheck(
+        pending_hours=48,
+        paid_hours=12,
+        now_fn=lambda: datetime(2026, 6, 19, 12),
+    ).run(reader)
+
+    assert [finding.dedupe_key for finding in findings] == ["stale_order:pending:1010"]
+    assert findings[0].value == 4
+
+
 async def test_stale_order_check_skips_paid_rows_without_paid_at() -> None:
     reader = InMemoryMonitorReader(
         stale_paid_rows=[

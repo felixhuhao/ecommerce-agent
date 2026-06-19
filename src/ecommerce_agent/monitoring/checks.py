@@ -245,7 +245,7 @@ def _parse_timestamp(value: str) -> datetime | None:
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
+    return value if value.tzinfo else value.replace(tzinfo=_local_timezone())
 
 
 def _local_timezone():
