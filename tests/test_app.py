@@ -14,7 +14,7 @@ from ecommerce_agent.auth.models import Actor, Role, User
 from ecommerce_agent.auth.passwords import hash_password
 from ecommerce_agent.auth.users_store import InMemoryUserStore
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import MODELSCOPE_VIZ_TOOLS, NL2SQL_TOOLS
+from ecommerce_agent.mcp_client import NL2SQL_TOOLS
 from ecommerce_agent.monitoring.store import InMemoryAlertStore
 from ecommerce_agent.sessions.registry import RuntimeActor
 from ecommerce_agent.sessions.store import InMemorySessionStore
@@ -67,15 +67,6 @@ class HealthyFakeMcpClient:
     async def get_tools(self, server_name: str) -> list[FakeTool]:
         assert server_name == "spring"
         return spring_mcp_tools()
-
-
-class HealthySpringAndModelscopeFakeMcpClient:
-    async def get_tools(self, server_name: str) -> list[FakeTool]:
-        if server_name == "spring":
-            return spring_mcp_tools()
-        if server_name == "modelscope":
-            return [FakeTool(name) for name in sorted(MODELSCOPE_VIZ_TOOLS)]
-        raise AssertionError(f"unexpected server: {server_name}")
 
 
 class HealthySpringAndNl2sqlFakeMcpClient:
@@ -244,29 +235,6 @@ def test_mcp_health_reports_spring_tool_visibility() -> None:
     assert spring["missing_expected_purchasing_tools"] == []
     assert spring["missing_expected_inventory_tools"] == []
     assert spring["missing_expected_customer_insights_tools"] == []
-
-
-def test_mcp_health_reports_modelscope_viz_tool_visibility() -> None:
-    app = create_app(
-        settings=make_settings(modelscope_mcp_url="http://modelscope.example/mcp"),
-        mcp_client=HealthySpringAndModelscopeFakeMcpClient(),
-    )
-    use_in_memory_auth_stores(app)
-
-    with TestClient(app) as client:
-        response = client.get("/health/mcp")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    modelscope = body["servers"]["modelscope"]
-    assert modelscope["status"] == "ok"
-    assert modelscope["tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
-    assert modelscope["runtime_enabled"] is False
-    assert "create_chart_spec" in modelscope["note"]
-    assert modelscope["optional_legacy_viz_tool_count"] == len(MODELSCOPE_VIZ_TOOLS)
-    assert modelscope["optional_legacy_viz_tools"] == sorted(MODELSCOPE_VIZ_TOOLS)
-    assert modelscope["missing_optional_legacy_viz_tools"] == []
 
 
 def test_mcp_health_reports_nl2sql_tool_visibility() -> None:

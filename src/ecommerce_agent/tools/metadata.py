@@ -2,7 +2,7 @@
 
 Replaces the scattered name-keyed frozensets (`READ_ONLY_SPRING_TOOLS`,
 `ORDER_MANAGER_SPRING_TOOLS`, `WRITE_SPRING_TOOLS`, `APPROVAL_SPRING_TOOLS`,
-`VIZ_TOOLS`, `DATA_BEARING_TOOLS`) and the slice-8 `_tool_label` string literals
+`CHART_ARTIFACT_TOOLS`, `DATA_BEARING_TOOLS`) and the slice-8 `_tool_label` string literals
 with one declarative table. Consumers select tools by tag intersection and read
 classification flags from here.
 
@@ -31,7 +31,7 @@ from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 @dataclass(frozen=True)
 class ToolMeta:
     name: str
-    source: Literal["spring", "modelscope", "custom", "backend", "nl2sql"]
+    source: Literal["spring", "custom", "backend", "nl2sql"]
     tags: frozenset[str]
     data_bearing: bool = False
     live_label_start: str | None = None
@@ -43,46 +43,6 @@ def _spring_read(name: str, tag: str, **extra: object) -> ToolMeta:
         name, "spring", frozenset({"spring.read", tag}), data_bearing=True, **extra
     )
 
-
-def _viz(name: str) -> ToolMeta:
-    return ToolMeta(
-        name,
-        "modelscope",
-        frozenset({"viz.chart"}),
-        live_label_start="Generating chart",
-        live_label_end="Chart generated",
-    )
-
-
-VIZ_TOOL_NAMES: tuple[str, ...] = (
-    "generate_area_chart",
-    "generate_bar_chart",
-    "generate_boxplot_chart",
-    "generate_column_chart",
-    "generate_district_map",
-    "generate_dual_axes_chart",
-    "generate_fishbone_diagram",
-    "generate_flow_diagram",
-    "generate_funnel_chart",
-    "generate_histogram_chart",
-    "generate_line_chart",
-    "generate_liquid_chart",
-    "generate_mind_map",
-    "generate_network_graph",
-    "generate_organization_chart",
-    "generate_path_map",
-    "generate_pie_chart",
-    "generate_pin_map",
-    "generate_radar_chart",
-    "generate_sankey_chart",
-    "generate_scatter_chart",
-    "generate_spreadsheet",
-    "generate_treemap_chart",
-    "generate_venn_chart",
-    "generate_violin_chart",
-    "generate_waterfall_chart",
-    "generate_word_cloud_chart",
-)
 
 # These names are exact NL2SQL MCP tool names discovered from the external project.
 # Tool classification is currently global by tool name, so a future server exposing
@@ -131,8 +91,6 @@ TOOL_META: tuple[ToolMeta, ...] = (
     ToolMeta(
         "purchase_order_receive", "spring", frozenset({"spring.write", "purchase_orders.receive"})
     ),
-    # --- ModelScope viz tools ---
-    *(_viz(name) for name in VIZ_TOOL_NAMES),
     # --- First-party chart spec tool ---
     ToolMeta(
         CREATE_CHART_SPEC_TOOL_NAME,

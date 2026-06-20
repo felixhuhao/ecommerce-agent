@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     spring_mcp_user_id: str = "1"
     spring_mcp_session_id: str = "local-session"
 
-    modelscope_mcp_url: str = ""
     python_mcp_url: str = ""
     nl2sql_enabled: bool = False
     nl2sql_mcp_url: str = ""

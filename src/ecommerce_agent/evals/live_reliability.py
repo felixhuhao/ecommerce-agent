@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from ecommerce_agent.config import Settings
 from ecommerce_agent.evals.metadata import run_metadata
-from ecommerce_agent.mcp_client import VIZ_TOOLS, WRITE_OR_APPROVAL_SPRING_TOOLS
+from ecommerce_agent.mcp_client import CHART_ARTIFACT_TOOLS, WRITE_OR_APPROVAL_SPRING_TOOLS
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.jsonl import dump_trace
@@ -88,7 +88,7 @@ def assess_attempt(
     record: TraceRecord,
     stream_body: str,
     *,
-    require_viz: bool = False,
+    require_chart_spec: bool = False,
 ) -> AttemptResult:
     """Structural pass/fail for one hero attempt. No semantic judgement."""
     failures: list[str] = []
@@ -99,12 +99,10 @@ def assess_attempt(
     leaked = tools & set(WRITE_OR_APPROVAL_SPRING_TOOLS)
     if leaked:
         failures.append(f"write/approval tools appeared: {sorted(leaked)}")
-    called_viz_tools = tools & VIZ_TOOLS
-    if not ({"execute"} & tools or called_viz_tools):
-        failures.append("neither sandbox execute nor visualization tool was called")
-    if require_viz and not called_viz_tools:
-        failures.append("visualization tool not called")
-    if require_viz and CREATE_CHART_SPEC_TOOL_NAME not in tools:
+    called_chart_tools = tools & CHART_ARTIFACT_TOOLS
+    if not ({"execute"} & tools or called_chart_tools):
+        failures.append("neither sandbox execute nor chart tool was called")
+    if require_chart_spec and CREATE_CHART_SPEC_TOOL_NAME not in tools:
         failures.append("create_chart_spec not called")
     if "event: error" in stream_body or "event: done" not in stream_body:
         failures.append("stream did not complete cleanly")
@@ -183,7 +181,7 @@ def _run_single_attempt(
     *,
     prompt: str,
     attempt_timeout_seconds: int,
-    require_viz: bool,
+    require_chart_spec: bool,
 ) -> tuple[AttemptResult, TraceRecord]:
     from fastapi.testclient import TestClient
 
@@ -228,7 +226,7 @@ def _run_single_attempt(
                 or app.state.last_trace
                 or TraceRecord()
             )
-            result = assess_attempt(record, body, require_viz=require_viz)
+            result = assess_attempt(record, body, require_chart_spec=require_chart_spec)
             result.status_code = status_code
             result.duration_ms = (time.monotonic() - started_at) * 1000.0
             if status_code != 202:
@@ -281,12 +279,11 @@ def run_reliability(
     prompt: str = HERO_PROMPT,
     attempt_timeout_seconds: int | None = None,
     failure_trace_path: str | None = None,
-    require_viz: bool | None = None,
+    require_chart_spec: bool = True,
 ) -> dict:
     """Run the hero prompt `n` times and return a diagnostic batch report."""
     timeout = attempt_timeout_seconds or _default_attempt_timeout_seconds()
     trace_path = failure_trace_path or _default_failure_trace_path()
-    require_viz_tool = bool(settings.modelscope_mcp_url) if require_viz is None else require_viz
 
     attempts: list[AttemptResult] = []
     for _ in range(n):
@@ -294,7 +291,7 @@ def run_reliability(
             settings,
             prompt=prompt,
             attempt_timeout_seconds=timeout,
-            require_viz=require_viz_tool,
+            require_chart_spec=require_chart_spec,
         )
         if not result.passed:
             dump_trace(record, trace_path)
@@ -317,7 +314,7 @@ def run_reliability(
         "pass_rate": passed / n if n else 0.0,
         "failure_modes": failure_modes,
         "attempt_timeout_seconds": timeout,
-        "require_viz": require_viz_tool,
+        "require_chart_spec": require_chart_spec,
         "failure_trace_path": trace_path if failed else None,
         "attempts": [attempt.to_dict() for attempt in attempts],
     }

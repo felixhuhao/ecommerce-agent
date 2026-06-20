@@ -128,8 +128,7 @@ async def build_session_runtime(
     warehouse_tools = []
     if nl2sql_configured(settings):
         warehouse_tools = await mcp_client.get_tools(server_name=NL2SQL_SERVER_NAME)
-    # Chart rendering is first-party now. ModelScope chart MCP may still be configured
-    # for diagnostics/legacy demos, but it is not part of the default runtime surface.
+    # Chart rendering is first-party via provider-owned create_chart_spec tools.
     viz_tools = []
 
     sandbox = build_session_sandbox(settings, session_id=session_id)

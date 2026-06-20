@@ -17,7 +17,7 @@ function timeline(overrides: Partial<TraceTimeline> = {}): TraceTimeline {
     spans: [
       {
         kind: "tool_call",
-        name: "generate_line_chart",
+        name: "create_chart_spec",
         status: "ok",
         ts: 1,
         duration_ms: 12,
@@ -50,7 +50,7 @@ describe("TracePanel", () => {
   it("renders spans, duration and the export link", () => {
     render(<TracePanel {...base} timeline={timeline()} />);
     expect(screen.getByRole("combobox", { name: "Trace turn" })).toHaveValue("t1");
-    expect(screen.getByText("generate_line_chart")).toBeInTheDocument();
+    expect(screen.getByText("create_chart_spec")).toBeInTheDocument();
     expect(screen.getByText("12 ms")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
     expect(screen.getByText("span")).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("TracePanel", () => {
 
   it("shows artifact ids on artifact spans", () => {
     render(<TracePanel {...base} timeline={timeline()} />);
-    fireEvent.click(screen.getByText("generate_line_chart"));
+    fireEvent.click(screen.getByText("create_chart_spec"));
     expect(screen.getByText(/chart-x1/)).toBeInTheDocument();
   });
 

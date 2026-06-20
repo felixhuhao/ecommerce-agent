@@ -21,7 +21,7 @@ from ecommerce_agent.tools.analytics import (
 )
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
-from ecommerce_agent.tools.metadata import NL2SQL_TOOL_NAMES, VIZ_TOOL_NAMES, select_names
+from ecommerce_agent.tools.metadata import NL2SQL_TOOL_NAMES, select_names
 
 
 def test_providers_are_five_specialists_in_order() -> None:
@@ -90,7 +90,6 @@ def test_sales_analyst_tags_select_reads_viz_staging_without_writes_or_approval(
     assert "get_statistics" in selected
     assert SALES_BY_CATEGORY_TOOL_NAME in selected
     assert CREATE_CHART_SPEC_TOOL_NAME in selected
-    assert "generate_line_chart" in selected
     assert "stage_sales_analysis_inputs" in selected
     assert "order_update" not in selected
     assert "purchase_order_create" not in selected
@@ -183,7 +182,6 @@ def test_customer_insights_tags_select_shaped_aggregate_and_chart_tools() -> Non
             CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
             CREATE_CHART_SPEC_TOOL_NAME,
         }
-        | set(VIZ_TOOL_NAMES)
     )
     assert "inventory_query" not in selected
     assert "order_query" not in selected
@@ -193,7 +191,7 @@ def test_customer_insights_tags_select_shaped_aggregate_and_chart_tools() -> Non
 
 def test_data_warehouse_tags_select_only_warehouse_and_chart_tools() -> None:
     selected = select_names(get_provider("data-warehouse-analyst").tool_tags)
-    assert selected == NL2SQL_TOOL_NAMES | frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
+    assert selected == NL2SQL_TOOL_NAMES | {CREATE_CHART_SPEC_TOOL_NAME}
     assert "get_statistics" not in selected
     assert SALES_BY_CATEGORY_TOOL_NAME not in selected
     assert CUSTOMER_SPEND_SUMMARY_TOOL_NAME not in selected
@@ -239,7 +237,7 @@ def test_build_selects_tools_from_provider_tool_tags() -> None:
         SimpleNamespace(name="product_query"),
         SimpleNamespace(name="request_approval"),
     ]
-    viz = [SimpleNamespace(name="generate_line_chart")]
+    viz = [SimpleNamespace(name="external_chart_tool")]
 
     provider.build(model="m", spring_tools=spring, viz_tools=viz, backend="b")
 

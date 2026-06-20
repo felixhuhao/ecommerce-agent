@@ -163,34 +163,6 @@ class MultiStepAgent:
         }
 
 
-class ChartAgent:
-    async def astream_events(
-        self,
-        inputs: dict,
-        config: dict,
-        version: str,
-    ) -> AsyncIterator[dict]:
-        yield {
-            "event": "on_tool_end",
-            "name": "generate_line_chart",
-            "run_id": "chart-run",
-            "data": {
-                "output": [
-                    {
-                        "type": "text",
-                        "text": "data:image/svg+xml;base64,PHN2Zy8+",
-                        "id": "chart-1",
-                    }
-                ]
-            },
-        }
-        yield {
-            "event": "on_chat_model_stream",
-            "run_id": "final",
-            "data": {"chunk": SimpleNamespace(content="Chart generated.")},
-        }
-
-
 class EChartsAgent:
     async def astream_events(
         self,
@@ -619,42 +591,6 @@ async def test_run_turn_does_not_expose_intermediate_model_narration() -> None:
     messages = await store.list_messages("s1")
     assert messages[0].content == "Final operator answer."
     assert "different approaches" not in messages[0].content
-
-
-@pytest.mark.asyncio
-async def test_run_turn_attaches_chart_artifacts_to_agent_answer() -> None:
-    store = InMemoryThreadStore()
-    bus = SessionBus()
-
-    seen: list[dict] = []
-    async with bus.subscription("s1") as sub:
-        await run_turn(
-            agent=ChartAgent(),
-            message="hello",
-            session_id="s1",
-            turn_id="t1",
-            store=store,
-            bus=bus,
-            recursion_limit=80,
-        )
-        while not sub.queue.empty():
-            seen.append(sub.queue.get_nowait())
-
-    messages = await store.list_messages("s1")
-    assert messages[0].content == "Chart generated."
-    assert messages[0].result == {
-        "artifacts": [
-            {
-                "id": "chart-1",
-                "kind": "image",
-                "mime_type": "image/svg+xml",
-                "src": "data:image/svg+xml;base64,PHN2Zy8+",
-                "tool_name": "generate_line_chart",
-            }
-        ]
-    }
-    progress = [event for event in seen if event["event"] == "turn.progress"]
-    assert any(event["label"] == "Chart generated" for event in progress)
 
 
 @pytest.mark.asyncio

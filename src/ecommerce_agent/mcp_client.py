@@ -5,16 +5,15 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from ecommerce_agent.config import Settings, get_settings, nl2sql_configured
-from ecommerce_agent.tools.metadata import VIZ_TOOL_NAMES, select_names
+from ecommerce_agent.tools.metadata import select_names
 
 SPRING_SERVER_NAME = "spring"
-MODELSCOPE_SERVER_NAME = "modelscope"
 PYTHON_SERVER_NAME = "python"
 NL2SQL_SERVER_NAME = "nl2sql"
 
 # Compatibility shims derived from the single source of truth in
 # tools/metadata.py. Prefer tools.metadata directly in new code; these frozensets
-# are kept so existing importers (diagnostics, evals, trace) stay byte-identical.
+# are kept so existing importers (diagnostics, evals, trace) stay stable.
 # The per-specialist sets mirror the provider tool_tags in specialists/providers.py.
 READ_ONLY_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"spring.read"}))
 APPROVAL_SPRING_TOOLS: frozenset[str] = select_names(frozenset({"approval.request"}))
@@ -42,8 +41,7 @@ INVENTORY_SPRING_TOOLS: frozenset[str] = select_names(
 CUSTOMER_INSIGHTS_SPRING_TOOLS: frozenset[str] = select_names(
     frozenset({"analytics.aggregate"})
 )
-VIZ_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
-MODELSCOPE_VIZ_TOOLS: frozenset[str] = frozenset(VIZ_TOOL_NAMES)
+CHART_ARTIFACT_TOOLS: frozenset[str] = select_names(frozenset({"viz.chart"}))
 NL2SQL_TOOLS: frozenset[str] = select_names(
     frozenset({"warehouse.schema", "warehouse.query", "warehouse.explain", "warehouse.metric"})
 )
@@ -87,14 +85,6 @@ def build_mcp_connections(
             "sse_read_timeout": sse_read_timeout,
         }
     }
-
-    if settings.modelscope_mcp_url:
-        connections[MODELSCOPE_SERVER_NAME] = {
-            "transport": "streamable_http",
-            "url": settings.modelscope_mcp_url,
-            "timeout": timeout,
-            "sse_read_timeout": sse_read_timeout,
-        }
 
     if settings.python_mcp_url:
         connections[PYTHON_SERVER_NAME] = {
@@ -147,10 +137,6 @@ def filter_customer_insights_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in CUSTOMER_INSIGHTS_SPRING_TOOLS]
 
 
-def filter_viz_tools(tools: list[BaseTool]) -> list[BaseTool]:
-    return [tool for tool in tools if tool.name in MODELSCOPE_VIZ_TOOLS]
-
-
 def filter_nl2sql_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [tool for tool in tools if tool.name in NL2SQL_TOOLS]
 
@@ -163,13 +149,6 @@ async def load_spring_read_tools(client: MultiServerMCPClient) -> list[BaseTool]
 async def load_order_manager_tools(client: MultiServerMCPClient) -> list[BaseTool]:
     tools = await client.get_tools(server_name=SPRING_SERVER_NAME)
     return filter_order_manager_tools(tools)
-
-
-# Retained for optional/legacy ModelScope chart MCP diagnostics; the default
-# session runtime uses the first-party create_chart_spec tool.
-async def load_modelscope_viz_tools(client: MultiServerMCPClient) -> list[BaseTool]:
-    tools = await client.get_tools(server_name=MODELSCOPE_SERVER_NAME)
-    return filter_viz_tools(tools)
 
 
 async def load_nl2sql_tools(client: MultiServerMCPClient) -> list[BaseTool]:

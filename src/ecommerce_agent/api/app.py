@@ -23,8 +23,6 @@ from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
     CUSTOMER_INSIGHTS_SPRING_TOOLS,
     INVENTORY_SPRING_TOOLS,
-    MODELSCOPE_SERVER_NAME,
-    MODELSCOPE_VIZ_TOOLS,
     NL2SQL_SERVER_NAME,
     NL2SQL_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
@@ -40,7 +38,6 @@ from ecommerce_agent.mcp_client import (
     filter_order_manager_tools,
     filter_purchasing_tools,
     filter_spring_read_tools,
-    filter_viz_tools,
     tool_names,
 )
 from ecommerce_agent.monitoring.bus import AlertBus
@@ -276,8 +273,6 @@ async def _evict_approval_clients_for_sessions(
 
 def configured_mcp_servers(settings: Settings) -> list[str]:
     servers = [SPRING_SERVER_NAME]
-    if settings.modelscope_mcp_url:
-        servers.append(MODELSCOPE_SERVER_NAME)
     if settings.python_mcp_url:
         servers.append(PYTHON_SERVER_NAME)
     if nl2sql_configured(settings):
@@ -334,20 +329,6 @@ async def probe_mcp_server(mcp_client: Any, server_name: str) -> dict[str, Any]:
                 "missing_expected_customer_insights_tools": sorted(
                     CUSTOMER_INSIGHTS_SPRING_TOOLS - names
                 ),
-            }
-        )
-    elif server_name == MODELSCOPE_SERVER_NAME:
-        viz_tools = filter_viz_tools(tools)
-        result.update(
-            {
-                "runtime_enabled": False,
-                "note": (
-                    "ModelScope chart MCP is available for optional legacy diagnostics; "
-                    "default sessions use create_chart_spec."
-                ),
-                "optional_legacy_viz_tool_count": len(viz_tools),
-                "optional_legacy_viz_tools": sorted(tool_names(viz_tools)),
-                "missing_optional_legacy_viz_tools": sorted(MODELSCOPE_VIZ_TOOLS - names),
             }
         )
     elif server_name == NL2SQL_SERVER_NAME:

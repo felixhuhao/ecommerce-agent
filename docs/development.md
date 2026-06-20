@@ -40,52 +40,27 @@ X-Session-Id: local-session
 ```
 
 Copy `.env.example` to `.env` and adjust values for your local MCP servers.
-The default runtime requires the Spring Boot business MCP server. Charts now
-render through first-party ECharts artifacts. The optional legacy
-ModelScope/AntV chart MCP server can still be enabled for chart-tool smoke tests:
-
-```bash
-docker compose -f compose.chart-mcp.yml up chart-mcp
-```
-
-Then set:
-
-```env
-MODELSCOPE_MCP_URL=http://127.0.0.1:1122/mcp
-```
-
-The diagnostics allowlist a chart surface from that server:
-`generate_line_chart`, `generate_bar_chart`, and `generate_column_chart`.
-The Compose file also starts a lightweight local renderer stub and wires AntV's
-`VIS_REQUEST_SERVER` to it, so backend chart-tool smoke tests do not depend on
-the public AntV render endpoint. It is not part of the default agent runtime. If
-`1122` is already in use, run:
-
-```bash
-CHART_MCP_PORT=1123 docker compose -f compose.chart-mcp.yml up chart-mcp
-```
-
-and set `MODELSCOPE_MCP_URL=http://127.0.0.1:1123/mcp`.
+The default runtime requires the Spring Boot business MCP server. Charts render
+through the first-party `create_chart_spec` tool as ECharts artifacts; no
+external chart MCP server is required.
 
 ## Agent-Owned Infrastructure
 
 This repo owns a server-owned conversation thread backed by MongoDB, plus the
 agent-side stack — Mongo and the local sandbox executor — as Compose projects.
-The optional legacy chart MCP server and renderer live in `compose.chart-mcp.yml`
-for explicit smoke/debug runs. The Java MCP server and MySQL remain a separate
-backend stack in `../ecommerce-mcp-server` with their own lifecycle; this repo
-does not start, seed, or reset them.
+The Java MCP server and MySQL remain a separate backend stack in
+`../ecommerce-mcp-server` with their own lifecycle; this repo does not start,
+seed, or reset them.
 
 Start the full agent-owned stack with one command:
 
 ```bash
-docker compose -f docker-compose.yml -f compose.chart-mcp.yml -f compose.sandbox.yml up -d
+docker compose -f docker-compose.yml -f compose.sandbox.yml up -d
 ```
 
 This all-services command brings up Mongo (`docker-compose.yml`, named volume
-`mongo-data`), the optional chart MCP server and renderer (`compose.chart-mcp.yml`),
-and the local sandbox executor service (`compose.sandbox.yml`). For normal local
-development, prefer:
+`mongo-data`) and the local sandbox executor service (`compose.sandbox.yml`).
+For normal local development, prefer:
 
 ```bash
 docker compose -f docker-compose.yml -f compose.sandbox.yml up -d
@@ -222,8 +197,7 @@ are available:
 RUN_LIVE_LLM=1 uv run pytest -m live
 ```
 
-When `MODELSCOPE_MCP_URL` is set, the live reliability harness also requires the
-hero run to call one allowlisted chart tool.
+The live reliability harness requires chart prompts to call `create_chart_spec`.
 
 Run the opt-in approval workflow integration when Spring MCP/MySQL and MongoDB
 are both available:

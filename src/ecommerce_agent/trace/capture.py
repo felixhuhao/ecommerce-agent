@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ecommerce_agent.approvals import extract_approval_id
-from ecommerce_agent.mcp_client import VIZ_TOOLS
+from ecommerce_agent.mcp_client import CHART_ARTIFACT_TOOLS
 from ecommerce_agent.tools.charting import validate_echarts_artifact
 from ecommerce_agent.trace.schema import TraceEvent, TraceRecord
 from ecommerce_agent.trace.tools import is_data_bearing
@@ -274,7 +274,7 @@ def _to_trace_event(
         output = data.get("output")
         artifact = (
             _viz_artifact_from_output(output, fallback_id=str(run_id) if run_id else None)
-            if raw.get("name") in VIZ_TOOLS
+            if raw.get("name") in CHART_ARTIFACT_TOOLS
             else None
         )
         evidence = (

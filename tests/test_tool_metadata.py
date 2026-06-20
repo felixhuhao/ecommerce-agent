@@ -9,7 +9,6 @@ from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from ecommerce_agent.tools.metadata import (
     NL2SQL_TOOL_NAMES,
     TOOL_META,
-    VIZ_TOOL_NAMES,
     ToolMeta,
     get_tool_meta,
     select_names,
@@ -42,7 +41,7 @@ _ORDER_MANAGER = frozenset(
         "request_approval",
     }
 )
-_VIZ = frozenset(VIZ_TOOL_NAMES) | {CREATE_CHART_SPEC_TOOL_NAME}
+_VIZ = frozenset({CREATE_CHART_SPEC_TOOL_NAME})
 _SHAPED_ANALYTICS = frozenset(
     {
         CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
@@ -174,11 +173,6 @@ def test_live_label_fields_match_today_strings() -> None:
 
     execute = get_tool_meta("execute")
     assert execute is not None and execute.live_label_start == "Running analysis"
-
-    viz = get_tool_meta("generate_line_chart")
-    assert viz is not None
-    assert viz.live_label_start == "Generating chart"
-    assert viz.live_label_end == "Chart generated"
 
     echarts = get_tool_meta(CREATE_CHART_SPEC_TOOL_NAME)
     assert echarts is not None

@@ -134,7 +134,7 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
         "MODEL",  # type: ignore[arg-type]
         spring_read_tools=[_Tool("order_query"), _Tool("get_statistics")],  # type: ignore[list-item]
         staging_tools=[_Tool("stage_sales_analysis_inputs")],  # type: ignore[list-item]
-        viz_tools=[_Tool("generate_line_chart")],  # type: ignore[list-item]
+        viz_tools=[_Tool("create_chart_spec")],  # type: ignore[list-item]
         backend=backend,
     )
 
@@ -144,7 +144,7 @@ def test_build_sales_analyst_combines_tools_and_threads_backend(monkeypatch) -> 
         "stage_sales_analysis_inputs",
         "order_query",
         "get_statistics",
-        "generate_line_chart",
+        "create_chart_spec",
     ]
     assert "read-only" in captured["system_prompt"].lower()
     middleware_types = {type(middleware).__name__ for middleware in captured["middleware"]}
@@ -430,7 +430,7 @@ def test_sales_analyst_subagent_seam_shape() -> None:
     subagent = sales_analyst_subagent(
         spring_read_tools=[_Tool("order_query")],  # type: ignore[list-item]
         staging_tools=[_Tool("stage_sales_analysis_inputs")],  # type: ignore[list-item]
-        viz_tools=[_Tool("generate_line_chart")],  # type: ignore[list-item]
+        viz_tools=[_Tool("create_chart_spec")],  # type: ignore[list-item]
     )
 
     assert subagent["name"] == "sales-analyst"
@@ -439,7 +439,7 @@ def test_sales_analyst_subagent_seam_shape() -> None:
     assert {tool.name for tool in subagent["tools"]} == {
         "stage_sales_analysis_inputs",
         "order_query",
-        "generate_line_chart",
+        "create_chart_spec",
     }
 
 

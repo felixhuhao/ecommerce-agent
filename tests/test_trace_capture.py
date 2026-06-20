@@ -218,13 +218,13 @@ async def test_capture_extracts_approval_id_from_wrapped_tool_message() -> None:
     assert record.events[0].approval_id == "approval-wrapped"
 
 
-async def test_capture_extracts_chart_artifact_from_modelscope_output() -> None:
+async def test_capture_ignores_external_chart_tool_output() -> None:
     image_src = "data:image/svg+xml;base64,PHN2Zy8+"
 
     async def raw_events() -> AsyncIterator[dict]:
         yield {
             "event": "on_tool_end",
-            "name": "generate_line_chart",
+            "name": "external_chart_tool",
             "run_id": "chart-run",
             "data": {"output": [{"type": "text", "text": image_src, "id": "chart-1"}]},
         }
@@ -233,14 +233,8 @@ async def test_capture_extracts_chart_artifact_from_modelscope_output() -> None:
 
     yielded = [event async for event in capture(raw_events(), record)]
 
-    assert yielded[0].artifact_id == "chart-1"
-    assert yielded[0].artifact == {
-        "id": "chart-1",
-        "kind": "image",
-        "mime_type": "image/svg+xml",
-        "src": image_src,
-    }
-    assert record.events[0].artifact == yielded[0].artifact
+    assert yielded[0].artifact is None
+    assert yielded[0].artifact_id is None
 
 
 async def test_capture_extracts_echarts_artifact_before_image_recursion() -> None:
@@ -296,29 +290,6 @@ async def test_capture_extracts_echarts_artifact_from_wrapped_json_tool_message(
 
     assert yielded[0].artifact_id == "chart-1"
     assert yielded[0].artifact == artifact
-
-
-async def test_capture_extracts_chart_artifact_from_wrapped_tool_message() -> None:
-    image_src = "data:image/svg+xml;base64,PHN2Zy8+"
-
-    async def raw_events() -> AsyncIterator[dict]:
-        yield {
-            "event": "on_tool_end",
-            "name": "generate_line_chart",
-            "run_id": "chart-run",
-            "data": {
-                "output": SimpleNamespace(
-                    content=[{"type": "text", "text": image_src, "id": "chart-1"}]
-                )
-            },
-        }
-
-    record = TraceRecord()
-
-    yielded = [event async for event in capture(raw_events(), record)]
-
-    assert yielded[0].artifact_id == "chart-1"
-    assert yielded[0].artifact["src"] == image_src
 
 
 async def test_capture_maps_route_decision_event() -> None:

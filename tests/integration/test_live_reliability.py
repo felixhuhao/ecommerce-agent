@@ -8,7 +8,6 @@ import pytest
 from ecommerce_agent.config import Settings
 from ecommerce_agent.evals import live_reliability
 from ecommerce_agent.evals.live_reliability import assess_attempt, run_reliability
-from ecommerce_agent.mcp_client import VIZ_TOOLS
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
 from ecommerce_agent.tools.staging import STAGE_SALES_ANALYSIS_TOOL_NAME
 from ecommerce_agent.trace.jsonl import append_eval_baseline
@@ -42,22 +41,21 @@ def _record_with_tools(*names: str) -> TraceRecord:
     return record
 
 
-@pytest.mark.parametrize("viz_tool", sorted(VIZ_TOOLS))
-def test_assess_attempt_passes_on_good_trace(viz_tool: str) -> None:
-    record = _record_with_tools("order_query", "execute", viz_tool)
+def test_assess_attempt_passes_on_good_trace() -> None:
+    record = _record_with_tools("order_query", "execute", CREATE_CHART_SPEC_TOOL_NAME)
 
     result = assess_attempt(record, "event: tool\nevent: done\n")
 
     assert result.passed, result.failures
 
 
-def test_assess_attempt_can_require_visualization_tool() -> None:
+def test_assess_attempt_can_require_chart_spec() -> None:
     record = _record_with_tools("order_query", "execute")
 
-    result = assess_attempt(record, "event: tool\nevent: done\n", require_viz=True)
+    result = assess_attempt(record, "event: tool\nevent: done\n", require_chart_spec=True)
 
     assert not result.passed
-    assert "visualization tool not called" in result.failures
+    assert "create_chart_spec not called" in result.failures
 
 
 def test_assess_attempt_accepts_staging_tool_instead_of_raw_order_query() -> None:
@@ -67,7 +65,7 @@ def test_assess_attempt_accepts_staging_tool_instead_of_raw_order_query() -> Non
         CREATE_CHART_SPEC_TOOL_NAME,
     )
 
-    result = assess_attempt(record, "event: tool\nevent: done\n", require_viz=True)
+    result = assess_attempt(record, "event: tool\nevent: done\n", require_chart_spec=True)
 
     assert result.passed, result.failures
 
@@ -94,9 +92,9 @@ def test_run_reliability_records_failed_attempt_diagnostics(
         *,
         prompt: str,  # noqa: ARG001
         attempt_timeout_seconds: int,
-        require_viz: bool,
+        require_chart_spec: bool,
     ) -> tuple[live_reliability.AttemptResult, TraceRecord]:
-        assert require_viz is False
+        assert require_chart_spec is False
         record = _record_with_tools("order_query")
         record.answer = "partial answer"
         result = assess_attempt(record, "event: token\ndata: {}\n")
@@ -111,13 +109,13 @@ def test_run_reliability_records_failed_attempt_diagnostics(
         Settings(_env_file=None),
         attempt_timeout_seconds=7,
         failure_trace_path=str(trace_path),
-        require_viz=False,
+        require_chart_spec=False,
     )
 
     assert report["passed"] == 0
     assert report["pass_rate"] == 0.0
     assert report["attempt_timeout_seconds"] == 7
-    assert report["require_viz"] is False
+    assert report["require_chart_spec"] is False
     assert report["failure_trace_path"] == str(trace_path)
     assert report["attempts"][0]["trace_path"] == str(trace_path)
     assert report["attempts"][0]["body_tail"] == "event: token\ndata: {}\n"
@@ -156,7 +154,7 @@ async def test_live_reliability_batch_records_baseline(tmp_path) -> None:
 
     assert report["n"] == runs
     assert 0.0 <= report["pass_rate"] <= 1.0
-    assert report["require_viz"] is bool(settings.modelscope_mcp_url)
+    assert report["require_chart_spec"] is True
     print(
         "reliability:",
         report["passed"],

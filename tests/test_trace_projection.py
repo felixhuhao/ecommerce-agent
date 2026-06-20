@@ -26,7 +26,7 @@ def _record_with_spans() -> TraceRecord:
         ),
         TraceEvent(
             event_type="tool_call",
-            name="generate_line_chart",
+            name="create_chart_spec",
             phase="start",
             tool_call_id="x1",
             args_summary="series",
@@ -34,7 +34,7 @@ def _record_with_spans() -> TraceRecord:
         ),
         TraceEvent(
             event_type="tool_call",
-            name="generate_line_chart",
+            name="create_chart_spec",
             phase="end",
             tool_call_id="x1",
             result_summary="data:image/...",
@@ -81,7 +81,7 @@ def test_project_timeline_merges_spans_and_drops_artifact_src() -> None:
     assert model["duration_ms"] == 50.0
 
     assert tool["kind"] == "tool_call"
-    assert tool["name"] == "generate_line_chart"
+    assert tool["name"] == "create_chart_spec"
     assert tool["args_summary"] == "series"
     assert tool["duration_ms"] == 12.0
     assert tool["artifact_id"] == "chart-x1"

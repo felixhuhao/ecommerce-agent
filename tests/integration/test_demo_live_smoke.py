@@ -27,7 +27,11 @@ from ecommerce_agent.api.app import create_app
 from ecommerce_agent.auth.dependencies import current_actor
 from ecommerce_agent.auth.models import Actor, Role
 from ecommerce_agent.config import Settings
-from ecommerce_agent.mcp_client import NL2SQL_TOOLS, VIZ_TOOLS, WRITE_SPRING_TOOLS
+from ecommerce_agent.mcp_client import (
+    CHART_ARTIFACT_TOOLS,
+    NL2SQL_TOOLS,
+    WRITE_SPRING_TOOLS,
+)
 from ecommerce_agent.tools.analytics import (
     CUSTOMER_SPEND_SUMMARY_TOOL_NAME,
     SALES_BY_CATEGORY_TOOL_NAME,
@@ -68,8 +72,6 @@ MAX_SAME_TOOL_CALLS = {
 ALWAYS_FORBIDDEN = frozenset({"task", "write_todos"})
 SANDBOX_TOOLS = frozenset({"execute", "stage_sales_analysis_inputs", SALES_FORECAST_TOOL_NAME})
 SANDBOX_CONTROL_TOOLS = SANDBOX_TOOLS | frozenset({"write_file"})
-LEGACY_CHART_TOOLS = VIZ_TOOLS - {CREATE_CHART_SPEC_TOOL_NAME}
-
 _DIAG_PATH = Path(".pytest_cache") / "demo_live_smoke_diagnostics.jsonl"
 
 
@@ -97,7 +99,7 @@ CASES = [
         prompt="is SKU-LOW-003 below safety stock?",
         specialists=("inventory",),
         required_any_of=(frozenset({"inventory_low_stock", "inventory_query"}),),
-        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | NL2SQL_TOOLS,
+        forbidden=WRITE_SPRING_TOOLS | CHART_ARTIFACT_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
     ),
     Case(
@@ -126,7 +128,7 @@ CASES = [
         required_all_of=("order_query",),
         forbidden=(
             WRITE_SPRING_TOOLS
-            | VIZ_TOOLS
+            | CHART_ARTIFACT_TOOLS
             | NL2SQL_TOOLS
             | {CUSTOMER_SPEND_SUMMARY_TOOL_NAME}
         ),
@@ -136,7 +138,7 @@ CASES = [
         prompt="compare sales by category and chart it",
         specialists=("sales-analyst",),
         required_all_of=(SALES_BY_CATEGORY_TOOL_NAME, CREATE_CHART_SPEC_TOOL_NAME),
-        forbidden=WRITE_SPRING_TOOLS | LEGACY_CHART_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
+        forbidden=WRITE_SPRING_TOOLS | SANDBOX_CONTROL_TOOLS | NL2SQL_TOOLS,
         expects_artifact=True,
         expected_artifact_kind="echarts",
         expected_chart_types=frozenset({"bar", "column", "pie"}),
@@ -169,14 +171,14 @@ CASES = [
         prompt="cancel pending order 1008",
         specialists=("order-manager",),
         required_all_of=("request_approval",),
-        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | {"get_statistics"},
+        forbidden=WRITE_SPRING_TOOLS | CHART_ARTIFACT_TOOLS | {"get_statistics"},
         expects_proposal=True,
     ),
     Case(
         id="invalid_sku_graceful",
         prompt="forecast SKU-NOPE-999 next month and chart it",
         specialists=("sales-analyst", "inventory"),
-        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS,
+        forbidden=WRITE_SPRING_TOOLS | CHART_ARTIFACT_TOOLS,
         expects_no_artifact=True,
     ),
     Case(
@@ -184,7 +186,7 @@ CASES = [
         prompt="what is the repeat purchase rate by customer cohort over the last 12 months?",
         specialists=("data-warehouse-analyst",),
         required_all_of=("query_readonly",),
-        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | {"request_approval"},
+        forbidden=WRITE_SPRING_TOOLS | CHART_ARTIFACT_TOOLS | {"request_approval"},
         authorities=("authoritative",),
         requires_nl2sql=True,
     ),
@@ -193,7 +195,7 @@ CASES = [
         prompt="break down last 90 days revenue by region and channel as a chart",
         specialists=("data-warehouse-analyst",),
         required_all_of=("query_readonly", CREATE_CHART_SPEC_TOOL_NAME),
-        forbidden=WRITE_SPRING_TOOLS | LEGACY_CHART_TOOLS | {"request_approval"},
+        forbidden=WRITE_SPRING_TOOLS | {"request_approval"},
         expects_artifact=True,
         expected_artifact_kind="echarts",
         expected_chart_types=frozenset({"bar", "column", "pie"}),
@@ -205,7 +207,7 @@ CASES = [
         prompt="current stock from the data warehouse for SKU-LOW-003",
         specialists=("inventory",),
         required_any_of=(frozenset({"inventory_low_stock", "inventory_query"}),),
-        forbidden=WRITE_SPRING_TOOLS | VIZ_TOOLS | NL2SQL_TOOLS,
+        forbidden=WRITE_SPRING_TOOLS | CHART_ARTIFACT_TOOLS | NL2SQL_TOOLS,
         authorities=("authoritative",),
         requires_nl2sql=True,
     ),

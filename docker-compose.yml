@@ -14,7 +14,6 @@ services:
       SANDBOX_EXECUTOR_URL: http://sandbox-executor:8000
       SPRING_MCP_URL: ${SPRING_MCP_URL_CONTAINER:-http://host.docker.internal:8080/mcp}
       APPROVAL_API_BASE_URL: ${APPROVAL_API_BASE_URL_CONTAINER:-http://host.docker.internal:8080}
-      MODELSCOPE_MCP_URL: ${MODELSCOPE_MCP_URL_CONTAINER:-}
       NL2SQL_MCP_URL: ${NL2SQL_MCP_URL_CONTAINER:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"

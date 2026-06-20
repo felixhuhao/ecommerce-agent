@@ -740,10 +740,9 @@ async def test_list_artifacts_projects_from_messages_newest_first() -> None:
                 "artifacts": [
                     {
                         "id": "c0",
-                        "kind": "image",
-                        "mime_type": "image/svg+xml",
-                        "src": "data:image/svg+xml,<svg/>",
-                        "tool_name": "generate_line_chart",
+                        "kind": "echarts",
+                        "chart_type": "bar",
+                        "tool_name": "create_chart_spec",
                     }
                 ]
             },
@@ -759,10 +758,9 @@ async def test_list_artifacts_projects_from_messages_newest_first() -> None:
                 "artifacts": [
                     {
                         "id": "c1",
-                        "kind": "image",
-                        "mime_type": "image/png",
-                        "src": "data:image/png;base64,AAAA",
-                        "tool_name": "generate_bar_chart",
+                        "kind": "echarts",
+                        "chart_type": "line",
+                        "tool_name": "create_chart_spec",
                     }
                 ]
             },
@@ -773,10 +771,10 @@ async def test_list_artifacts_projects_from_messages_newest_first() -> None:
     artifacts = body["artifacts"]
     assert [artifact["id"] for artifact in artifacts] == ["c1", "c0"]
     assert artifacts[0]["turn_id"] == "t2"
-    assert artifacts[0]["mime_type"] == "image/png"
+    assert artifacts[0]["kind"] == "echarts"
     assert artifacts[0]["message_id"]
     assert artifacts[0]["created_at"]
-    assert artifacts[1]["tool_name"] == "generate_line_chart"
+    assert artifacts[1]["tool_name"] == "create_chart_spec"
 
 
 def test_list_artifacts_404_for_unknown_session() -> None:

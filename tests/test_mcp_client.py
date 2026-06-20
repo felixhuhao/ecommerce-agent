@@ -3,20 +3,18 @@ from types import SimpleNamespace
 from ecommerce_agent.config import Settings
 from ecommerce_agent.mcp_client import (
     APPROVAL_SPRING_TOOLS,
-    MODELSCOPE_VIZ_TOOLS,
+    CHART_ARTIFACT_TOOLS,
     NL2SQL_SERVER_NAME,
     NL2SQL_TOOLS,
     ORDER_MANAGER_SPRING_TOOLS,
     READ_ONLY_SPRING_TOOLS,
     SPRING_SERVER_NAME,
-    VIZ_TOOLS,
     WRITE_OR_APPROVAL_SPRING_TOOLS,
     WRITE_SPRING_TOOLS,
     build_mcp_connections,
     filter_nl2sql_tools,
     filter_order_manager_tools,
     filter_spring_read_tools,
-    filter_viz_tools,
     spring_headers,
     tool_names,
 )
@@ -48,15 +46,11 @@ def test_build_mcp_connections_uses_trusted_spring_headers() -> None:
 
 
 def test_future_mcp_servers_are_configured_when_urls_are_present() -> None:
-    settings = make_settings(
-        modelscope_mcp_url="http://modelscope.example/mcp",
-        python_mcp_url="http://python.example/mcp",
-    )
+    settings = make_settings(python_mcp_url="http://python.example/mcp")
 
     connections = build_mcp_connections(settings)
 
-    assert set(connections) == {"spring", "modelscope", "python"}
-    assert connections["modelscope"]["transport"] == "streamable_http"
+    assert set(connections) == {"spring", "python"}
     assert connections["python"]["url"] == "http://python.example/mcp"
 
 
@@ -158,29 +152,8 @@ def test_filter_order_manager_tools_keeps_reads_plus_request_approval() -> None:
     assert "request_approval" not in READ_ONLY_SPRING_TOOLS
 
 
-def test_filter_viz_tools_keeps_only_allowlisted_viz_tools() -> None:
-    tools = [
-        SimpleNamespace(name="generate_line_chart"),
-        SimpleNamespace(name="generate_bar_chart"),
-        SimpleNamespace(name="generate_column_chart"),
-        SimpleNamespace(name="generate_area_chart"),
-        SimpleNamespace(name="generate_pie_chart"),
-        SimpleNamespace(name="some_other_modelscope_tool"),
-    ]
-
-    filtered = filter_viz_tools(tools)  # type: ignore[arg-type]
-
-    assert tool_names(filtered) == {  # type: ignore[arg-type]
-        "generate_line_chart",
-        "generate_bar_chart",
-        "generate_column_chart",
-        "generate_area_chart",
-        "generate_pie_chart",
-    }
-    assert "generate_sankey_chart" in VIZ_TOOLS
-    assert CREATE_CHART_SPEC_TOOL_NAME in VIZ_TOOLS
-    assert CREATE_CHART_SPEC_TOOL_NAME not in MODELSCOPE_VIZ_TOOLS
-    assert "some_other_modelscope_tool" not in VIZ_TOOLS
+def test_chart_artifact_tools_are_first_party_only() -> None:
+    assert CHART_ARTIFACT_TOOLS == frozenset({CREATE_CHART_SPEC_TOOL_NAME})
 
 
 def test_filter_nl2sql_tools_keeps_only_allowlisted_warehouse_tools() -> None:

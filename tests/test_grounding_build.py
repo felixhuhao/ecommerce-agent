@@ -224,8 +224,8 @@ def test_sources_exclude_viz_and_approval_and_filesystem() -> None:
         _end("get_statistics"),
         _start("write_file"),
         _end("write_file"),
-        _start("generate_line_chart"),
-        _end("generate_line_chart"),
+        _start("create_chart_spec"),
+        _end("create_chart_spec"),
         _start("request_approval"),
         _end("request_approval"),
     )

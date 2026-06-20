@@ -3,8 +3,7 @@
 # Extends the sandbox image (python + pandas/numpy + ecommerce_analysis) and
 # adds the HTTP service layer + bubblewrap. Built AFTER the sandbox image:
 #   docker build -t ecommerce-agent-sandbox:dev sandbox_image/
-#   docker compose -f docker-compose.yml -f compose.chart-mcp.yml \
-#     -f compose.sandbox.yml build sandbox-executor
+#   docker compose -f docker-compose.yml -f compose.sandbox.yml build sandbox-executor
 FROM ecommerce-agent-sandbox:dev
 
 # CAP_SYS_ADMIN (granted via compose) must be in the effective set, so the

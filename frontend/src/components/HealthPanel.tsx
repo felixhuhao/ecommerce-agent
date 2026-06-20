@@ -10,7 +10,6 @@ interface HealthPanelProps {
 
 const MCP_SERVER_LABELS: Record<string, string> = {
   spring: "Commerce tools",
-  modelscope: "Chart tools",
 };
 
 function mcpServerLabel(name: string): string {
