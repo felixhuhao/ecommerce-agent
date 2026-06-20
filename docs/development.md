@@ -163,6 +163,46 @@ when a dependency is unavailable. It does not start or repair external services.
 Because it performs live tool discovery, treat it as an operator check rather than
 a high-frequency poll target.
 
+## Docker App
+
+Build and run the FastAPI app, Mongo, and sandbox executor through Docker:
+
+```bash
+docker compose -f docker-compose.yml -f compose.sandbox.yml up -d --build app sandbox-executor mongo
+```
+
+The app is published on `127.0.0.1:${ECOMMERCE_AGENT_PORT:-8010}` and serves the
+built React SPA from the same origin. Inside Docker, the app uses container-safe
+URLs:
+
+```env
+MONGO_URL=mongodb://...@mongo:27017/?authSource=admin
+SANDBOX_BACKEND=remote
+SANDBOX_EXECUTOR_URL=http://sandbox-executor:8000
+SPRING_MCP_URL=http://host.docker.internal:8080/mcp
+APPROVAL_API_BASE_URL=http://host.docker.internal:8080
+```
+
+Check the running app:
+
+```bash
+curl http://127.0.0.1:${ECOMMERCE_AGENT_PORT:-8010}/health
+docker exec ecommerce-agent-app python -c 'import urllib.request; print(urllib.request.urlopen("http://sandbox-executor:8000/health", timeout=3).read().decode())'
+```
+
+If the optional NL2SQL backend is running from the sibling `nl2sql_pro` compose
+project, include the NL2SQL overlay so the app joins that Docker network instead
+of using a host-local URL:
+
+```bash
+docker compose -f docker-compose.yml -f compose.sandbox.yml -f compose.nl2sql.yml up -d --build app sandbox-executor mongo
+curl http://127.0.0.1:${ECOMMERCE_AGENT_PORT:-8010}/health/mcp
+```
+
+With the overlay, `nl2sql` should report `ok` in `/health/mcp`. Without the
+overlay, NL2SQL is disabled for the Docker app even if `.env` contains a local
+`NL2SQL_MCP_URL`.
+
 ## Tests
 
 ```bash

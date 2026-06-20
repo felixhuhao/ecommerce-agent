@@ -32,11 +32,22 @@ export default function EChartsArtifactRenderer({
 
   useEffect(() => {
     if (!ref.current) return;
-    const chart = echarts.init(ref.current, undefined, { renderer: "svg" });
+    const element = ref.current;
+    const chart = echarts.init(element, undefined, { renderer: "svg" });
     chart.setOption(option);
     const resize = () => chart.resize();
+    const animationFrame = window.requestAnimationFrame(resize);
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            chart.resize();
+          });
+    observer?.observe(element);
     window.addEventListener("resize", resize);
     return () => {
+      window.cancelAnimationFrame(animationFrame);
+      observer?.disconnect();
       window.removeEventListener("resize", resize);
       chart.dispose();
     };

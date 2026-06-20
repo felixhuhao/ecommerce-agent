@@ -4,8 +4,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
+from ecommerce_agent.auth.dependencies import current_actor
+from ecommerce_agent.auth.models import Actor, Role
 from ecommerce_agent.config import Settings
 from tests.integration.helpers import skip_unless_spring_mcp_is_running
+
+OPERATOR = Actor(
+    user_id="live-op", username="live-op", role=Role.OPERATOR, spring_user_id=1
+)
 
 
 def _wait_for_agent_answer(client: TestClient, session_id: str) -> dict:
@@ -38,6 +44,7 @@ async def test_live_chat_stream_can_call_spring_mcp_tools() -> None:
     await skip_unless_spring_mcp_is_running(settings)
 
     app = create_app(settings=settings)
+    app.dependency_overrides[current_actor] = lambda: OPERATOR
     with TestClient(app) as client:
         session_id = client.post("/api/sessions").json()["session_id"]
         response = client.post(

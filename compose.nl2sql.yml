@@ -1,0 +1,13 @@
+services:
+  app:
+    environment:
+      NL2SQL_ENABLED: "true"
+      NL2SQL_MCP_URL: ${NL2SQL_MCP_URL_CONTAINER:-http://backend:8000/mcp/}
+    networks:
+      - default
+      - nl2sql
+
+networks:
+  nl2sql:
+    external: true
+    name: ${NL2SQL_DOCKER_NETWORK:-nl2sql_pro_default}

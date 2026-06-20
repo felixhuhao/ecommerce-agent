@@ -32,7 +32,11 @@ def dependency_versions() -> dict[str, str | None]:
 
 
 def prompt_hash(name: str) -> str:
-    return hashlib.sha256(get_prompt(name).encode("utf-8")).hexdigest()[:16]
+    try:
+        prompt = get_prompt(name)
+    except KeyError:
+        prompt = f"missing-prompt:{name}"
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
 
 
 def run_metadata(

@@ -24,6 +24,7 @@ services:
     volumes:
       - sandbox-workspaces:/workspaces
     networks:
+      - default
       - sandbox-net
     restart: unless-stopped
 
@@ -31,6 +32,7 @@ volumes:
   sandbox-workspaces:
 
 networks:
+  default:
   sandbox-net:
     driver: bridge
     # Deliberately NOT `internal: true`: that silently breaks published ports on

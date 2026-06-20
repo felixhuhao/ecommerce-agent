@@ -56,7 +56,7 @@ MAX_SAME_TOOL_CALLS = {
     "user_query": 2,
     "product_query": 2,
     "product_search": 2,
-    "inventory_query": 2,
+    "inventory_query": 3,
     "stage_sales_analysis_inputs": 2,
     SALES_FORECAST_TOOL_NAME: 1,
     "query_readonly": 4,

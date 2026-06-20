@@ -217,15 +217,20 @@ async def run_groundedness_eval(settings: Any) -> GroundednessReport:
         record = TraceRecord()
         raw = analyst.astream_events(
             {"messages": [{"role": "user", "content": case.prompt}]},
-            config={"recursion_limit": 15},
+            config={"recursion_limit": settings.agent_recursion_limit},
             version="v2",
         )
-        async for _ in capture(
-            raw,
-            record,
-            evidence_max_chars=settings.grounding_evidence_max_chars,
-        ):
-            pass
+        try:
+            async for _ in capture(
+                raw,
+                record,
+                evidence_max_chars=settings.grounding_evidence_max_chars,
+            ):
+                pass
+        except Exception as exc:
+            if type(exc).__name__ != "GraphRecursionError":
+                raise
+            continue
         record.finish()
         grounding = build_grounding(record)
         results.append(

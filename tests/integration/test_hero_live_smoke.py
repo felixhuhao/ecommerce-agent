@@ -7,8 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ecommerce_agent.api.app import create_app
+from ecommerce_agent.auth.dependencies import current_actor
+from ecommerce_agent.auth.models import Actor, Role
 from ecommerce_agent.config import Settings
 from ecommerce_agent.tools.charting import CREATE_CHART_SPEC_TOOL_NAME
+from ecommerce_agent.tools.forecasting import SALES_FORECAST_TOOL_NAME
 from tests.integration.helpers import (
     skip_unless_docker_available,
     skip_unless_spring_mcp_is_running,
@@ -17,6 +20,9 @@ from tests.integration.helpers import (
 HERO = (
     "Which categories are trending up or down over the last 6 months, forecast next "
     "month's sales, and chart the result. Keep the summary short."
+)
+OPERATOR = Actor(
+    user_id="hero-op", username="hero-op", role=Role.OPERATOR, spring_user_id=1
 )
 
 _LIVE_SMOKE_TIMEOUT_SECONDS = 180
@@ -71,6 +77,7 @@ async def test_hero_flow_single_run() -> None:
     await skip_unless_spring_mcp_is_running(settings)
 
     app = create_app(settings=settings)
+    app.dependency_overrides[current_actor] = lambda: OPERATOR
     try:
         with _fail_after(_LIVE_SMOKE_TIMEOUT_SECONDS), TestClient(app) as client:
             session_id = client.post("/api/sessions").json()["session_id"]
@@ -83,5 +90,5 @@ async def test_hero_flow_single_run() -> None:
     assert any(message["type"] == "agent_answer" for message in thread["messages"])
     assert app.state.last_trace is not None
     tools = set(app.state.last_trace.tool_names())
-    assert "execute" in tools
+    assert SALES_FORECAST_TOOL_NAME in tools
     assert CREATE_CHART_SPEC_TOOL_NAME in tools
